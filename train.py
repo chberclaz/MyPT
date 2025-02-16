@@ -16,6 +16,9 @@ lerning_rate= 1e-2
 device= 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters=200
 
+# -------------------------------------------------------------------------------------------------------------------
+# input: textfile
+# plain text from a author (in our case sharespeare)
 
 # finding out how many different charactes and what kind will be used as input
 # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
@@ -30,6 +33,7 @@ vocab_size=len(chars)
 
 
 # --------------------------------------------------------------------------------------------------------------------
+# tokenization:
 # first we need strategy to tokenize input 
 # (charactes to integers for us)
 stoi = {ch:i for i, ch in enumerate(chars) }
@@ -39,6 +43,8 @@ decode = lambda l: ''.join([itos[i] for i in l]) #decoder: take a list of intege
 
 print(encode("Blub gud"))
 print(decode(encode("Blub gud")))
+
+
 # let's encode the entire text dataset and store it into a torch.Tensor
 # encode our whole text and wrap it in a torch tensor
 data= torch.tensor(encode(text), dtype=torch.long)
@@ -51,6 +57,9 @@ n = int(0.9*len(data))  #first 90% will be training Data
 train_data= data[:n]
 val_data = data[n:]
 
+
+
+# -----------------------------------------------------------------------------------------------------------------------
 # data loding
 def get_batch(split):
     #generate am small batch of data on inputs x and targets y
@@ -74,6 +83,7 @@ def estimate_loss():
         out[split] = losses.mean()
     model.train()
     return out
+
 
 # super simpel Bigram Model
 # see makemore video series of andrej for more informations
@@ -113,8 +123,9 @@ class BigramLanguageModel(nn.Module):
             # append sampled index to the running squence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
-# ----------------------------------------------------------------------------------------------------------------------
 
+# ----------------------------------------------------------------------------------------------------------------------
+# start of model loading 
 model = BigramLanguageModel(vocab_size)
 m=model.to(device)
 
@@ -151,7 +162,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=lerning_rate)
 
 # feed data batch to simple Language Model "Bigram"
 
-
+# Load our model with data and train it on itself
 for iter in range(max_iters):
 
     #every once in a while output expected loss on train and val sets
