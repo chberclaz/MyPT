@@ -214,14 +214,15 @@ val_data = data[n:]
 
 
 
-""" # ----------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
 # start of model loading 
 model = BigramLanguageModel(vocab_size)
 m=model.to(device)
 
 # create pytorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=lerning_rate)
-
+print("---------- model loaded ----------")
+print("--------- start training ---------")
 # Load our model with data and train it on itself
 for iter in range(max_iters):
 
@@ -243,7 +244,8 @@ for iter in range(max_iters):
 #generate predictiv output
 #context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
 print("----- start generation ------")
-context= torch.tensor(encode("The darkness shall beginn"), dtype=torch.long)
+
+context= context_preload(torch.tensor(encode("The darkness shall beginn"), dtype=torch.long, device=device))
 
 resulti=m.generate(context, max_new_tokens=500)
 
@@ -251,11 +253,4 @@ resulti=m.generate(context, max_new_tokens=500)
 decodes=decode(resulti[0].tolist())
 
 # output decoded result
-print(decodes)       """
-
-context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
-print(context)
-print(context[:, -block_size:])
-context= context_preload(torch.tensor(encode("The darkness shall beginn"), dtype=torch.long))
-print(context)
-print(context[:, -block_size:])
+print(decodes)      
