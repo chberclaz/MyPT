@@ -5,13 +5,13 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-torch.manual_seed(1337)
+#torch.manual_seed(1337)
 
 #hyperparameters
 batch_size = 64  # how many independent sequences will we process in parallel
-block_size = 256  # what is the maximalum context length for predictions
+block_size = 192  # what is the maximalum context length for predictions
 max_iters=5000
-eval_interval= 300
+eval_interval= 500
 lerning_rate= 3e-4
 device= 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters=200
@@ -19,49 +19,6 @@ n_embd=384
 n_head = 6
 n_layer = 6
 dropout = 0.2
-
-# -------------------------------------------------------------------------------------------------------------------
-# input: textfile
-# plain text from a author (in our case sharespeare)
-
-# finding out how many different charactes and what kind will be used as input
-# wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-
-# read it in to inspect it
-with open('input.txt', 'r', encoding='utf-8')as f:
-    text=f.read()
-chars=sorted(list(set(text)))
-vocab_size=len(chars)
-# print('',join(chars))
-# print(vocab_size)
-
-
-# --------------------------------------------------------------------------------------------------------------------
-# tokenization:
-# first we need strategy to tokenize input 
-# (charactes to integers for us)
-stoi = {ch:i for i, ch in enumerate(chars) }
-itos = {i:ch for i, ch in enumerate(chars) }
-encode = lambda s: [stoi[c] for c in s] #encodeer: take a string, output a list of integers
-decode = lambda l: ''.join([itos[i] for i in l]) #decoder: take a list of integers, output a string
-
-print(encode("Blub gud"))
-print(decode(encode("Blub gud")))
-
-
-# let's encode the entire text dataset and store it into a torch.Tensor
-# encode our whole text and wrap it in a torch tensor
-data= torch.tensor(encode(text), dtype=torch.long)
-# print(data.shape, data.dtype)
-# print(data[:1000]) #the 1000 characters we looked at earlier will look to the GPT like this
-
-# ---------------------------------------------------------------------------------------------------------------------
-# splitt Innput Data in 2 set: trainig and validation Data
-n = int(0.9*len(data))  #first 90% will be training Data
-train_data= data[:n]
-val_data = data[n:]
-
-
 
 # -----------------------------------------------------------------------------------------------------------------------
 # data loding
@@ -207,6 +164,49 @@ class BigramLanguageModel(nn.Module):
             # append sampled index to the running squence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
+# ----------------------------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------------------------
+# input: textfile
+# plain text from a author (in our case sharespeare)
+
+# finding out how many different charactes and what kind will be used as input
+# wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+
+# read it in to inspect it
+with open('input.txt', 'r', encoding='utf-8')as f:
+    text=f.read()
+chars=sorted(list(set(text)))
+vocab_size=len(chars)
+# print('',join(chars))
+# print(vocab_size)
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# tokenization:
+# first we need strategy to tokenize input 
+# (charactes to integers for us)
+stoi = {ch:i for i, ch in enumerate(chars) }
+itos = {i:ch for i, ch in enumerate(chars) }
+encode = lambda s: [stoi[c] for c in s] #encodeer: take a string, output a list of integers
+decode = lambda l: ''.join([itos[i] for i in l]) #decoder: take a list of integers, output a string
+# print(encode("Blub gud"))
+# print(decode(encode("Blub gud")))
+
+
+# let's encode the entire text dataset and store it into a torch.Tensor
+# encode our whole text and wrap it in a torch tensor
+data= torch.tensor(encode(text), dtype=torch.long)
+# print(data.shape, data.dtype)
+# print(data[:1000]) #the 1000 characters we looked at earlier will look to the GPT like this
+
+# ---------------------------------------------------------------------------------------------------------------------
+# splitt Innput Data in 2 set: trainig and validation Data
+n = int(0.9*len(data))  #first 90% will be training Data
+train_data= data[:n]
+val_data = data[n:]
+
+
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # start of model loading 
@@ -215,36 +215,6 @@ m=model.to(device)
 
 # create pytorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=lerning_rate)
-
-
-# Data Loader: batches of chunks of data (start at 14:31)
-# create data Batches:
-# train_data[:block_size+1]
-
-# exampel of use of training Block sizes:
-# print(train_data[:block_size+1])
-# x= train_data[:block_size]
-# y= train_data[1:block_size+1]
-# for t in range(block_size):
-#     context= x[:t+1]
-#     target = y[t]
-#     print(f"when input is {context} the target is: {target}")
-
-# xb, yb = get_batch('train')
-# print('input:')
-# print(xb.shape)
-# print(xb)
-# print('targets:')
-# print(yb.shape)
-# print(yb)
-# print('----------------')
-# for b in range(batch_size): #batch dimension
-#     for t in range(block_size):     #time dimension
-#         context=xb[b, :t+1]
-#         target= yb[b,t]
-#         print(f"when input is {context.tolist()} the target is: {target}")
-
-# feed data batch to simple Language Model "Bigram"
 
 # Load our model with data and train it on itself
 for iter in range(max_iters):
@@ -265,11 +235,14 @@ for iter in range(max_iters):
 
 
 #generate predictiv output
-context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
+#context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
+print("----- start generation ------")
+context= torch.tensor(encode("The darkness shall beginn"), dtype=torch.long)
+
 resulti=m.generate(context, max_new_tokens=500)
 
 # to decode results, it must be converted back to a list
 decodes=decode(resulti[0].tolist())
 
 # output decoded result
-print(decodes)      #at this moment our model is untrained and output is and should be rabbish
+print(decodes)      
