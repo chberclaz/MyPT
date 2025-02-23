@@ -10,12 +10,12 @@ torch.manual_seed(1337)
 #hyperparameters
 batch_size = 32  # how many independent sequences will we process in parallel
 block_size = 8  # what is the maximalum context length for predictions
-max_iters=4000
+max_iters=5000
 eval_interval= 300
 lerning_rate= 1e-2
 device= 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters=200
-
+n_embd=32
 # -------------------------------------------------------------------------------------------------------------------
 # input: textfile
 # plain text from a author (in our case sharespeare)
@@ -92,11 +92,17 @@ class BigramLanguageModel(nn.Module):
     def __init__(self, vocab_size):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
-        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table= nn.Embedding(block_size, n_embd)
+        self.lm_head = nn.Linear(n_embd,vocab_size)
 
     def forward(self, idx, targets=None):
+        B, T = idx.shape
         # idx and targets are both (B,T) tensor of integers
-        logits = self.token_embedding_table(idx) # (B,T,C) --> batch by time by chanel (chanel = vocab_size)
+        tok_emb = self.token_embedding_table(idx) # (B,T,C) --> batch by time by chanel (chanel = vocab_size)
+        pos_emb= self.position_embedding_table(torch.arange(T,device=device)) # (T,C) 
+        x = tok_emb + pos_emb # (B,T,C) --> not only token identity but also position at which they accur
+        logits= self.lm_head(x) #(B,T,Vocab_size)
 
         if targets is None:
             loss= None
@@ -180,8 +186,12 @@ for iter in range(max_iters):
     optimizer.step()
 
 
+#generate predictiv output
 context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
 resulti=m.generate(context, max_new_tokens=500)
+
 # to decode results, it must be converted back to a list
 decodes=decode(resulti[0].tolist())
+
+# output decoded result
 print(decodes)      #at this moment our model is untrained and output is and should be rabbish
