@@ -143,13 +143,19 @@ def sa_v4(x):
     q= query(x) #(B,T,16)
     v = value(x) # --> here is what im interested in, here is what i have and if you find me interesting, this is what i will communicate with you
     wei = q @ k.transpose(-2,-1) # (B,T,16) @ (B,16,T) --> (B,T,T)
-
+    
+    # "scaled" attention additionaly divides wei by 1/sqrt(head_size). This makes it so, that when input Q,K are unit variance, wei will be unit variance too and softmax will stay diffuse and not saturate too much.
+    wei = wei * head_size**-0.5
+    
     tril = torch.tril(torch.ones(T,T)) # weights    
-    wei = wei.masked_fill(tril==0, float('-inf'))   # elements can only look in the past
+    # if all the nodes need to be able to talk to each other, delete this line...
+    # in enoder blocks delete this
+    wei = wei.masked_fill(tril==0, float('-inf'))   # elements can only look in the past --> decoder Block
     wei = F.softmax(wei, dim=-1)
     print(wei)
+    
  
-    xbow4=wei @ v   # --> Adding Values depending on how interesting the elements find each other
+    xbow4=wei @ v   # --> Adding Values depending on how interesting the elements find each other (Q,K,V)
     return xbow4
 
 torch.manual_seed(1337)
