@@ -31,6 +31,12 @@ def get_batch(split):
     x, y = x.to(device), y.to(device)
     return x, y
 
+def context_preload(content):
+    ix= torch.randint(len(content)-1, (len(content),))
+    x=torch.stack([content[i:i+1] for i in ix])
+    x = x.to(device)
+    return x
+
 @torch.no_grad()
 def estimate_loss():
     out={}
@@ -208,7 +214,7 @@ val_data = data[n:]
 
 
 
-# ----------------------------------------------------------------------------------------------------------------------
+""" # ----------------------------------------------------------------------------------------------------------------------
 # start of model loading 
 model = BigramLanguageModel(vocab_size)
 m=model.to(device)
@@ -245,4 +251,11 @@ resulti=m.generate(context, max_new_tokens=500)
 decodes=decode(resulti[0].tolist())
 
 # output decoded result
-print(decodes)      
+print(decodes)       """
+
+context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
+print(context)
+print(context[:, -block_size:])
+context= context_preload(torch.tensor(encode("The darkness shall beginn"), dtype=torch.long))
+print(context)
+print(context[:, -block_size:])
