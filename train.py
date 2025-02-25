@@ -2,16 +2,18 @@
 # pytorch needs to be installed
 # choco needs to be installed to install python
 # pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+import datetime;
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import tiktoken
 #torch.manual_seed(1337)
 
 #hyperparameters
-batch_size = 64  # how many independent sequences will we process in parallel
-block_size = 192  # what is the maximalum context length for predictions
-max_iters=5000
-eval_interval= 500
+batch_size = 16  # how many independent sequences will we process in parallel
+block_size = 256  # what is the maximum context length for predictions
+max_iters=6000
+eval_interval= 300
 lerning_rate= 3e-4
 device= 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters=200
@@ -19,6 +21,10 @@ n_embd=384
 n_head = 6
 n_layer = 6
 dropout = 0.2
+
+tokenization ="gpt2"
+vocab_size = 50304 #gpt2 vocabulary
+
 
 # -----------------------------------------------------------------------------------------------------------------------
 # data loding
@@ -163,7 +169,7 @@ class BigramLanguageModel(nn.Module):
             logits, loss = self(idx_cond)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (b,C)
-            # applay softmax to get probabilities
+            # apply softmax to get probabilities
             probs = F.softmax(logits, dim=-1) # (B,C)
             # sample from the distribution
             idx_next= torch.multinomial(probs, num_samples=1) # (B,1)
@@ -184,7 +190,7 @@ with open('input.txt', 'r', encoding='utf-8')as f:
 chars=sorted(list(set(text)))
 vocab_size=len(chars)
 # print('',join(chars))
-# print(vocab_size)
+print(vocab_size)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -201,21 +207,37 @@ decode = lambda l: ''.join([itos[i] for i in l]) #decoder: take a list of intege
 
 # let's encode the entire text dataset and store it into a torch.Tensor
 # encode our whole text and wrap it in a torch tensor
-data= torch.tensor(encode(text), dtype=torch.long)
-# print(data.shape, data.dtype)
+#for plain char encoding
+# tokens=encode(text)
+# for tiktoken encoding
+enc = tiktoken.get_encoding(tokenization)
+tokens=enc.encode_ordinary(text)
+
+#load tokens into tensor
+data= torch.tensor(tokens, dtype=torch.long)
+
+print(data.shape, data.dtype)
 # print(data[:1000]) #the 1000 characters we looked at earlier will look to the GPT like this
 
 # ---------------------------------------------------------------------------------------------------------------------
 # splitt Innput Data in 2 set: trainig and validation Data
 n = int(0.9*len(data))  #first 90% will be training Data
+
 train_data= data[:n]
 val_data = data[n:]
 
+tokens=sorted(list(set(tokens)))
+vocab_size=len(tokens)
+
+print("traindata:",train_data.shape)
+vocab_size = 50304
+print("vocabsize=",vocab_size)
 
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # start of model loading 
+# model = BigramLanguageModel(vocab_size)
 model = BigramLanguageModel(vocab_size)
 m=model.to(device)
 
@@ -228,9 +250,11 @@ for iter in range(max_iters):
 
     #every once in a while output expected loss on train and val sets
     if iter % eval_interval== 0:
+        ct = datetime.datetime.now()
+        print(ct)
         losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-
+        print(f"step {iter}: train loss {losses['train']:.4f}")
+                
     # sample a batch of data
     xb, yb = get_batch('train')
 
@@ -240,17 +264,17 @@ for iter in range(max_iters):
     loss.backward()
     optimizer.step()
 
-
-#generate predictiv output
-#context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
 print("----- start generation ------")
+#generate predictiv output
+context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
+#context= context_preload(torch.tensor(encode("Yes"), dtype=torch.long, device=device))
 
-context= context_preload(torch.tensor(encode("The darkness shall beginn"), dtype=torch.long, device=device))
-
-resulti=m.generate(context, max_new_tokens=500)
+resulti=m.generate(context, max_new_tokens=5000)
 
 # to decode results, it must be converted back to a list
-decodes=decode(resulti[0].tolist())
-
+#for plain char encoded
+#decodes=decode(resulti[0].tolist())
+#for gpt2 encoded
+decodes=enc.decode(resulti[0].tolist())
 # output decoded result
 print(decodes)      
