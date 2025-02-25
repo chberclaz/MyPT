@@ -149,7 +149,7 @@ def sa_v4(x):
     
     tril = torch.tril(torch.ones(T,T)) # weights    
     # if all the nodes need to be able to talk to each other, delete this line...
-    # in enoder blocks delete this
+    # in encoder blocks delete this
     wei = wei.masked_fill(tril==0, float('-inf'))   # elements can only look in the past --> decoder Block
     wei = F.softmax(wei, dim=-1)
     print(wei)
