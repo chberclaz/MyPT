@@ -10,10 +10,10 @@ import tiktoken
 #torch.manual_seed(1337)
 
 #hyperparameters
-batch_size = 16  # how many independent sequences will we process in parallel
+batch_size = 32  # how many independent sequences will we process in parallel
 block_size = 256  # what is the maximum context length for predictions
 max_iters=6000
-eval_interval= 300
+eval_interval= 600
 lerning_rate= 3e-4
 device= 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters=200
@@ -216,9 +216,6 @@ tokens=enc.encode_ordinary(text)
 #load tokens into tensor
 data= torch.tensor(tokens, dtype=torch.long)
 
-print(data.shape, data.dtype)
-# print(data[:1000]) #the 1000 characters we looked at earlier will look to the GPT like this
-
 # ---------------------------------------------------------------------------------------------------------------------
 # splitt Innput Data in 2 set: trainig and validation Data
 n = int(0.9*len(data))  #first 90% will be training Data
@@ -229,9 +226,7 @@ val_data = data[n:]
 tokens=sorted(list(set(tokens)))
 vocab_size=len(tokens)
 
-print("traindata:",train_data.shape)
 vocab_size = 50304
-print("vocabsize=",vocab_size)
 
 
 
@@ -251,9 +246,8 @@ for iter in range(max_iters):
     #every once in a while output expected loss on train and val sets
     if iter % eval_interval== 0:
         ct = datetime.datetime.now()
-        print(ct)
-        losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}")
+        print(iter, " : ", ct)
+        
                 
     # sample a batch of data
     xb, yb = get_batch('train')
@@ -263,6 +257,9 @@ for iter in range(max_iters):
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
+
+losses = estimate_loss()
+print(f"step {iter}: train loss {losses['train']:.4f}")
 
 print("----- start generation ------")
 #generate predictiv output
