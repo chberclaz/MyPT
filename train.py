@@ -185,7 +185,7 @@ class BigramLanguageModel(nn.Module):
 # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
 
 # read it in to inspect it
-with open('input.txt', 'r', encoding='utf-8')as f:
+with open('input_dante.txt', 'r', encoding='utf-8')as f:
     text=f.read()
 chars=sorted(list(set(text)))
 vocab_size=len(chars)
@@ -211,7 +211,9 @@ decode = lambda l: ''.join([itos[i] for i in l]) #decoder: take a list of intege
 # tokens=encode(text)
 # for tiktoken encoding
 enc = tiktoken.get_encoding(tokenization)
-tokens=enc.encode_ordinary(text)
+encode = lambda s: enc.encode_ordinary(s)
+decode = lambda l: enc.decode(l)
+tokens=encode(text)
 
 #load tokens into tensor
 data= torch.tensor(tokens, dtype=torch.long)
@@ -263,8 +265,8 @@ print(f"step {iter}: train loss {losses['train']:.4f}")
 
 print("----- start generation ------")
 #generate predictiv output
-context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
-#context= context_preload(torch.tensor(encode("Yes"), dtype=torch.long, device=device))
+#context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
+context= (torch.tensor(encode("Die Nacht"), dtype=torch.long, device=device)[None, ...])
 
 resulti=m.generate(context, max_new_tokens=5000)
 
@@ -272,6 +274,6 @@ resulti=m.generate(context, max_new_tokens=5000)
 #for plain char encoded
 #decodes=decode(resulti[0].tolist())
 #for gpt2 encoded
-decodes=enc.decode(resulti[0].tolist())
+decodes=decode(resulti[0].tolist())
 # output decoded result
 print(decodes)      
