@@ -61,7 +61,6 @@ print("Initial CLI config:")
 print(config)
 
 data_loader=GPTDataLoader(config)
-tokenizer=Tokenizer(config,args.tokenization) 
 
 #for testing purposes, smaler sample
 #myconfig.batch_size=20
@@ -112,31 +111,8 @@ def estimate_loss():
 # ----------------------------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------------------------
 # input: textfile
-# plain text from a author (in our case sharespeare)
+# plain text from an author (in our case dante/shakespeare)
 text=data_loader.read_textData(args.input_file)
-# If using char-level tokenization, build vocab from full corpus
-if args.tokenization == 'char':
-    if args.init_from_model is None:
-        # fresh char model: build vocab from this dataset
-        tokenizer.build_char_vocab(text)
-        config.vocab_size = len(tokenizer.chars)
-    else:
-        # init_from_model + char:
-        # vocab will be taken from base_tokenizer_state in the init_from_path branch.
-        # So we do NOT build a new vocab here.
-        pass
-else:
-    config.vocab_size = 50304
-
-# tokenization:
-tokens=tokenizer.encode(text)
-#load tokens into tensor
-data= torch.tensor(tokens, dtype=torch.long)
-# ---------------------------------------------------------------------------------------------------------------------
-# splitt Innput Data in 2 set: trainig and validation Data
-n = int(0.9*len(data))  #first 90% will be training Data
-train_data= data[:n]
-val_data = data[n:]
 
 # ----------------- MODEL LOADING / RESUME / INIT-FROM -----------------
 resume_from = None
@@ -168,8 +144,8 @@ if resume_from is not None:
     print("Loaded config from this model checkpoint:")
     print(config)
 
-    if tokenizer_state is not None:
-        tokenizer = Tokenizer.from_state(config, tokenizer_state)
+    # Use model-owned tokenizer
+    tokenizer = model.tokenizer
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     if optim_state is not None:
@@ -217,10 +193,12 @@ elif init_from_path is not None:
             raise ValueError(
                 f"Base char-level model '{args.init_from_model}' has no 'chars' list saved."
             )
-        tokenizer.chars = base_chars
+        # Ensure model's tokenizer carries base chars
+        model.tokenizer.chars = base_chars
         config.vocab_size = len(base_chars)
         print(f"Using base model's char vocabulary of size {len(base_chars)}")
 
+    tokenizer = model.tokenizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     start_step = 0  # new training run for this specialized model
 
@@ -229,7 +207,15 @@ else:
     print("Using CLI config to initialize new model:")
     print(config)
 
-    model = GPT(config).to(device)
+    # Build tokenizer first to finalize vocab_size before model init when using char
+    tokenizer = Tokenizer(config, args.tokenization)
+    if args.tokenization == 'char':
+        tokenizer.build_char_vocab(text)
+        config.vocab_size = len(tokenizer.chars)
+    else:
+        config.vocab_size = 50304
+
+    model = GPT(config, tokenizer=tokenizer).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     start_step = 0
 
@@ -242,6 +228,13 @@ print("--------- start training ---------")
 # Load our model with data and train it on itself
 os.makedirs("checkpoints", exist_ok=True)
 
+# ---------------- Tokenize training corpus with the finalized tokenizer ----------------
+tokens = tokenizer.encode(text)
+data = torch.tensor(tokens, dtype=torch.long)
+# Split input data in train/validation sets
+n = int(0.9*len(data))
+train_data = data[:n]
+val_data = data[n:]
 
 for iter in range(start_step, max_iters):
     #every once in a while output expected loss on train and val sets
@@ -253,10 +246,8 @@ for iter in range(start_step, max_iters):
         losses = estimate_loss()
         print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-        tokenizer_state = tokenizer.get_state()
         model.save(
             checkpoint_path,
-            tokenizer_state=tokenizer_state,
             step=iter,
             optimizer_state=optimizer.state_dict(),
         )
@@ -275,10 +266,8 @@ print(f"final step {iter}: train loss {losses['train']:.4f}, val loss {losses['v
 
 final_path = os.path.join(checkpoint_dir, "final.pt")
 print("----- saving final model ------")
-tokenizer_state = tokenizer.get_state()
 model.save(
     final_path,
-    tokenizer_state=tokenizer_state,
     step=iter,
     optimizer_state=optimizer.state_dict(),
 )
