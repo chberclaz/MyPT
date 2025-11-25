@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from dataclasses import asdict
 import os
 
+# Local imports are placed here to avoid circulars when tooling loads files out of order
+from tokenizer import Tokenizer
+
 @dataclass
 class GPTConfig:
     batch_size: int = 32      # how many independent sequences will we process in parallel
@@ -101,10 +104,20 @@ class Block(nn.Module):
 # see makemore video series of andrej for more informations
 class GPT(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, tokenizer: Tokenizer | None = None, token_kind: str | None = None):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
         self.config = config
+
+        # ---- Tokenizer ownership ----
+        # If a tokenizer instance is provided, adopt it.
+        # Else create one from token_kind (default to gpt2 if None).
+        if tokenizer is not None:
+            self.tokenizer: Tokenizer = tokenizer
+        else:
+            kind = token_kind if token_kind is not None else 'gpt2'
+            self.tokenizer = Tokenizer(self.config, kind)
+
         self.token_embedding_table = nn.Embedding(self.config.vocab_size, self.config.n_embd)
         self.position_embedding_table= nn.Embedding(self.config.block_size, self.config.n_embd)
         self.blocks= nn.Sequential(*[Block(self.config) for _ in range(self.config.n_layer)])
@@ -140,6 +153,13 @@ class GPT(nn.Module):
         """
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
+        # If caller didn't pass tokenizer_state explicitly, take it from the owned tokenizer (if present)
+        if tokenizer_state is None and hasattr(self, "tokenizer") and self.tokenizer is not None:
+            try:
+                tokenizer_state = self.tokenizer.get_state()
+            except Exception:
+                tokenizer_state = None
+
         checkpoint = {
             "model_state_dict": self.state_dict(),
             "config": asdict(self.config),
@@ -154,23 +174,35 @@ class GPT(nn.Module):
     def load(cls, path: str, map_location: str | torch.device | None = None):
         """
         Load model + config (+ tokenizer + step) from checkpoint.
-        Returns: (model, tokenizer_state, step)
+        Returns: (model, tokenizer_state, step, optimizer_state)
         """
         checkpoint = torch.load(path, map_location=map_location)
         config_dict = checkpoint["config"]
         config = GPTConfig(**config_dict)
 
+        # Recreate model
         model = cls(config)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.to(config.device)
         model.eval()
 
+        # Reattach tokenizer to model for first-class ownership
         tokenizer_state = checkpoint.get("tokenizer", None)
+        if tokenizer_state is not None:
+            try:
+                model.tokenizer = Tokenizer.from_state(config, tokenizer_state)
+            except Exception:
+                # Fallback: keep existing tokenizer instance
+                pass
+
         step = checkpoint.get("step", None)
         optim_state = checkpoint.get("optimizer_state_dict", None)
         return model, tokenizer_state, step, optim_state
     
-    def generate(self, idx, max_new_tokens):
+    def generate(self, prompt, max_new_tokens):
+        ctx_ids = self.encode(prompt)
+        idx = torch.tensor([ctx_ids], dtype=torch.long, device=self.config.device)
+
         # idx is (B, T) array of indices in the current  context
         for _ in range(max_new_tokens):
             # crop idx to the last block_size tokens
@@ -186,4 +218,11 @@ class GPT(nn.Module):
             # append sampled index to the running squence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
+
+    # ---- Convenience helpers to avoid juggling tokenizer outside the model ----
+    def encode(self, text: str) -> list[int]:
+        return self.tokenizer.encode(text)
+
+    def decode(self, ids: list[int]) -> str:
+        return self.tokenizer.decode(ids)
     

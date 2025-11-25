@@ -2,7 +2,6 @@ import torch
 import os
 import argparse
 from model import GPT, GPTConfig
-from tokenizer import Tokenizer  # if needed
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -20,16 +19,16 @@ args = parser.parse_args()
 checkpoint_dir = os.path.join("checkpoints", args.model_name)
 model_path = os.path.join(checkpoint_dir, args.checkpoint)
 
-def generate_answer(model, question: str, tokenizer, max_new_tokens=100):
+def generate_answer(model, question: str, max_new_tokens=100):
     # Format Q&A prompt
     prompt = f"<Question> {question} </Question>\n<Answer> "       
     # Encode
-    ctx = tokenizer.encode(prompt)
-    idx = torch.tensor([ctx], dtype=torch.long, device=model.config.device)
+    #ctx = model.encode(prompt)
+    #idx = torch.tensor([ctx], dtype=torch.long, device=model.config.device)
     # Generate continuation
-    out = model.generate(idx, max_new_tokens=max_new_tokens)
+    out = model.generate(prompt, max_new_tokens=max_new_tokens)
     # Decode the output
-    decoded = tokenizer.decode(out[0].tolist())
+    decoded = model.decode(out[0].tolist())
     # Strip everything before <Answer>
     answer = decoded.split("<Answer>")[-1]
     # Stop at end tag if model generated it
@@ -42,30 +41,25 @@ if not os.path.exists(model_path):
 print(f"Loading model '{args.model_name}' from: {model_path}")
 
 
-# Load model + tokenizer state
+# Load model (+ tokenizer is attached)
 model, tokenizer_state, step, optim_state = GPT.load(model_path, map_location=device)
-
-# Recreate tokenizer from saved state
-config = model.config  # device/vocab_size are in config, but token_kind/ chars come from state
-
-# rebuild tokenizer from saved state
-if tokenizer_state is None:
-    raise ValueError("No tokenizer state found in checkpoint.")
-tokenizer = Tokenizer.from_state(config, tokenizer_state)
-print(f"Tokenizer kind: {tokenizer.token_kind}")
+config = model.config
+if model.tokenizer is None and tokenizer_state is None:
+    raise ValueError("No tokenizer available. Check your checkpoint.")
+print(f"Tokenizer kind: {getattr(model.tokenizer, 'token_kind', 'unknown')}")
 print(f"Prompt: {args.prompt}")
 
 # Prompt
-ctx_ids = tokenizer.encode(args.prompt)
-idx = torch.tensor([ctx_ids], dtype=torch.long, device=model.config.device)
+#ctx_ids = model.encode(args.prompt)
+#idx = torch.tensor([ctx_ids], dtype=torch.long, device=model.config.device)
 
 print(f"Start generating...")
 
 # Generate
 with torch.no_grad():
-    out = model.generate(idx, max_new_tokens=args.max_new_tokens)
+    out = model.generate(args.prompt, max_new_tokens=args.max_new_tokens)
 
-decoded = tokenizer.decode(out[0].tolist())
+decoded = model.decode(out[0].tolist())
 print(decoded)
 print(f"!!! Finished !!!")
 
@@ -73,7 +67,7 @@ print(f"!!! Finished !!!")
 
 # Q&A prototype
 print(f"Generating answer...")
-answer = generate_answer(model, "How far is the moon?", tokenizer, 150)
+answer = generate_answer(model, "How far is the moon?", 150)
 print(answer)
 print(f"!!! Finished !!!")
 
