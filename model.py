@@ -2,7 +2,28 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
+from dataclasses import asdict
+import os
 
+@dataclass
+class GPTConfig:
+    batch_size: int = 32      # how many independent sequences will we process in parallel
+    block_size: int = 256     # max context length
+    vocab_size: int = 50304   # gpt2 vocabulary
+    n_embd: int = 384
+    n_head: int = 6
+    n_layer: int = 6
+    dropout: float = 0.2
+    bias: bool = False        # True: GPT-2 style, False: a bit better/faster
+    device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    def __str__(self):
+        return (
+            f'batch_size:{self.batch_size}, block_size:{self.block_size}, '
+            f'vocab_size:{self.vocab_size}, n_embd:{self.n_embd}, '
+            f'n_head:{self.n_head}, n_layer:{self.n_layer}, '
+            f'dropout:{self.dropout}, bias:{self.bias}, device:{self.device}'
+        )
 
 class Head(nn.Module):
     # one Head of self-attention
@@ -22,7 +43,10 @@ class Head(nn.Module):
         v = self.value(x) # --> here is what im interested in, here is what i have and if you find me interesting, this is what i will communicate with you
  
         #compute attention scores ("affinities")
-        wei = q @ k.transpose(-2,-1)* C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
+        #wei = q @ k.transpose(-2,-1)* C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
+        # use head_size for scaling, not full C
+        wei = q @ k.transpose(-2, -1) * (self.head_size ** -0.5)
+
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))   # elements can only look in the past --> decoder Block (B,T,T)
         wei = F.softmax(wei, dim=-1) # (B,T,T)
         wei = self.dropout(wei)
@@ -72,20 +96,6 @@ class Block(nn.Module):
         x = x + self.fwd(self.ln2(x))
         return x
 
-@dataclass
-class GPTConfig:
-    batch_size = 32  # how many independent sequences will we process in parallel
-    block_size = 256  # what is the maximum context length for predictions
-    vocab_size = 50304 #gpt2 vocabulary
-    n_embd=384
-    n_head = 6
-    n_layer = 6
-    dropout = 0.2
-    bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    device = 'cuda' if torch.cuda.is_available() else 'cpu' 
-
-    def __str__(self):
-        return f'batch_size:{self.batch_size}, block_size:{self.block_size}, vocab_size:{self.vocab_size}, n_embd:{self.n_embd}, n_head:{self.n_head}, n_layer:{self.n_layer}, dropout:{self.dropout}, bias:{self.bias}, device:{self.device}'
 
 # super simpel Bigram Model
 # see makemore video series of andrej for more informations
@@ -105,7 +115,9 @@ class GPT(nn.Module):
         B, T = idx.shape
         # idx and targets are both (B,T) tensor of integers
         tok_emb = self.token_embedding_table(idx) # (B,T,C) --> batch by time by chanel (chanel = vocab_size)
-        pos_emb= self.position_embedding_table(torch.arange(T,device=self.config.device)) # (T,C) 
+        #pos_emb= self.position_embedding_table(torch.arange(T,device=self.config.device)) # (T,C) 
+        pos = torch.arange(T, device=idx.device)
+        pos_emb = self.position_embedding_table(pos)
         x = tok_emb + pos_emb # (B,T,C) --> not only token identity but also position at which they accur
         x = self.blocks(x)
         x = self.ln_f(x)
@@ -121,6 +133,42 @@ class GPT(nn.Module):
             loss = F.cross_entropy(logits, targets)
 
         return logits, loss
+    
+    def save(self, path: str, tokenizer_state: dict | None = None, step: int | None = None, optimizer_state: dict | None = None):
+        """
+        Save model weights + config (+ optional tokenizer + step) to a single file.
+        """
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        checkpoint = {
+            "model_state_dict": self.state_dict(),
+            "config": asdict(self.config),
+            "tokenizer": tokenizer_state,   # e.g. {"token_kind": "gpt2"} or {"token_kind": "char", "chars": [...]}
+            "step": step,
+            "optimizer_state_dict": optimizer_state,
+        }
+        torch.save(checkpoint, path)
+        print(f"Saved checkpoint to {path}")
+
+    @classmethod
+    def load(cls, path: str, map_location: str | torch.device | None = None):
+        """
+        Load model + config (+ tokenizer + step) from checkpoint.
+        Returns: (model, tokenizer_state, step)
+        """
+        checkpoint = torch.load(path, map_location=map_location)
+        config_dict = checkpoint["config"]
+        config = GPTConfig(**config_dict)
+
+        model = cls(config)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.to(config.device)
+        model.eval()
+
+        tokenizer_state = checkpoint.get("tokenizer", None)
+        step = checkpoint.get("step", None)
+        optim_state = checkpoint.get("optimizer_state_dict", None)
+        return model, tokenizer_state, step, optim_state
     
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current  context

@@ -9,11 +9,13 @@ from torch.nn import functional as F
 from model import GPT, GPTConfig 
 from loader import GPTDataLoader
 from tokenizer import Tokenizer
+import os
+
 #torch.manual_seed(1337)
 
 #hyperparameters
-max_iters=10000
-eval_interval= 600
+max_iters=1000
+eval_interval= 20
 learning_rate= 3e-4
 device= 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters=200
@@ -59,6 +61,9 @@ def estimate_loss():
 # input: textfile
 # plain text from a author (in our case sharespeare)
 text=mdl.read_textData('input_dante.txt')
+# If using char-level tokenization, build vocab from full corpus
+if tokenization == 'char':
+    tokenizer.build_char_vocab(text)
 # tokenization:
 tokens=tokenizer.encode(text)
 #load tokens into tensor
@@ -72,21 +77,50 @@ val_data = data[n:]
 # ----------------------------------------------------------------------------------------------------------------------
 # start of model loading 
 # model = BigramLanguageModel(vocab_size)
-model = GPT(myconfig)
-m=model.to(myconfig.device)
+checkpoint_path = "checkpoints/gpt_step_100.pt"  # or whatever name you like
 
-# create pytorch optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-print("---------- model loaded ----------")
+if os.path.exists(checkpoint_path):
+    print(f"Found checkpoint at {checkpoint_path}, loading...")
+    model, tokenizer_state, start_step, optim_state = GPT.load(checkpoint_path, map_location=myconfig.device)
+
+    # Rebuild tokenizer from saved state
+    tokenizer = Tokenizer.from_state(myconfig, tokenizer_state)
+
+    # Build optimizer and load its state
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    if optim_state is not None:
+        optimizer.load_state_dict(optim_state)
+
+else:
+    print("No checkpoint found, starting fresh training...")
+    model = GPT(myconfig).to(myconfig.device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    start_step = 0
+
+m = model  # keep your alias if you still use it later
+print(f"Device: {device}")
+print("---------- model ready ----------")
 print(myconfig)
 print("--------- start training ---------")
 # Load our model with data and train it on itself
-for iter in range(max_iters):
+os.makedirs("checkpoints", exist_ok=True)
+
+
+for iter in range(start_step, max_iters):
     #every once in a while output expected loss on train and val sets
-    if iter % eval_interval== 0:
+    if iter % eval_interval == 0:
         ct = datetime.datetime.now()
-        print(iter, " : ", ct)        
-                
+        print(iter, " : ", ct)
+
+        # OPTIONAL: quick eval + checkpoint
+        losses = estimate_loss()
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
+        tokenizer_state = tokenizer.get_state()
+        model.save(f"checkpoints/gpt_step_{iter}.pt",
+                   tokenizer_state=tokenizer_state,
+                   step=iter)
+    
     # sample a batch of data
     xb, yb = get_batch(myconfig, 'train')
     #evaluate the loss
@@ -96,14 +130,13 @@ for iter in range(max_iters):
     optimizer.step()
 
 losses = estimate_loss()
-print(f"step {iter}: train loss {losses['train']:.4f}")
+print(f"final step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-print("----- start generation ------")
-#generate predictiv output
-#context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
-context= (torch.tensor(tokenizer.encode("Die Nacht"), dtype=torch.long, device=myconfig.device)[None, ...])
-resulti=m.generate(context, max_new_tokens=5000)
-# to decode results, it must be converted back to a list
-decodes=tokenizer.decode(resulti[0].tolist())
-# output decoded result
-print(decodes)      
+print("----- saving final model ------")
+tokenizer_state = tokenizer.get_state()
+model.save(
+    "checkpoints/gpt_final.pt",
+    tokenizer_state=tokenizer_state,
+    step=iter,
+    optimizer_state=optimizer.state_dict(),
+)
