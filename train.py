@@ -12,7 +12,7 @@ from tokenizer import Tokenizer
 #torch.manual_seed(1337)
 
 #hyperparameters
-max_iters=8000
+max_iters=10000
 eval_interval= 600
 learning_rate= 3e-4
 device= 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -102,7 +102,7 @@ print("----- start generation ------")
 #generate predictiv output
 #context= torch.zeros((1,1), dtype=torch.long, device=device) # set start at zero(zero represents a space or newline in our data set )
 context= (torch.tensor(tokenizer.encode("Die Nacht"), dtype=torch.long, device=myconfig.device)[None, ...])
-resulti=m.generate(context, max_new_tokens=50)
+resulti=m.generate(context, max_new_tokens=5000)
 # to decode results, it must be converted back to a list
 decodes=tokenizer.decode(resulti[0].tolist())
 # output decoded result
