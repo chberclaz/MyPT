@@ -20,6 +20,22 @@ args = parser.parse_args()
 checkpoint_dir = os.path.join("checkpoints", args.model_name)
 model_path = os.path.join(checkpoint_dir, args.checkpoint)
 
+def generate_answer(model, question: str, tokenizer, max_new_tokens=100):
+    # Format Q&A prompt
+    prompt = f"<Question> {question} </Question>\n<Answer> "       
+    # Encode
+    ctx = tokenizer.encode(prompt)
+    idx = torch.tensor([ctx], dtype=torch.long, device=model.config.device)
+    # Generate continuation
+    out = model.generate(idx, max_new_tokens=max_new_tokens)
+    # Decode the output
+    decoded = tokenizer.decode(out[0].tolist())
+    # Strip everything before <Answer>
+    answer = decoded.split("<Answer>")[-1]
+    # Stop at end tag if model generated it
+    answer = answer.split("</Answer>")[0]
+    return answer.strip()
+
 if not os.path.exists(model_path):
     raise FileNotFoundError(f"Checkpoint not found: {model_path}")
 
@@ -52,3 +68,12 @@ with torch.no_grad():
 decoded = tokenizer.decode(out[0].tolist())
 print(decoded)
 print(f"!!! Finished !!!")
+
+
+
+# Q&A prototype
+print(f"Generating answer...")
+answer = generate_answer(model, "How far is the moon?", tokenizer, 150)
+print(answer)
+print(f"!!! Finished !!!")
+
