@@ -186,3 +186,4 @@ class GPT(nn.Module):
             # append sampled index to the running squence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
+    
