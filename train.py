@@ -3,10 +3,7 @@
 # choco needs to be installed to install python
 # pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 import argparse
-from core.model import GPT, GPTConfig
-from core.tokenizer import Tokenizer
-from core.data_loader import GPTDataLoader
-from core.checkpoint import CheckpointManager
+from core import GPTConfig, GPTDataLoader, CheckpointManager, get_model_info
 
 
 def parse_args():
@@ -79,14 +76,32 @@ def main():
         print(f"Initializing from: {args.init_from_model}")
     print()
     
+    # Check if model already exists (for resume info)
+    ckpt_manager = CheckpointManager(args.model_name)
+    if ckpt_manager.exists():
+        print("========== Existing Model Detected ==========")
+        print("Will resume training from existing checkpoint")
+        try:
+            info = get_model_info(args.model_name)
+            print(f"Format: {info.get('format', 'unknown')}")
+            if 'training_state' in info and info['training_state'].get('step'):
+                print(f"Last training step: {info['training_state']['step']}")
+            if 'config' in info:
+                print(f"Architecture: {info['config'].get('n_layer', '?')} layers, "
+                      f"{info['config'].get('n_embd', '?')} embd dim")
+        except Exception:
+            print("(Could not load full model info)")
+        print()
+    
     # Read training text
     print("Loading training data...")
     text = GPTDataLoader.read_text(args.input_file)
-    print(f"Loaded {len(text)} characters")
+    print(f"Loaded {len(text):,} characters")
+    print(f"Approximate tokens (char-level): {len(text):,}")
+    print(f"Approximate tokens (GPT-2): ~{len(text)//4:,}")
     
     # Initialize model (handles resume / init_from / fresh)
     print("\nInitializing model...")
-    ckpt_manager = CheckpointManager(args.model_name)
     model, optimizer, start_step = ckpt_manager.initialize_for_training(
         config=config,
         tokenization=args.tokenization,
@@ -95,8 +110,14 @@ def main():
         init_from_model=args.init_from_model
     )
     
-    print(f"Model configuration:")
-    print(model.config)
+    print(f"\n========== Model Configuration ==========")
+    print(f"Architecture: {model.config.n_layer} layers × {model.config.n_head} heads")
+    print(f"Embedding dimension: {model.config.n_embd}")
+    print(f"Context length: {model.config.block_size}")
+    print(f"Vocabulary size: {model.config.vocab_size}")
+    print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Device: {model.config.device}")
+    print(f"Starting from step: {start_step}")
     print()
     
     # Prepare data
@@ -105,9 +126,11 @@ def main():
     data_loader.prepare_data(text)
     
     # Train the model (model trains itself!)
-    print("\n========== Starting Training ==========")
-    print(f"Checkpoints will be saved to: {ckpt_manager.checkpoint_dir}")
-    print(f"Format: model.pt + config.json + tokenizer.json + training_state.json")
+    print("========== Starting Training ==========")
+    print(f"Training from step {start_step} to {args.max_iters}")
+    print(f"Checkpoints: {ckpt_manager.checkpoint_dir}")
+    print(f"Format: JSON-based (model.pt + config.json + tokenizer.json + ...)")
+    print(f"Evaluation every {args.eval_interval} steps")
     print()
     
     model.fit(
@@ -117,17 +140,23 @@ def main():
         eval_interval=args.eval_interval,
         eval_iters=args.eval_iters,
         checkpoint_dir=ckpt_manager.checkpoint_dir,
-        start_step=start_step
+        start_step=start_step,
+        learning_rate=args.learning_rate
     )
     
     print("\n========== Training Complete ==========")
-    print(f"Model saved to: {ckpt_manager.checkpoint_dir}")
-    print("Files:")
-    print("  - model.pt (weights only)")
-    print("  - config.json (architecture)")
-    print("  - tokenizer.json (vocabulary)")
-    print("  - training_state.json (step, optimizer ref)")
-    print("  - optimizer.pt (optimizer state)")
+    print(f"✅ Model saved to: {ckpt_manager.checkpoint_dir}")
+    print()
+    print("Checkpoint files:")
+    print("  📄 model.pt           - Model weights")
+    print("  📄 config.json        - Architecture configuration")
+    print("  📄 tokenizer.json     - Vocabulary")
+    print("  📄 training_state.json - Training progress")
+    print("  📄 optimizer.pt       - Optimizer state")
+    print()
+    print("Next steps:")
+    print(f"  Generate: python generate.py --model_name {args.model_name} --prompt 'Your prompt'")
+    print(f"  Inspect:  python scripts/inspect_model.py --model_name {args.model_name}")
 
 
 if __name__ == "__main__":

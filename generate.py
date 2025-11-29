@@ -1,6 +1,5 @@
 import argparse
-from core.checkpoint import CheckpointManager
-from generator import Generator
+from core import load_model, get_model_info, Generator
 
 
 def parse_args():
@@ -19,6 +18,8 @@ def parse_args():
     parser.add_argument("--mode", type=str, default="basic",
                         choices=["basic", "qa"],
                         help="Generation mode: basic (text completion) or qa (question answering)")
+    parser.add_argument("--show_info", action="store_true",
+                        help="Show model info before generating")
     
     return parser.parse_args()
 
@@ -33,17 +34,45 @@ def main():
     print(f"Max new tokens: {args.max_new_tokens}")
     print()
     
-    # Load model (auto-detects format)
+    # Optional: Show model info without loading (fast preview)
+    if args.show_info:
+        print("========== Model Info ==========")
+        try:
+            info = get_model_info(args.model_name)
+            print(f"Format: {info.get('format', 'unknown')}")
+            if 'config' in info:
+                cfg = info['config']
+                print(f"Layers: {cfg.get('n_layer', '?')}")
+                print(f"Embedding dim: {cfg.get('n_embd', '?')}")
+                print(f"Vocab size: {cfg.get('vocab_size', '?')}")
+            if 'tokenizer' in info:
+                print(f"Tokenizer: {info['tokenizer'].get('token_kind', 'unknown')}")
+            if 'training_state' in info and info['training_state'].get('step'):
+                print(f"Training step: {info['training_state']['step']}")
+            print()
+        except Exception as e:
+            print(f"Could not load model info: {e}")
+            print()
+    
+    # Load model using convenience function
     print(f"Loading model '{args.model_name}'...")
-    model = CheckpointManager.load_for_inference(
-        args.model_name, 
-        legacy_filename=args.legacy_checkpoint
-    )
+    
+    # Handle legacy checkpoint parameter if specified
+    if args.legacy_checkpoint:
+        from core.checkpoint import CheckpointManager
+        model = CheckpointManager.load_for_inference(
+            args.model_name,
+            legacy_filename=args.legacy_checkpoint
+        )
+    else:
+        # Use convenience function (cleaner API)
+        model = load_model(args.model_name)
     
     # Print model info
-    print(f"Model loaded successfully!")
+    print(f"✅ Model loaded successfully!")
     print(f"Tokenizer: {getattr(model.tokenizer, 'token_kind', 'unknown')}")
     print(f"Vocab size: {model.config.vocab_size}")
+    print(f"Device: {model.config.device}")
     print()
     
     # Create generator

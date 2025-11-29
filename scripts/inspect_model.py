@@ -51,10 +51,12 @@ if ckpt_manager.exists_new_format():
     # Load training state
     training_state_path = os.path.join(ckpt_manager.checkpoint_dir, "training_state.json")
     step = None
+    training_config = None
     if os.path.exists(training_state_path):
         with open(training_state_path, 'r') as f:
             training_state = json.load(f)
         step = training_state.get("step", None)
+        training_config = training_state.get("training_config", None)
 
 else:
     print("=== FORMAT ===")
@@ -76,13 +78,15 @@ else:
     
     # Load legacy checkpoint
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    checkpoint = torch.load(model_path, map_location=device)
+    # Legacy checkpoints contain dicts with config/tokenizer
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Extract info
     config_dict = checkpoint["config"]
     config = GPTConfig(**config_dict)
     tokenizer_state = checkpoint.get("tokenizer", None)
     step = checkpoint.get("step", None)
+    training_config = None  # Legacy format doesn't have this
 
 # Now display the information
 print("=== CONFIG ===")
@@ -116,5 +120,14 @@ if step is None:
     print("No training step info stored.")
 else:
     print(f"Last recorded training step: {step}")
+
+# Display training configuration if available
+if training_config is not None:
+    print("\nTraining hyperparameters:")
+    print(f"  max_iters     : {training_config.get('max_iters', 'N/A')}")
+    print(f"  eval_interval : {training_config.get('eval_interval', 'N/A')}")
+    print(f"  eval_iters    : {training_config.get('eval_iters', 'N/A')}")
+    print(f"  learning_rate : {training_config.get('learning_rate', 'N/A')}")
+    print(f"  start_step    : {training_config.get('start_step', 'N/A')}")
 
 print("\nInspection complete.")

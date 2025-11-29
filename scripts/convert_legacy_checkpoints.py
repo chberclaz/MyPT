@@ -119,7 +119,8 @@ def find_all_legacy_checkpoints(base_dir="checkpoints"):
                 # Check if it's a legacy checkpoint (has "config" key)
                 try:
                     path = os.path.join(model_dir, filename)
-                    checkpoint = torch.load(path, map_location='cpu')
+                    # Legacy checkpoints contain dicts with config/tokenizer
+                    checkpoint = torch.load(path, map_location='cpu', weights_only=False)
                     if "config" in checkpoint and "model_state_dict" in checkpoint:
                         legacy_checkpoints.append((model_name, filename))
                 except:
