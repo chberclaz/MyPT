@@ -58,6 +58,14 @@ from .checkpoint import CheckpointManager
 # Generator
 from .generator import Generator
 
+# Training utilities
+from .training_utils import (
+    calculate_dataset_coverage,
+    print_coverage_analysis,
+    estimate_training_time,
+    print_training_estimates,
+)
+
 
 # Public API - explicitly define what gets imported with "from core import *"
 __all__ = [
@@ -84,6 +92,12 @@ __all__ = [
     
     # Generator
     'Generator',
+    
+    # Training utilities
+    'calculate_dataset_coverage',
+    'print_coverage_analysis',
+    'estimate_training_time',
+    'print_training_estimates',
 ]
 
 
