@@ -4,6 +4,67 @@ Utility scripts for model management and inspection.
 
 ## Available Scripts
 
+### `calculate_params.py`
+Calculate the number of parameters in a GPT model.
+
+**Usage:**
+```bash
+# From config file
+python scripts/calculate_params.py --config_file configs/150M_1024.json
+
+# From parameters
+python scripts/calculate_params.py --n_layer 16 --n_embd 768 --n_head 12
+
+# Interactive mode
+python scripts/calculate_params.py --interactive
+
+# Show formula
+python scripts/calculate_params.py --show_formula
+```
+
+**Features:**
+- Detailed parameter breakdown by component
+- Memory estimates (FP32, FP16)
+- Training memory estimates
+- Works with config files or manual input
+
+**Arguments:**
+- `--config_file`: Path to config JSON file
+- `--n_layer`: Number of layers
+- `--n_embd`: Embedding dimension
+- `--n_head`: Number of attention heads
+- `--vocab_size`: Vocabulary size (default: 50304)
+- `--block_size`: Context length (default: 256)
+- `--bias`: Use bias in layers
+- `--interactive`: Interactive mode
+- `--show_formula`: Display calculation formula
+
+---
+
+### `show_configs.py`
+Display available model configuration presets.
+
+**Usage:**
+```bash
+# List all configs
+python scripts/show_configs.py
+
+# Show details for specific config
+python scripts/show_configs.py --config_file configs/150M_1024.json
+```
+
+**Features:**
+- Lists all available configs
+- Shows parameter counts
+- Displays architecture details
+- Provides usage examples
+
+**Arguments:**
+- `--config_file`: Show details for specific config (optional)
+- `--configs_dir`: Directory containing configs (default: configs/)
+
+---
+
 ### `inspect_model.py`
 Inspect model checkpoints and display configuration details.
 

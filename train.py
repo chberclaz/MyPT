@@ -21,6 +21,11 @@ def parse_args():
     parser.add_argument("--init_from_model", type=str, default=None,
                         help="Optional: model_name to initialize weights from (e.g. dante_base)")
     
+    # Configuration file (alternative to individual params)
+    parser.add_argument("--config_file", type=str, default=None,
+                        help="Path to JSON config file (e.g. configs/150M.json). "
+                             "If specified, overrides individual architecture params.")
+    
     # Training hyperparameters
     parser.add_argument("--max_iters", type=int, default=1000,
                         help="Number of training iterations")
@@ -31,7 +36,7 @@ def parse_args():
     parser.add_argument("--learning_rate", type=float, default=3e-4,
                         help="Learning rate for optimizer")
     
-    # Model architecture
+    # Model architecture (ignored if --config_file is specified)
     parser.add_argument("--batch_size", type=int, default=32,
                         help="Batch size for training")
     parser.add_argument("--block_size", type=int, default=256,
@@ -54,17 +59,46 @@ def main():
     """Main training entry point"""
     args = parse_args()
     
-    # Initial config (may be overridden if resuming from checkpoint)
-    config = GPTConfig(
-        batch_size=args.batch_size,
-        block_size=args.block_size,
-        vocab_size=50304,  # Will be adjusted for char-level if needed
-        n_embd=args.n_embd,
-        n_head=args.n_head,
-        n_layer=args.n_layer,
-        dropout=args.dropout,
-        bias=args.bias,
-    )
+    # Load config from file or use CLI arguments
+    if args.config_file:
+        print(f"Loading configuration from: {args.config_file}")
+        import json
+        import os
+        
+        if not os.path.exists(args.config_file):
+            raise FileNotFoundError(f"Config file not found: {args.config_file}")
+        
+        with open(args.config_file, 'r') as f:
+            config_dict = json.load(f)
+        
+        # Extract description if present
+        config_name = config_dict.pop("name", None)
+        config_desc = config_dict.pop("description", None)
+        
+        # Create config from file
+        # Set device if not in config
+        if "device" not in config_dict:
+            import torch
+            config_dict["device"] = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        config = GPTConfig(**config_dict)
+        
+        if config_name:
+            print(f"Configuration: {config_name}")
+        if config_desc:
+            print(f"Description: {config_desc}")
+    else:
+        # Use CLI arguments
+        config = GPTConfig(
+            batch_size=args.batch_size,
+            block_size=args.block_size,
+            vocab_size=50304,  # Will be adjusted for char-level if needed
+            n_embd=args.n_embd,
+            n_head=args.n_head,
+            n_layer=args.n_layer,
+            dropout=args.dropout,
+            bias=args.bias,
+        )
     
     print(f"========== Training Configuration ==========")
     print(f"Model name: {args.model_name}")
