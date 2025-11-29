@@ -56,6 +56,24 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - Memory estimation
   - Using the calculator tool
 
+- **[LARGE_DATASET_TRAINING.md](LARGE_DATASET_TRAINING.md)** - Large dataset training guide
+  - Sharded dataset system for 100M+ tokens
+  - Minimal RAM usage (memory-mapped shards)
+  - Step-by-step examples
+  - Performance comparison
+
+- **[SHARDED_DATASET_IMPLEMENTATION.md](SHARDED_DATASET_IMPLEMENTATION.md)** - Sharded dataset implementation
+  - Technical implementation details
+  - Memory mapping explained
+  - API reference
+  - Use cases and examples
+
+- **[DATASET_COVERAGE_ANALYSIS.md](DATASET_COVERAGE_ANALYSIS.md)** - Dataset coverage analysis
+  - Automatic coverage calculation
+  - Optimal training iterations
+  - Coverage recommendations (2-5x)
+  - Interactive warnings for low coverage
+
 ### Development & Architecture
 
 - **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** - Initial refactoring details

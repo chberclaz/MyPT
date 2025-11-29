@@ -1,8 +1,54 @@
 # MyPT Scripts
 
-Utility scripts for model management and inspection.
+Utility scripts for model management, inspection, and dataset preparation.
 
 ## Available Scripts
+
+### `prepare_dataset.py`
+Prepare sharded datasets for large-scale training.
+
+**Purpose:** Convert text files into binary shards for training on large datasets (100M+ tokens) without loading everything into RAM.
+
+**Usage:**
+```bash
+# Basic usage
+python scripts/prepare_dataset.py \
+    --input_files data.txt \
+    --out_dir data/my_dataset
+
+# Multiple sources
+python scripts/prepare_dataset.py \
+    --input_files wiki.txt books.txt news.txt \
+    --out_dir data/large_corpus \
+    --tokenization gpt2 \
+    --tokens_per_shard 10000000
+
+# Character-level
+python scripts/prepare_dataset.py \
+    --input_files input.txt \
+    --out_dir data/char_dataset \
+    --tokenization char
+```
+
+**Features:**
+- Streams text from multiple files (low memory usage)
+- Cleans and normalizes text
+- Deduplicates lines (optional)
+- Tokenizes incrementally
+- Writes binary shards (~10M tokens each, ~40MB)
+- Splits into train/val directories
+
+**Arguments:**
+- `--input_files`: List of text files (required)
+- `--out_dir`: Output directory (required)
+- `--tokenization`: gpt2 or char (default: gpt2)
+- `--tokens_per_shard`: Tokens per shard (default: 10M)
+- `--val_fraction`: Validation fraction (default: 0.1)
+- `--no_normalize`: Skip text normalization
+- `--no_filter`: Skip line filtering
+- `--no_dedup`: Skip deduplication
+
+---
 
 ### `calculate_params.py`
 Calculate the number of parameters in a GPT model.

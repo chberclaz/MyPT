@@ -3,7 +3,14 @@
 # choco needs to be installed to install python
 # pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 import argparse
-from core import GPTConfig, GPTDataLoader, CheckpointManager, get_model_info
+from core import (
+    GPTConfig, 
+    GPTDataLoader, 
+    CheckpointManager, 
+    get_model_info,
+    calculate_dataset_coverage,
+    print_coverage_analysis,
+)
 
 
 def parse_args():
@@ -13,8 +20,10 @@ def parse_args():
     # Model/data config
     parser.add_argument("--model_name", type=str, default="default",
                         help="Name of the model/checkpoint set (e.g. dante, shakespeare)")
-    parser.add_argument("--input_file", type=str, default="input_dante.txt",
-                        help="Path to training text file")
+    parser.add_argument("--input_file", type=str, default=None,
+                        help="Path to training text file (for in-memory mode, small datasets)")
+    parser.add_argument("--dataset_dir", type=str, default=None,
+                        help="Path to sharded dataset directory (for large datasets, created with prepare_dataset.py)")
     parser.add_argument("--tokenization", type=str, default="gpt2",
                         choices=["gpt2", "char"],
                         help="Tokenizer type: gpt2 or char")
@@ -127,12 +136,14 @@ def main():
             print("(Could not load full model info)")
         print()
     
-    # Read training text
-    print("Loading training data...")
-    text = GPTDataLoader.read_text(args.input_file)
-    print(f"Loaded {len(text):,} characters")
-    print(f"Approximate tokens (char-level): {len(text):,}")
-    print(f"Approximate tokens (GPT-2): ~{len(text)//4:,}")
+    # Read training text (only for in-memory mode)
+    text = None
+    if args.input_file:
+        print("Loading training data (in-memory mode)...")
+        text = GPTDataLoader.read_text(args.input_file)
+        print(f"Loaded {len(text):,} characters")
+        print(f"Approximate tokens (char-level): {len(text):,}")
+        print(f"Approximate tokens (GPT-2): ~{len(text)//4:,}")
     
     # Initialize model (handles resume / init_from / fresh)
     print("\nInitializing model...")
@@ -156,8 +167,44 @@ def main():
     
     # Prepare data
     print("Preparing data...")
-    data_loader = GPTDataLoader(model.config, model.tokenizer)
-    data_loader.prepare_data(text)
+    if args.dataset_dir:
+        # Sharded mode: data_loader will memory-map shards on demand
+        data_loader = GPTDataLoader(model.config, model.tokenizer, dataset_dir=args.dataset_dir)
+        
+        # Get total tokens from metadata
+        import json
+        import os
+        metadata_path = os.path.join(args.dataset_dir, "dataset_metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            total_tokens = metadata.get('total_tokens', 0)
+        else:
+            total_tokens = None
+    else:
+        # In-memory mode: load and tokenize entire text
+        data_loader = GPTDataLoader(model.config, model.tokenizer)
+        data_loader.prepare_data(text)
+        total_tokens = len(data_loader.train_data) + len(data_loader.val_data)
+    
+    # Analyze dataset coverage
+    if total_tokens:
+        coverage = calculate_dataset_coverage(
+            max_iters=args.max_iters,
+            batch_size=model.config.batch_size,
+            block_size=model.config.block_size,
+            total_tokens=total_tokens
+        )
+        print_coverage_analysis(coverage, args.max_iters)
+        
+        # Ask user to confirm if coverage is very low
+        if coverage['coverage_ratio'] < 1.0:
+            print("⚠️  Your model will not see the entire dataset!")
+            response = input("Continue anyway? (y/n): ").lower().strip()
+            if response != 'y' and response != 'yes':
+                print("Training cancelled. Adjust --max_iters and try again.")
+                return
+            print()
     
     # Train the model (model trains itself!)
     print("========== Starting Training ==========")

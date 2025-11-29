@@ -1,6 +1,9 @@
 # Training checkpoints
 checkpoints/
 checkpoints/*
+data/
+data/*
+
 
 # Python
 __pycache__/
