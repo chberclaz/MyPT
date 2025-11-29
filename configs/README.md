@@ -43,7 +43,8 @@ These configs use block_size=256 for balanced performance on most GPUs.
 ```
 
 **Training time:** ~5 minutes on GPU for 1000 iterations  
-**Memory:** ~500 MB
+**Memory (Training):** ~500 MB  
+**Memory (Generation):** ~100 MB
 
 ---
 
@@ -63,7 +64,8 @@ These configs use block_size=256 for balanced performance on most GPUs.
 ```
 
 **Training time:** ~15 minutes on GPU for 1000 iterations  
-**Memory:** ~2 GB
+**Memory (Training):** ~2 GB  
+**Memory (Generation):** ~300 MB
 
 ---
 
@@ -83,7 +85,8 @@ These configs use block_size=256 for balanced performance on most GPUs.
 ```
 
 **Training time:** ~1 hour on GPU for 1000 iterations  
-**Memory:** ~8 GB
+**Memory (Training):** ~8 GB  
+**Memory (Generation):** ~1 GB
 
 ---
 
@@ -103,7 +106,8 @@ These configs use block_size=256 for balanced performance on most GPUs.
 ```
 
 **Training time:** ~1.5 hours on GPU for 1000 iterations  
-**Memory:** ~10 GB
+**Memory (Training):** ~10 GB  
+**Memory (Generation):** ~1.2 GB
 
 ---
 
@@ -123,7 +127,8 @@ These configs use block_size=256 for balanced performance on most GPUs.
 ```
 
 **Training time:** ~2 hours on GPU for 1000 iterations  
-**Memory:** ~12 GB
+**Memory (Training):** ~12 GB  
+**Memory (Generation):** ~1.5 GB
 
 ---
 
@@ -162,7 +167,8 @@ These configs use **block_size=1024** for powerful GPUs, allowing the model to s
 ```
 
 **Training time:** ~1.5 hours on GPU for 1000 iterations  
-**Memory:** ~10 GB
+**Memory (Training):** ~10 GB  
+**Memory (Generation):** ~1.5 GB
 
 ---
 
@@ -182,7 +188,8 @@ These configs use **block_size=1024** for powerful GPUs, allowing the model to s
 ```
 
 **Training time:** ~2 hours on GPU for 1000 iterations  
-**Memory:** ~12 GB
+**Memory (Training):** ~12 GB  
+**Memory (Generation):** ~2 GB
 
 ---
 
@@ -202,7 +209,8 @@ These configs use **block_size=1024** for powerful GPUs, allowing the model to s
 ```
 
 **Training time:** ~2.5 hours on GPU for 1000 iterations  
-**Memory:** ~14 GB
+**Memory (Training):** ~14 GB  
+**Memory (Generation):** ~2.5 GB
 
 ---
 
@@ -222,7 +230,8 @@ These configs use **block_size=1024** for powerful GPUs, allowing the model to s
 ```
 
 **Training time:** ~3.5 hours on GPU for 1000 iterations  
-**Memory:** ~18 GB
+**Memory (Training):** ~18 GB  
+**Memory (Generation):** ~3 GB
 
 ---
 
@@ -242,7 +251,8 @@ These configs use **block_size=1024** for powerful GPUs, allowing the model to s
 ```
 
 **Training time:** ~5 hours on GPU for 1000 iterations  
-**Memory:** ~22 GB
+**Memory (Training):** ~22 GB  
+**Memory (Generation):** ~4 GB
 
 ---
 
