@@ -7,19 +7,34 @@ class CheckpointManager:
     """
     Manages checkpoint paths and model initialization 
     (resume / init_from / fresh).
+    
+    Supports both new JSON-based format and legacy single-file format.
     """
     def __init__(self, model_name, base_dir="checkpoints"):
         self.model_name = model_name
         self.checkpoint_dir = os.path.join(base_dir, model_name)
         os.makedirs(self.checkpoint_dir, exist_ok=True)
     
-    def get_path(self, filename="latest.pt"):
+    def get_path(self, filename="model.pt"):
         """Get full path to a checkpoint file"""
         return os.path.join(self.checkpoint_dir, filename)
     
-    def exists(self, filename="latest.pt"):
-        """Check if checkpoint exists"""
+    def exists_new_format(self):
+        """
+        Check if checkpoint exists in new JSON-based format.
+        Required files: config.json, model.pt
+        """
+        config_path = os.path.join(self.checkpoint_dir, "config.json")
+        model_path = os.path.join(self.checkpoint_dir, "model.pt")
+        return os.path.exists(config_path) and os.path.exists(model_path)
+    
+    def exists_legacy_format(self, filename="latest.pt"):
+        """Check if checkpoint exists in legacy single-file format"""
         return os.path.exists(self.get_path(filename))
+    
+    def exists(self):
+        """Check if any checkpoint format exists"""
+        return self.exists_new_format() or self.exists_legacy_format()
     
     def initialize_for_training(self, config, tokenization, input_text, 
                                 learning_rate, init_from_model=None):
@@ -28,6 +43,8 @@ class CheckpointManager:
         1. Resume from this model's checkpoint
         2. Initialize from another model (fine-tuning)
         3. Create fresh model
+        
+        Supports both new JSON-based format and legacy single-file format.
         
         Args:
             config: GPTConfig instance
@@ -39,29 +56,42 @@ class CheckpointManager:
         Returns: (model, optimizer, start_step)
         """
         device = config.device
-        checkpoint_path = self.get_path("latest.pt")
         
-        # Case 1: RESUME
-        if self.exists("latest.pt"):
-            print(f"Found checkpoint at {checkpoint_path}, resuming training.")
-            model, _, start_step, optim_state = GPT.load(checkpoint_path, map_location=device)
-            
+        # Case 1: RESUME FROM THIS MODEL'S CHECKPOINT
+        if self.exists_new_format():
+            print(f"Found checkpoint in new format at {self.checkpoint_dir}, resuming training.")
+            model, _, start_step, optim_state = GPT.load(self.checkpoint_dir, map_location=device)
             optimizer = model.configure_optimizer(learning_rate, optim_state)
-            return model, optimizer, start_step
+            return model, optimizer, start_step or 0
+        
+        elif self.exists_legacy_format("latest.pt"):
+            print(f"Found legacy checkpoint, resuming training.")
+            print("Note: Will save in new JSON format on next checkpoint.")
+            legacy_path = self.get_path("latest.pt")
+            model, _, start_step, optim_state = GPT.load_legacy(legacy_path, map_location=device)
+            optimizer = model.configure_optimizer(learning_rate, optim_state)
+            return model, optimizer, start_step or 0
         
         # Case 2: INIT FROM ANOTHER MODEL (Fine-tuning)
         elif init_from_model is not None:
             init_manager = CheckpointManager(init_from_model)
-            init_path = init_manager.get_path("final.pt")
             
-            if not init_manager.exists("final.pt"):
+            # Try new format first
+            if init_manager.exists_new_format():
+                print(f"Initializing from base model '{init_from_model}' (new format)")
+                model, base_tok_state, _, _ = GPT.load(init_manager.checkpoint_dir, map_location=device)
+            
+            # Fall back to legacy format
+            elif init_manager.exists_legacy_format("final.pt"):
+                print(f"Initializing from base model '{init_from_model}' (legacy format)")
+                legacy_path = init_manager.get_path("final.pt")
+                model, base_tok_state, _, _ = GPT.load_legacy(legacy_path, map_location=device)
+            
+            else:
                 raise FileNotFoundError(
                     f"--init_from_model '{init_from_model}' specified, "
-                    f"but {init_path} does not exist."
+                    f"but no checkpoint found at {init_manager.checkpoint_dir}"
                 )
-            
-            print(f"Initializing from base model '{init_from_model}' at {init_path}")
-            model, base_tok_state, _, _ = GPT.load(init_path, map_location=device)
             
             # Validate tokenization compatibility
             self._validate_tokenization(base_tok_state, tokenization, init_from_model, model, config)
@@ -119,25 +149,43 @@ class CheckpointManager:
             print(f"Using base model's char vocabulary (size: {len(base_chars)})")
     
     @staticmethod
-    def load_for_inference(model_name, checkpoint="latest.pt", base_dir="checkpoints"):
+    def load_for_inference(model_name, base_dir="checkpoints", legacy_filename=None):
         """
         Load model for generation/inference.
+        Automatically detects new JSON format or legacy single-file format.
         
         Args:
             model_name: Name of the model
-            checkpoint: Checkpoint filename (default: "latest.pt")
             base_dir: Base checkpoints directory
+            legacy_filename: If specified, load this specific legacy file (e.g., "final.pt")
         
         Returns:
             Loaded GPT model
         """
         ckpt_manager = CheckpointManager(model_name, base_dir)
-        path = ckpt_manager.get_path(checkpoint)
-        
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Checkpoint not found: {path}")
-        
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        model, _, _, _ = GPT.load(path, map_location=device)
+        
+        # Try new JSON format first
+        if ckpt_manager.exists_new_format():
+            print(f"Loading model '{model_name}' (new format)")
+            model, _, _, _ = GPT.load(ckpt_manager.checkpoint_dir, map_location=device)
+            return model
+        
+        # Fall back to legacy format
+        if legacy_filename:
+            legacy_path = ckpt_manager.get_path(legacy_filename)
+        else:
+            # Try common legacy filenames
+            for filename in ["latest.pt", "final.pt"]:
+                if ckpt_manager.exists_legacy_format(filename):
+                    legacy_path = ckpt_manager.get_path(filename)
+                    break
+            else:
+                raise FileNotFoundError(
+                    f"No checkpoint found for model '{model_name}' at {ckpt_manager.checkpoint_dir}"
+                )
+        
+        print(f"Loading model '{model_name}' from legacy checkpoint: {legacy_path}")
+        model, _, _, _ = GPT.load_legacy(legacy_path, map_location=device)
         return model
 

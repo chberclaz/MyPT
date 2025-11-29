@@ -9,8 +9,9 @@ def parse_args():
     
     parser.add_argument("--model_name", type=str, default="default",
                         help="Name of the model/checkpoint set to load (e.g. dante, shakespeare)")
-    parser.add_argument("--checkpoint", type=str, default="latest.pt",
-                        help="Which checkpoint file to load (e.g. final.pt or latest.pt)")
+    parser.add_argument("--legacy_checkpoint", type=str, default=None,
+                        help="Optional: specific legacy checkpoint file (e.g. final.pt, latest.pt). "
+                             "If not specified, will auto-detect new JSON format or legacy format.")
     parser.add_argument("--prompt", type=str, default="Die Nacht",
                         help="Prompt text to start generation from")
     parser.add_argument("--max_new_tokens", type=int, default=100,
@@ -28,14 +29,16 @@ def main():
     
     print(f"========== Generation Configuration ==========")
     print(f"Model: {args.model_name}")
-    print(f"Checkpoint: {args.checkpoint}")
     print(f"Mode: {args.mode}")
     print(f"Max new tokens: {args.max_new_tokens}")
     print()
     
-    # Load model
-    print(f"Loading model '{args.model_name}' from {args.checkpoint}...")
-    model = CheckpointManager.load_for_inference(args.model_name, args.checkpoint)
+    # Load model (auto-detects format)
+    print(f"Loading model '{args.model_name}'...")
+    model = CheckpointManager.load_for_inference(
+        args.model_name, 
+        legacy_filename=args.legacy_checkpoint
+    )
     
     # Print model info
     print(f"Model loaded successfully!")

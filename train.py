@@ -106,6 +106,10 @@ def main():
     
     # Train the model (model trains itself!)
     print("\n========== Starting Training ==========")
+    print(f"Checkpoints will be saved to: {ckpt_manager.checkpoint_dir}")
+    print(f"Format: model.pt + config.json + tokenizer.json + training_state.json")
+    print()
+    
     model.fit(
         data_loader=data_loader,
         optimizer=optimizer,
@@ -117,6 +121,13 @@ def main():
     )
     
     print("\n========== Training Complete ==========")
+    print(f"Model saved to: {ckpt_manager.checkpoint_dir}")
+    print("Files:")
+    print("  - model.pt (weights only)")
+    print("  - config.json (architecture)")
+    print("  - tokenizer.json (vocabulary)")
+    print("  - training_state.json (step, optimizer ref)")
+    print("  - optimizer.pt (optimizer state)")
 
 
 if __name__ == "__main__":

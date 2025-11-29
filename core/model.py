@@ -4,6 +4,7 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 from dataclasses import asdict
 import os
+import json
 
 # Local imports are placed here to avoid circulars when tooling loads files out of order
 from .tokenizer import Tokenizer
@@ -27,6 +28,29 @@ class GPTConfig:
             f'n_head:{self.n_head}, n_layer:{self.n_layer}, '
             f'dropout:{self.dropout}, bias:{self.bias}, device:{self.device}'
         )
+    
+    def to_dict(self):
+        """Convert config to dictionary for JSON serialization"""
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, config_dict):
+        """Create config from dictionary"""
+        return cls(**config_dict)
+    
+    def save_json(self, path):
+        """Save config to JSON file"""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            json.dump(self.to_dict(), f, indent=2)
+        print(f"Saved config to {path}")
+    
+    @classmethod
+    def load_json(cls, path):
+        """Load config from JSON file"""
+        with open(path, 'r') as f:
+            config_dict = json.load(f)
+        return cls.from_dict(config_dict)
 
 class Head(nn.Module):
     # one Head of self-attention
@@ -147,34 +171,156 @@ class GPT(nn.Module):
 
         return logits, loss
     
-    def save(self, path: str, tokenizer_state: dict | None = None, step: int | None = None, optimizer_state: dict | None = None):
+    def save(self, checkpoint_dir: str):
         """
-        Save model weights + config (+ optional tokenizer + step) to a single file.
+        Save model weights only (to model.pt).
+        Config, tokenizer, and training state are saved separately via save_checkpoint_bundle().
+        
+        Args:
+            checkpoint_dir: Directory to save checkpoint (e.g., "checkpoints/dante")
         """
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-
-        # If caller didn't pass tokenizer_state explicitly, take it from the owned tokenizer (if present)
-        if tokenizer_state is None and hasattr(self, "tokenizer") and self.tokenizer is not None:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        model_path = os.path.join(checkpoint_dir, "model.pt")
+        
+        # Save ONLY the model weights
+        torch.save(self.state_dict(), model_path)
+        print(f"Saved model weights to {model_path}")
+    
+    def save_checkpoint_bundle(self, checkpoint_dir: str, step: int | None = None, 
+                               optimizer_state: dict | None = None):
+        """
+        Save complete checkpoint bundle: model weights + config + tokenizer + training state.
+        
+        File structure:
+            checkpoint_dir/
+                ├── model.pt              (model weights only)
+                ├── config.json           (architecture config)
+                ├── tokenizer.json        (tokenizer state)
+                └── training_state.json   (step, optimizer - optional)
+        
+        Args:
+            checkpoint_dir: Directory to save all files
+            step: Current training step (optional)
+            optimizer_state: Optimizer state dict (optional, for resuming)
+        """
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        # 1. Save model weights
+        self.save(checkpoint_dir)
+        
+        # 2. Save config
+        config_path = os.path.join(checkpoint_dir, "config.json")
+        self.config.save_json(config_path)
+        
+        # 3. Save tokenizer state
+        if hasattr(self, "tokenizer") and self.tokenizer is not None:
+            tokenizer_path = os.path.join(checkpoint_dir, "tokenizer.json")
             try:
                 tokenizer_state = self.tokenizer.get_state()
-            except Exception:
-                tokenizer_state = None
-
-        checkpoint = {
-            "model_state_dict": self.state_dict(),
-            "config": asdict(self.config),
-            "tokenizer": tokenizer_state,   # e.g. {"token_kind": "gpt2"} or {"token_kind": "char", "chars": [...]}
-            "step": step,
-            "optimizer_state_dict": optimizer_state,
-        }
-        torch.save(checkpoint, path)
-        print(f"Saved checkpoint to {path}")
+                with open(tokenizer_path, 'w') as f:
+                    json.dump(tokenizer_state, f, indent=2)
+                print(f"Saved tokenizer to {tokenizer_path}")
+            except Exception as e:
+                print(f"Warning: Could not save tokenizer: {e}")
+        
+        # 4. Save training state (optional)
+        if step is not None or optimizer_state is not None:
+            training_state_path = os.path.join(checkpoint_dir, "training_state.json")
+            training_state = {}
+            
+            if step is not None:
+                training_state["step"] = step
+            
+            # Optimizer state is saved separately as .pt (it's large and contains tensors)
+            if optimizer_state is not None:
+                optimizer_path = os.path.join(checkpoint_dir, "optimizer.pt")
+                torch.save(optimizer_state, optimizer_path)
+                training_state["optimizer_file"] = "optimizer.pt"
+                print(f"Saved optimizer state to {optimizer_path}")
+            
+            with open(training_state_path, 'w') as f:
+                json.dump(training_state, f, indent=2)
+            print(f"Saved training state to {training_state_path}")
 
     @classmethod
-    def load(cls, path: str, map_location: str | torch.device | None = None):
+    def load(cls, checkpoint_dir: str, map_location: str | torch.device | None = None):
         """
-        Load model + config (+ tokenizer + step) from checkpoint.
-        Returns: (model, tokenizer_state, step, optimizer_state)
+        Load model from checkpoint bundle (new JSON-based format).
+        
+        Expected structure:
+            checkpoint_dir/
+                ├── model.pt              (required)
+                ├── config.json           (required)
+                ├── tokenizer.json        (required)
+                └── training_state.json   (optional)
+        
+        Args:
+            checkpoint_dir: Directory containing checkpoint files
+            map_location: Device to load model to
+        
+        Returns:
+            Tuple of (model, tokenizer_state, step, optimizer_state)
+        """
+        # 1. Load config
+        config_path = os.path.join(checkpoint_dir, "config.json")
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        config = GPTConfig.load_json(config_path)
+        
+        # 2. Load tokenizer state
+        tokenizer_path = os.path.join(checkpoint_dir, "tokenizer.json")
+        tokenizer_state = None
+        if os.path.exists(tokenizer_path):
+            with open(tokenizer_path, 'r') as f:
+                tokenizer_state = json.load(f)
+        
+        # 3. Create model with config
+        model = cls(config)
+        
+        # 4. Load model weights
+        model_path = os.path.join(checkpoint_dir, "model.pt")
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model weights not found: {model_path}")
+        model.load_state_dict(torch.load(model_path, map_location=map_location))
+        model.to(config.device)
+        model.eval()
+        
+        # 5. Reattach tokenizer
+        if tokenizer_state is not None:
+            try:
+                model.tokenizer = Tokenizer.from_state(config, tokenizer_state)
+            except Exception as e:
+                print(f"Warning: Could not restore tokenizer: {e}")
+        
+        # 6. Load training state (optional)
+        step = None
+        optimizer_state = None
+        training_state_path = os.path.join(checkpoint_dir, "training_state.json")
+        if os.path.exists(training_state_path):
+            with open(training_state_path, 'r') as f:
+                training_state = json.load(f)
+            step = training_state.get("step", None)
+            
+            # Load optimizer state if it exists
+            if "optimizer_file" in training_state:
+                optimizer_path = os.path.join(checkpoint_dir, training_state["optimizer_file"])
+                if os.path.exists(optimizer_path):
+                    optimizer_state = torch.load(optimizer_path, map_location=map_location)
+        
+        return model, tokenizer_state, step, optimizer_state
+    
+    @classmethod
+    def load_legacy(cls, path: str, map_location: str | torch.device | None = None):
+        """
+        Load model from legacy checkpoint format (single .pt file with everything).
+        For backwards compatibility with old checkpoints.
+        
+        Args:
+            path: Path to legacy .pt checkpoint file
+            map_location: Device to load model to
+        
+        Returns:
+            Tuple of (model, tokenizer_state, step, optimizer_state)
         """
         checkpoint = torch.load(path, map_location=map_location)
         config_dict = checkpoint["config"]
@@ -261,7 +407,6 @@ class GPT(nn.Module):
         import datetime
         
         self.train()
-        checkpoint_path = os.path.join(checkpoint_dir, "latest.pt") if checkpoint_dir else None
         
         for iter in range(start_step, max_iters):
             # Evaluation and checkpointing
@@ -272,9 +417,13 @@ class GPT(nn.Module):
                 losses = self.estimate_loss(data_loader, eval_iters)
                 print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 
-                if checkpoint_path:
-                    self.save(checkpoint_path, step=iter, 
-                             optimizer_state=optimizer.state_dict())
+                # Save checkpoint bundle (model + config + tokenizer + training state)
+                if checkpoint_dir:
+                    self.save_checkpoint_bundle(
+                        checkpoint_dir, 
+                        step=iter, 
+                        optimizer_state=optimizer.state_dict()
+                    )
             
             # Training step
             xb, yb = data_loader.get_batch('train')
@@ -288,11 +437,15 @@ class GPT(nn.Module):
         print(f"final step {iter}: train loss {final_losses['train']:.4f}, "
               f"val loss {final_losses['val']:.4f}")
         
-        # Save final model
+        # Save final model bundle
         if checkpoint_dir:
-            final_path = os.path.join(checkpoint_dir, "final.pt")
-            self.save(final_path, step=iter, optimizer_state=optimizer.state_dict())
-            print(f"Training finished. Final model at: {final_path}")
+            print("\n----- Saving final model ------")
+            self.save_checkpoint_bundle(
+                checkpoint_dir, 
+                step=iter, 
+                optimizer_state=optimizer.state_dict()
+            )
+            print(f"Training finished. Model saved to: {checkpoint_dir}")
         
         return final_losses
     
