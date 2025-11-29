@@ -95,7 +95,7 @@ def main():
     print("\n========== Generation Complete ==========")
     
     # Optional: Additional Q&A example (can be removed or made conditional)
-    if args.mode == "basic":
+    if args.mode == "basic" and model.tokenizer.token_kind != "char":
         print("\n========== Q&A Example ==========")
         question = "How far is the moon?"
         print(f"Question: {question}")

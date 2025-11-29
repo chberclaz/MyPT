@@ -8,18 +8,22 @@ This folder contains predefined model architecture configurations for different 
 
 ### Quick Reference
 
-| Config                | Parameters | Layers | Heads | Embedding | Block Size | Use Case                    |
-| --------------------- | ---------- | ------ | ----- | --------- | ---------- | --------------------------- |
-| **tiny.json**         | ~11M       | 4      | 4     | 192       | 128        | Quick experiments           |
-| **small.json**        | ~40M       | 6      | 6     | 384       | 256        | Default, testing            |
-| **150M.json**         | ~150M      | 16     | 12    | 768       | 256        | Production, small           |
-| **200M.json**         | ~200M      | 16     | 14    | 896       | 256        | Production, medium          |
-| **250M.json**         | ~250M      | 16     | 16    | 1024      | 256        | Production, large           |
-| **150M_1024.json** 🚀 | ~150M      | 16     | 12    | 768       | 1024       | High context, powerful GPUs |
-| **200M_1024.json** 🚀 | ~200M      | 16     | 14    | 896       | 1024       | High context, powerful GPUs |
-| **250M_1024.json** 🚀 | ~250M      | 16     | 16    | 1024      | 1024       | High context, powerful GPUs |
-| **350M_1024.json** 🚀 | ~350M      | 24     | 16    | 1024      | 1024       | High context, 16GB+ VRAM    |
-| **500M_1024.json** 🚀 | ~500M      | 24     | 16    | 1280      | 1024       | High context, 24GB+ VRAM    |
+| Config                 | Parameters | Layers | Heads | Embedding | Block Size | Vocab | Use Case                     |
+| ---------------------- | ---------- | ------ | ----- | --------- | ---------- | ----- | ---------------------------- |
+| **tiny.json**          | ~11M       | 4      | 4     | 192       | 128        | GPT-2 | Quick experiments            |
+| **tiny_char.json** 📝  | ~3M        | 4      | 4     | 192       | 128        | Char  | Quick char-level experiments |
+| **small.json**         | ~40M       | 6      | 6     | 384       | 256        | GPT-2 | Default, testing             |
+| **small_char.json** 📝 | ~22M       | 6      | 6     | 384       | 256        | Char  | Char-level, testing          |
+| **150M.json**          | ~150M      | 16     | 12    | 768       | 256        | GPT-2 | Production, small            |
+| **200M.json**          | ~200M      | 16     | 14    | 896       | 256        | GPT-2 | Production, medium           |
+| **250M.json**          | ~250M      | 16     | 16    | 1024      | 256        | GPT-2 | Production, large            |
+| **150M_1024.json** 🚀  | ~150M      | 16     | 12    | 768       | 1024       | GPT-2 | High context, powerful GPUs  |
+| **200M_1024.json** 🚀  | ~200M      | 16     | 14    | 896       | 1024       | GPT-2 | High context, powerful GPUs  |
+| **250M_1024.json** 🚀  | ~250M      | 16     | 16    | 1024      | 1024       | GPT-2 | High context, powerful GPUs  |
+| **350M_1024.json** 🚀  | ~350M      | 24     | 16    | 1024      | 1024       | GPT-2 | High context, 16GB+ VRAM     |
+| **500M_1024.json** 🚀  | ~500M      | 24     | 16    | 1280      | 1024       | GPT-2 | High context, 24GB+ VRAM     |
+
+**Note:** Parameter counts are approximate. Character-level models (📝) use smaller vocab (~256) vs GPT-2 BPE (~50K), resulting in ~20M fewer parameters for same architecture.
 
 ---
 
@@ -48,6 +52,31 @@ These configs use block_size=256 for balanced performance on most GPUs.
 
 ---
 
+### `tiny_char.json` - ~3M parameters
+
+**Best for:** Quick experiments with character-level tokenization
+
+```json
+{
+  "name": "GPT-Tiny-Char",
+  "n_layer": 4,
+  "n_head": 4,
+  "n_embd": 192,
+  "block_size": 128,
+  "batch_size": 16,
+  "vocab_size": 256
+}
+```
+
+**Tokenization:** Character-level (vocab ~256)  
+**Training time:** ~3 minutes on GPU for 1000 iterations  
+**Memory (Training):** ~400 MB  
+**Memory (Generation):** ~50 MB
+
+**Parameter difference vs tiny.json:** ~8M fewer parameters (no large vocab embeddings)
+
+---
+
 ### `small.json` - ~40M parameters (Default)
 
 **Best for:** Most experiments, development
@@ -66,6 +95,31 @@ These configs use block_size=256 for balanced performance on most GPUs.
 **Training time:** ~15 minutes on GPU for 1000 iterations  
 **Memory (Training):** ~2 GB  
 **Memory (Generation):** ~300 MB
+
+---
+
+### `small_char.json` - ~22M parameters
+
+**Best for:** Most experiments with character-level tokenization
+
+```json
+{
+  "name": "GPT-Small-Char",
+  "n_layer": 6,
+  "n_head": 6,
+  "n_embd": 384,
+  "block_size": 256,
+  "batch_size": 32,
+  "vocab_size": 256
+}
+```
+
+**Tokenization:** Character-level (vocab ~256)  
+**Training time:** ~10 minutes on GPU for 1000 iterations  
+**Memory (Training):** ~1.5 GB  
+**Memory (Generation):** ~200 MB
+
+**Parameter difference vs small.json:** ~18M fewer parameters (smaller vocab)
 
 ---
 

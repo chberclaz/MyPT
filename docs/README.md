@@ -74,6 +74,18 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - Coverage recommendations (2-5x)
   - Interactive warnings for low coverage
 
+- **[VOCAB_SIZE_EXPLAINED.md](VOCAB_SIZE_EXPLAINED.md)** - Vocabulary size and parameters
+  - GPT-2 BPE vs character-level tokenization
+  - Impact on parameter count (~20-40M difference)
+  - Why configs show 50304
+  - How to calculate correctly for char-level
+
+- **[TOKENIZATION_COMPARISON.md](TOKENIZATION_COMPARISON.md)** - Complete tokenization comparison
+  - Detailed GPT-2 BPE vs char-level comparison
+  - Parameter breakdown by tokenization
+  - Sequence length differences
+  - Trade-offs and when to use each
+
 ### Development & Architecture
 
 - **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** - Initial refactoring details

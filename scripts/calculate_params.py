@@ -127,6 +127,10 @@ def print_breakdown(params, n_layer, n_embd, n_head, vocab_size, block_size, bia
     print(f"  n_embd      : {n_embd}")
     print(f"  n_head      : {n_head}")
     print(f"  vocab_size  : {vocab_size:,}")
+    if vocab_size == 50304:
+        print(f"                (GPT-2 BPE tokenization)")
+    elif vocab_size < 500:
+        print(f"                (Character-level tokenization)")
     print(f"  block_size  : {block_size}")
     print(f"  bias        : {bias}")
     print()
@@ -301,6 +305,13 @@ Examples:
             print(f"Config name: {config['name']}")
         if 'description' in config:
             print(f"Description: {config['description']}")
+        print()
+        
+        # Warn about character-level tokenization
+        print(f"⚠️  Note: This calculation assumes vocab_size={vocab_size}")
+        print(f"   For character-level tokenization, actual vocab_size will be ~100-256")
+        print(f"   (determined by unique characters in your training data)")
+        print(f"   To calculate for char-level, use: --vocab_size 256")
         print()
         
     elif args.n_layer and args.n_embd and args.n_head:
