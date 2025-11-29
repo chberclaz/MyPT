@@ -241,7 +241,7 @@ class GPT(nn.Module):
             # Optimizer state is saved separately as .pt (it's large and contains tensors)
             if optimizer_state is not None:
                 optimizer_path = os.path.join(checkpoint_dir, "optimizer.pt")
-                torch.save(optimizer_state, optimizer_path, weights_only=True)
+                torch.save(optimizer_state, optimizer_path)
                 training_state["optimizer_file"] = "optimizer.pt"
                 print(f"Saved optimizer state to {optimizer_path}")
             
