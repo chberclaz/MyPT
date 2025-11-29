@@ -5,7 +5,7 @@ class Tokenizer():
     def __init__(self, config, kind):
         super().__init__()
         self.config=config
-        self.token_kind='char'
+        self.token_kind=kind  # Fixed: was hardcoded to 'char'
         self.chars=None
         self.enc=None
         self.__set_encoding(kind)

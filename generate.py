@@ -1,72 +1,76 @@
-import torch
-import os
 import argparse
-from model import GPT, GPTConfig
-
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--model_name", type=str, default="default",
-                    help="Name of the model/checkpoint set to load (e.g. dante, shakespeare)")
-parser.add_argument("--checkpoint", type=str, default="latest.pt",
-                    help="Which checkpoint file to load inside the model's folder (e.g. final.pt or latest.pt)")
-parser.add_argument("--prompt", type=str, default="Die Nacht",
-                    help="Prompt text to start generation from")
-parser.add_argument("--max_new_tokens", type=int, default=100,
-                    help="Number of tokens to generate")
-args = parser.parse_args()
-
-checkpoint_dir = os.path.join("checkpoints", args.model_name)
-model_path = os.path.join(checkpoint_dir, args.checkpoint)
-
-def generate_answer(model, question: str, max_new_tokens=100):
-    # Format Q&A prompt
-    prompt = f"<Question> {question} </Question>\n<Answer> "       
-    # Encode
-    #ctx = model.encode(prompt)
-    #idx = torch.tensor([ctx], dtype=torch.long, device=model.config.device)
-    # Generate continuation
-    out = model.generate(prompt, max_new_tokens=max_new_tokens)
-    # Decode the output
-    # Strip everything before <Answer>
-    answer = out.split("<Answer>")[-1]
-    # Stop at end tag if model generated it
-    answer = answer.split("</Answer>")[0]
-    return answer.strip()
-
-if not os.path.exists(model_path):
-    raise FileNotFoundError(f"Checkpoint not found: {model_path}")
-
-print(f"Loading model '{args.model_name}' from: {model_path}")
+from core.checkpoint import CheckpointManager
+from generator import Generator
 
 
-# Load model (+ tokenizer is attached)
-model, tokenizer_state, step, optim_state = GPT.load(model_path, map_location=device)
-config = model.config
-if model.tokenizer is None and tokenizer_state is None:
-    raise ValueError("No tokenizer available. Check your checkpoint.")
-print(f"Tokenizer kind: {getattr(model.tokenizer, 'token_kind', 'unknown')}")
-print(f"Prompt: {args.prompt}")
-
-# Prompt
-#ctx_ids = model.encode(args.prompt)
-#idx = torch.tensor([ctx_ids], dtype=torch.long, device=model.config.device)
-
-print(f"Start generating...")
-
-# Generate
-with torch.no_grad():
-    out = model.generate(args.prompt, max_new_tokens=args.max_new_tokens)
-
-print(out)
-print(f"!!! Finished !!!")
+def parse_args():
+    """Parse command-line arguments for generation"""
+    parser = argparse.ArgumentParser(description="Generate text using a trained GPT model")
+    
+    parser.add_argument("--model_name", type=str, default="default",
+                        help="Name of the model/checkpoint set to load (e.g. dante, shakespeare)")
+    parser.add_argument("--checkpoint", type=str, default="latest.pt",
+                        help="Which checkpoint file to load (e.g. final.pt or latest.pt)")
+    parser.add_argument("--prompt", type=str, default="Die Nacht",
+                        help="Prompt text to start generation from")
+    parser.add_argument("--max_new_tokens", type=int, default=100,
+                        help="Number of tokens to generate")
+    parser.add_argument("--mode", type=str, default="basic",
+                        choices=["basic", "qa"],
+                        help="Generation mode: basic (text completion) or qa (question answering)")
+    
+    return parser.parse_args()
 
 
+def main():
+    """Main generation entry point"""
+    args = parse_args()
+    
+    print(f"========== Generation Configuration ==========")
+    print(f"Model: {args.model_name}")
+    print(f"Checkpoint: {args.checkpoint}")
+    print(f"Mode: {args.mode}")
+    print(f"Max new tokens: {args.max_new_tokens}")
+    print()
+    
+    # Load model
+    print(f"Loading model '{args.model_name}' from {args.checkpoint}...")
+    model = CheckpointManager.load_for_inference(args.model_name, args.checkpoint)
+    
+    # Print model info
+    print(f"Model loaded successfully!")
+    print(f"Tokenizer: {getattr(model.tokenizer, 'token_kind', 'unknown')}")
+    print(f"Vocab size: {model.config.vocab_size}")
+    print()
+    
+    # Create generator
+    gen = Generator(model)
+    
+    # Generate based on mode
+    print(f"========== Generating ==========")
+    
+    if args.mode == "basic":
+        print(f"Prompt: {args.prompt}\n")
+        output = gen.generate(args.prompt, args.max_new_tokens)
+        print(output)
+    
+    elif args.mode == "qa":
+        question = args.prompt  # Use prompt as question
+        print(f"Question: {question}\n")
+        answer = gen.generate_qa(question, args.max_new_tokens)
+        print(f"Answer: {answer}")
+    
+    print("\n========== Generation Complete ==========")
+    
+    # Optional: Additional Q&A example (can be removed or made conditional)
+    if args.mode == "basic":
+        print("\n========== Q&A Example ==========")
+        question = "How far is the moon?"
+        print(f"Question: {question}")
+        answer = gen.generate_qa(question, 150)
+        print(f"Answer: {answer}")
+        print()
 
-# Q&A prototype
-# Data would be pretrained in a <Question><\Question> and <Answer><\Answer> format
-print(f"Generating answer...")
-answer = generate_answer(model, "How far is the moon?", 150)
-print(answer)
-print(f"!!! Finished !!!")
 
+if __name__ == "__main__":
+    main()
