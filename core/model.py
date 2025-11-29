@@ -187,7 +187,8 @@ class GPT(nn.Module):
         print(f"Saved model weights to {model_path}")
     
     def save_checkpoint_bundle(self, checkpoint_dir: str, step: int | None = None, 
-                               optimizer_state: dict | None = None):
+                               optimizer_state: dict | None = None, 
+                               training_config: dict | None = None):
         """
         Save complete checkpoint bundle: model weights + config + tokenizer + training state.
         
@@ -196,12 +197,13 @@ class GPT(nn.Module):
                 ├── model.pt              (model weights only)
                 ├── config.json           (architecture config)
                 ├── tokenizer.json        (tokenizer state)
-                └── training_state.json   (step, optimizer - optional)
+                └── training_state.json   (step, optimizer, training hyperparameters)
         
         Args:
             checkpoint_dir: Directory to save all files
             step: Current training step (optional)
             optimizer_state: Optimizer state dict (optional, for resuming)
+            training_config: Training hyperparameters dict (optional, e.g. max_iters, learning_rate, etc.)
         """
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -223,18 +225,23 @@ class GPT(nn.Module):
             except Exception as e:
                 print(f"Warning: Could not save tokenizer: {e}")
         
-        # 4. Save training state (optional)
-        if step is not None or optimizer_state is not None:
+        # 4. Save training state (optional but recommended)
+        if step is not None or optimizer_state is not None or training_config is not None:
             training_state_path = os.path.join(checkpoint_dir, "training_state.json")
             training_state = {}
             
+            # Save current step
             if step is not None:
                 training_state["step"] = step
+            
+            # Save training hyperparameters (for resuming with same config)
+            if training_config is not None:
+                training_state["training_config"] = training_config
             
             # Optimizer state is saved separately as .pt (it's large and contains tensors)
             if optimizer_state is not None:
                 optimizer_path = os.path.join(checkpoint_dir, "optimizer.pt")
-                torch.save(optimizer_state, optimizer_path)
+                torch.save(optimizer_state, optimizer_path, weights_only=True)
                 training_state["optimizer_file"] = "optimizer.pt"
                 print(f"Saved optimizer state to {optimizer_path}")
             
@@ -281,7 +288,7 @@ class GPT(nn.Module):
         model_path = os.path.join(checkpoint_dir, "model.pt")
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model weights not found: {model_path}")
-        model.load_state_dict(torch.load(model_path, map_location=map_location))
+        model.load_state_dict(torch.load(model_path, map_location=map_location, weights_only=True))
         model.to(config.device)
         model.eval()
         
@@ -305,7 +312,7 @@ class GPT(nn.Module):
             if "optimizer_file" in training_state:
                 optimizer_path = os.path.join(checkpoint_dir, training_state["optimizer_file"])
                 if os.path.exists(optimizer_path):
-                    optimizer_state = torch.load(optimizer_path, map_location=map_location)
+                    optimizer_state = torch.load(optimizer_path, map_location=map_location, weights_only=True)
         
         return model, tokenizer_state, step, optimizer_state
     
@@ -322,7 +329,8 @@ class GPT(nn.Module):
         Returns:
             Tuple of (model, tokenizer_state, step, optimizer_state)
         """
-        checkpoint = torch.load(path, map_location=map_location)
+        # Legacy checkpoints contain dicts with config/tokenizer, need weights_only=False
+        checkpoint = torch.load(path, map_location=map_location, weights_only=False)
         config_dict = checkpoint["config"]
         config = GPTConfig(**config_dict)
 
@@ -388,7 +396,7 @@ class GPT(nn.Module):
         return out
     
     def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
-            eval_iters=200, checkpoint_dir=None, start_step=0):
+            eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None):
         """
         Main training loop - the model trains itself!
         
@@ -400,6 +408,7 @@ class GPT(nn.Module):
             eval_iters: Number of iterations for evaluation
             checkpoint_dir: Where to save checkpoints (None to skip saving)
             start_step: Starting iteration (for resuming)
+            learning_rate: Learning rate (optional, for recording in training state)
         
         Returns:
             Dict with final train/val losses
@@ -407,6 +416,15 @@ class GPT(nn.Module):
         import datetime
         
         self.train()
+        
+        # Prepare training configuration for saving
+        training_config = {
+            "max_iters": max_iters,
+            "eval_interval": eval_interval,
+            "eval_iters": eval_iters,
+            "learning_rate": learning_rate if learning_rate is not None else optimizer.param_groups[0]['lr'],
+            "start_step": start_step,
+        }
         
         for iter in range(start_step, max_iters):
             # Evaluation and checkpointing
@@ -422,7 +440,8 @@ class GPT(nn.Module):
                     self.save_checkpoint_bundle(
                         checkpoint_dir, 
                         step=iter, 
-                        optimizer_state=optimizer.state_dict()
+                        optimizer_state=optimizer.state_dict(),
+                        training_config=training_config
                     )
             
             # Training step
@@ -443,7 +462,8 @@ class GPT(nn.Module):
             self.save_checkpoint_bundle(
                 checkpoint_dir, 
                 step=iter, 
-                optimizer_state=optimizer.state_dict()
+                optimizer_state=optimizer.state_dict(),
+                training_config=training_config
             )
             print(f"Training finished. Model saved to: {checkpoint_dir}")
         
