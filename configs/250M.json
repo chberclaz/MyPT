@@ -1,0 +1,12 @@
+{
+  "name": "GPT-250M",
+  "description": "250 million parameter GPT model",
+  "batch_size": 32,
+  "block_size": 256,
+  "vocab_size": 50304,
+  "n_embd": 1024,
+  "n_head": 16,
+  "n_layer": 16,
+  "dropout": 0.2,
+  "bias": false
+}

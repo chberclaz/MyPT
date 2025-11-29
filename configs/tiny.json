@@ -1,0 +1,12 @@
+{
+  "name": "GPT-Tiny",
+  "description": "Tiny GPT model for quick experiments",
+  "batch_size": 16,
+  "block_size": 128,
+  "vocab_size": 50304,
+  "n_embd": 192,
+  "n_head": 4,
+  "n_layer": 4,
+  "dropout": 0.1,
+  "bias": false
+}

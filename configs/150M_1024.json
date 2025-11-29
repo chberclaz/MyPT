@@ -1,0 +1,12 @@
+{
+  "name": "GPT-150M-1024",
+  "description": "150M parameter model with 1024 context (for powerful GPUs)",
+  "batch_size": 24,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 768,
+  "n_head": 12,
+  "n_layer": 16,
+  "dropout": 0.2,
+  "bias": false
+}

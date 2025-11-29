@@ -1,0 +1,12 @@
+{
+  "name": "GPT-500M-1024",
+  "description": "500M parameter model with 1024 context (for powerful GPUs, 24GB+ VRAM)",
+  "batch_size": 8,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 16,
+  "n_layer": 24,
+  "dropout": 0.2,
+  "bias": false
+}
