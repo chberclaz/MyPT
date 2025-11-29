@@ -217,7 +217,9 @@ class GPT(nn.Module):
             idx_next= torch.multinomial(probs, num_samples=1) # (B,1)
             # append sampled index to the running squence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
-        return idx
+            # decode the response
+            response = self.decode(idx[0].tolist())
+        return response
 
     # ---- Convenience helpers to avoid juggling tokenizer outside the model ----
     def encode(self, text: str) -> list[int]:

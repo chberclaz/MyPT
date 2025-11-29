@@ -28,9 +28,8 @@ def generate_answer(model, question: str, max_new_tokens=100):
     # Generate continuation
     out = model.generate(prompt, max_new_tokens=max_new_tokens)
     # Decode the output
-    decoded = model.decode(out[0].tolist())
     # Strip everything before <Answer>
-    answer = decoded.split("<Answer>")[-1]
+    answer = out.split("<Answer>")[-1]
     # Stop at end tag if model generated it
     answer = answer.split("</Answer>")[0]
     return answer.strip()
@@ -59,13 +58,13 @@ print(f"Start generating...")
 with torch.no_grad():
     out = model.generate(args.prompt, max_new_tokens=args.max_new_tokens)
 
-decoded = model.decode(out[0].tolist())
-print(decoded)
+print(out)
 print(f"!!! Finished !!!")
 
 
 
 # Q&A prototype
+# Data would be pretrained in a <Question><\Question> and <Answer><\Answer> format
 print(f"Generating answer...")
 answer = generate_answer(model, "How far is the moon?", 150)
 print(answer)
