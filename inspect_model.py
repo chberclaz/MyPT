@@ -1,7 +1,10 @@
 # inspect_model.py
 import argparse
+import os
+import json
+import torch
 from core.checkpoint import CheckpointManager
-from core.model import GPT
+from core.model import GPTConfig
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -11,35 +14,77 @@ parser.add_argument(
     help="Name of the model/checkpoint set (e.g. dante_gpt2, shakes_char)",
 )
 parser.add_argument(
-    "--checkpoint",
+    "--legacy_checkpoint",
     type=str,
-    default="final.pt",
-    help="Which checkpoint file to inspect (e.g. final.pt or latest.pt)",
+    default=None,
+    help="Optional: specific legacy checkpoint file (e.g. final.pt, latest.pt)",
 )
 
 args = parser.parse_args()
 
-# Use checkpoint manager to load model
+# Use checkpoint manager
 ckpt_manager = CheckpointManager(args.model_name)
-model_path = ckpt_manager.get_path(args.checkpoint)
 
-if not ckpt_manager.exists(args.checkpoint):
-    raise FileNotFoundError(f"Checkpoint not found: {model_path}")
+if not ckpt_manager.exists():
+    raise FileNotFoundError(f"No checkpoint found for model '{args.model_name}'")
 
-print(f"Inspecting model '{args.model_name}' from: {model_path}\n")
+print(f"Inspecting model '{args.model_name}'\n")
 
-# Load model + tokenizer state (no need for optimizer here)
-model = CheckpointManager.load_for_inference(args.model_name, args.checkpoint)
+# Detect format
+if ckpt_manager.exists_new_format():
+    print("=== FORMAT ===")
+    print("New JSON-based format")
+    print(f"Location: {ckpt_manager.checkpoint_dir}")
+    print()
+    
+    # Load config from JSON
+    config_path = os.path.join(ckpt_manager.checkpoint_dir, "config.json")
+    config = GPTConfig.load_json(config_path)
+    
+    # Load tokenizer state
+    tokenizer_path = os.path.join(ckpt_manager.checkpoint_dir, "tokenizer.json")
+    tokenizer_state = None
+    if os.path.exists(tokenizer_path):
+        with open(tokenizer_path, 'r') as f:
+            tokenizer_state = json.load(f)
+    
+    # Load training state
+    training_state_path = os.path.join(ckpt_manager.checkpoint_dir, "training_state.json")
+    step = None
+    if os.path.exists(training_state_path):
+        with open(training_state_path, 'r') as f:
+            training_state = json.load(f)
+        step = training_state.get("step", None)
 
-# Get tokenizer state for inspection
-import torch
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-checkpoint = torch.load(model_path, map_location=device)
-tokenizer_state = checkpoint.get("tokenizer", None)
-step = checkpoint.get("step", None)
+else:
+    print("=== FORMAT ===")
+    print("Legacy single-file format")
+    
+    # Determine which legacy file to use
+    if args.legacy_checkpoint:
+        legacy_file = args.legacy_checkpoint
+    else:
+        # Try to find a legacy file
+        for filename in ["final.pt", "latest.pt"]:
+            if ckpt_manager.exists_legacy_format(filename):
+                legacy_file = filename
+                break
+    
+    model_path = ckpt_manager.get_path(legacy_file)
+    print(f"Location: {model_path}")
+    print()
+    
+    # Load legacy checkpoint
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    # Extract info
+    config_dict = checkpoint["config"]
+    config = GPTConfig(**config_dict)
+    tokenizer_state = checkpoint.get("tokenizer", None)
+    step = checkpoint.get("step", None)
 
-config = model.config
-
+# Now display the information
 print("=== CONFIG ===")
 print(config)
 print()
