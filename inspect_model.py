@@ -1,11 +1,7 @@
 # inspect_model.py
-import os
 import argparse
-import torch
-
-from model import GPT
-
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+from core.checkpoint import CheckpointManager
+from core.model import GPT
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -23,16 +19,24 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-checkpoint_dir = os.path.join("checkpoints", args.model_name)
-model_path = os.path.join(checkpoint_dir, args.checkpoint)
+# Use checkpoint manager to load model
+ckpt_manager = CheckpointManager(args.model_name)
+model_path = ckpt_manager.get_path(args.checkpoint)
 
-if not os.path.exists(model_path):
+if not ckpt_manager.exists(args.checkpoint):
     raise FileNotFoundError(f"Checkpoint not found: {model_path}")
 
 print(f"Inspecting model '{args.model_name}' from: {model_path}\n")
 
 # Load model + tokenizer state (no need for optimizer here)
-model, tokenizer_state, step, _ = GPT.load(model_path, map_location=device)
+model = CheckpointManager.load_for_inference(args.model_name, args.checkpoint)
+
+# Get tokenizer state for inspection
+import torch
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+checkpoint = torch.load(model_path, map_location=device)
+tokenizer_state = checkpoint.get("tokenizer", None)
+step = checkpoint.get("step", None)
 
 config = model.config
 

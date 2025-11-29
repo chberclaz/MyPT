@@ -6,7 +6,7 @@ from dataclasses import asdict
 import os
 
 # Local imports are placed here to avoid circulars when tooling loads files out of order
-from tokenizer import Tokenizer
+from .tokenizer import Tokenizer
 
 @dataclass
 class GPTConfig:
@@ -199,6 +199,104 @@ class GPT(nn.Module):
         optim_state = checkpoint.get("optimizer_state_dict", None)
         return model, tokenizer_state, step, optim_state
     
+    # ===== TRAINING METHODS =====
+    def configure_optimizer(self, learning_rate=3e-4, optimizer_state=None):
+        """
+        Setup optimizer for this model.
+        
+        Args:
+            learning_rate: Learning rate for AdamW optimizer
+            optimizer_state: Optional state dict to restore optimizer state
+        
+        Returns:
+            Configured optimizer
+        """
+        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
+        if optimizer_state is not None:
+            optimizer.load_state_dict(optimizer_state)
+        return optimizer
+    
+    @torch.no_grad()
+    def estimate_loss(self, data_loader, eval_iters, splits=['train', 'val']):
+        """
+        Estimate loss on train/val sets.
+        
+        Args:
+            data_loader: GPTDataLoader instance with get_batch method
+            eval_iters: Number of iterations to average loss over
+            splits: List of splits to evaluate (default: ['train', 'val'])
+        
+        Returns:
+            Dict mapping split names to average losses
+        """
+        out = {}
+        self.eval()
+        for split in splits:
+            losses = torch.zeros(eval_iters)
+            for k in range(eval_iters):
+                X, Y = data_loader.get_batch(split)
+                logits, loss = self(X, Y)
+                losses[k] = loss.item()
+            out[split] = losses.mean()
+        self.train()
+        return out
+    
+    def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
+            eval_iters=200, checkpoint_dir=None, start_step=0):
+        """
+        Main training loop - the model trains itself!
+        
+        Args:
+            data_loader: GPTDataLoader instance
+            optimizer: Configured optimizer (from configure_optimizer)
+            max_iters: Number of training iterations
+            eval_interval: Evaluate every N steps
+            eval_iters: Number of iterations for evaluation
+            checkpoint_dir: Where to save checkpoints (None to skip saving)
+            start_step: Starting iteration (for resuming)
+        
+        Returns:
+            Dict with final train/val losses
+        """
+        import datetime
+        
+        self.train()
+        checkpoint_path = os.path.join(checkpoint_dir, "latest.pt") if checkpoint_dir else None
+        
+        for iter in range(start_step, max_iters):
+            # Evaluation and checkpointing
+            if iter % eval_interval == 0:
+                ct = datetime.datetime.now()
+                print(f"{iter} : {ct}")
+                
+                losses = self.estimate_loss(data_loader, eval_iters)
+                print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                
+                if checkpoint_path:
+                    self.save(checkpoint_path, step=iter, 
+                             optimizer_state=optimizer.state_dict())
+            
+            # Training step
+            xb, yb = data_loader.get_batch('train')
+            logits, loss = self(xb, yb)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+        
+        # Final evaluation
+        final_losses = self.estimate_loss(data_loader, eval_iters)
+        print(f"final step {iter}: train loss {final_losses['train']:.4f}, "
+              f"val loss {final_losses['val']:.4f}")
+        
+        # Save final model
+        if checkpoint_dir:
+            final_path = os.path.join(checkpoint_dir, "final.pt")
+            self.save(final_path, step=iter, optimizer_state=optimizer.state_dict())
+            print(f"Training finished. Final model at: {final_path}")
+        
+        return final_losses
+    
+    # ===== GENERATION METHODS =====
     def generate(self, prompt, max_new_tokens):
         ctx_ids = self.encode(prompt)
         idx = torch.tensor([ctx_ids], dtype=torch.long, device=self.config.device)
