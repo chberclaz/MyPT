@@ -1,0 +1,12 @@
+{
+  "name": "GPT-Tiny-Char",
+  "description": "Tiny GPT model with character-level tokenization",
+  "batch_size": 16,
+  "block_size": 128,
+  "vocab_size": 256,
+  "n_embd": 192,
+  "n_head": 4,
+  "n_layer": 4,
+  "dropout": 0.1,
+  "bias": false
+}
