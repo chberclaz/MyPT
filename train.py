@@ -186,8 +186,15 @@ def main():
     # Prepare data
     print("Preparing data...")
     if args.dataset_dir:
+        print(f"Dataset directory: {args.dataset_dir}")
+        print(f"Using loss masking: {model.config.use_loss_mask}")
         # Sharded mode: data_loader will memory-map shards on demand
-        data_loader = GPTDataLoader(model.config, model.tokenizer, dataset_dir=args.dataset_dir)
+        data_loader = GPTDataLoader(
+            model.config, 
+            model.tokenizer, 
+            dataset_dir=args.dataset_dir,
+            use_loss_mask=model.config.use_loss_mask
+        )
         
         # Get total tokens from metadata
         import json
@@ -201,7 +208,11 @@ def main():
             total_tokens = None
     else:
         # In-memory mode: load and tokenize entire text
-        data_loader = GPTDataLoader(model.config, model.tokenizer)
+        data_loader = GPTDataLoader(
+            model.config, 
+            model.tokenizer,
+            use_loss_mask=model.config.use_loss_mask
+        )
         data_loader.prepare_data(text)
         total_tokens = len(data_loader.train_data) + len(data_loader.val_data)
     

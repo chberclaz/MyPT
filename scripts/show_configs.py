@@ -98,6 +98,7 @@ def show_config(config_path):
     print(f"  Vocab size  : {config['vocab_size']}")
     print(f"  Dropout     : {config['dropout']}")
     print(f"  Bias        : {config.get('bias', False)}")
+    print(f"  Loss mask   : {config.get('use_loss_mask', False)} {'(SFT mode)' if config.get('use_loss_mask', False) else ''}")
     print(f"\nParameters:")
     print(f"  Total       : {params:,} ({format_params(params)})")
     print(f"  Batch size  : {config['batch_size']}")
@@ -141,15 +142,17 @@ def show_all_configs(configs_dir="configs"):
             'n_layer': config['n_layer'],
             'n_head': config['n_head'],
             'n_embd': config['n_embd'],
+            'use_loss_mask': config.get('use_loss_mask', False),
         })
     
     # Display summary table
-    print(f"{'File':<20} {'Name':<15} {'Params':<12} {'Layers':<8} {'Heads':<8} {'Embed':<8}")
-    print(f"{'-'*20} {'-'*15} {'-'*12} {'-'*8} {'-'*8} {'-'*8}")
+    print(f"{'File':<30} {'Name':<20} {'Params':<12} {'Layers':<8} {'Heads':<8} {'Embed':<8} {'SFT':<5}")
+    print(f"{'-'*30} {'-'*20} {'-'*12} {'-'*8} {'-'*8} {'-'*8} {'-'*5}")
     
     for info in configs_info:
-        print(f"{info['file']:<20} {info['name']:<15} {format_params(info['params']):<12} "
-              f"{info['n_layer']:<8} {info['n_head']:<8} {info['n_embd']:<8}")
+        sft_marker = "✓" if info['use_loss_mask'] else ""
+        print(f"{info['file']:<30} {info['name']:<20} {format_params(info['params']):<12} "
+              f"{info['n_layer']:<8} {info['n_head']:<8} {info['n_embd']:<8} {sft_marker:<5}")
     
     print(f"\n{'='*70}")
     print(f"\nTo use a config:")

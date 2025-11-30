@@ -20,13 +20,17 @@ class GPTConfig:
     dropout: float = 0.2
     bias: bool = False        # True: GPT-2 style, False: a bit better/faster
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    # SFT / loss-masking behavior
+    use_loss_mask: bool = False   # if True, expect loss_mask from data loader during SFT
 
     def __str__(self):
         return (
             f'batch_size:{self.batch_size}, block_size:{self.block_size}, '
             f'vocab_size:{self.vocab_size}, n_embd:{self.n_embd}, '
             f'n_head:{self.n_head}, n_layer:{self.n_layer}, '
-            f'dropout:{self.dropout}, bias:{self.bias}, device:{self.device}'
+            f'dropout:{self.dropout}, bias:{self.bias}, device:{self.device}, '
+            f'use_loss_mask:{self.use_loss_mask}'
         )
     
     def to_dict(self):
@@ -148,7 +152,21 @@ class GPT(nn.Module):
         self.ln_f= nn.LayerNorm(self.config.n_embd) # final Layer norm
         self.lm_head = nn.Linear(self.config.n_embd,self.config.vocab_size)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, loss_mask=None):
+        """
+        Forward pass with optional loss masking for SFT (supervised fine-tuning).
+        
+        Args:
+            idx: Input token indices (B, T)
+            targets: Target token indices (B, T), optional
+            loss_mask: Binary mask for loss computation (B, T), optional
+                       1 = compute loss, 0 = ignore position
+                       Used for assistant-only training in chat scenarios
+        
+        Returns:
+            logits: Predicted logits (B, T, vocab_size) or (B*T, vocab_size) if targets provided
+            loss: Scalar loss (None if targets=None)
+        """
         B, T = idx.shape
         # idx and targets are both (B,T) tensor of integers
         tok_emb = self.token_embedding_table(idx) # (B,T,C) --> batch by time by chanel (chanel = vocab_size)
@@ -166,8 +184,28 @@ class GPT(nn.Module):
             # reshape array from 3d to 2d to conform cross_entropy function
             B, T, C = logits.shape
             logits = logits.view(B*T, C)
-            targets = targets.view(B*T) 
-            loss = F.cross_entropy(logits, targets)
+            targets = targets.view(B*T)
+            
+            if loss_mask is not None:
+                # Apply loss masking (for SFT with assistant-only loss)
+                # loss_mask expected shape (B, T), values 0 or 1 (or floats)
+                loss_mask = loss_mask.view(B * T).to(logits.device)
+                
+                # Compute per-token loss without reduction
+                per_token_loss = F.cross_entropy(
+                    logits, targets, reduction='none'
+                )
+                
+                # Apply mask and normalize only by masked positions
+                denom = loss_mask.sum()
+                if denom.item() > 0:
+                    loss = (per_token_loss * loss_mask).sum() / denom
+                else:
+                    # Fallback if mask is all zeros (shouldn't happen in practice)
+                    loss = per_token_loss.mean()
+            else:
+                # Standard loss computation (all positions)
+                loss = F.cross_entropy(logits, targets)
 
         return logits, loss
     
@@ -375,6 +413,8 @@ class GPT(nn.Module):
         """
         Estimate loss on train/val sets.
         
+        Automatically handles batches with or without loss masks.
+        
         Args:
             data_loader: GPTDataLoader instance with get_batch method
             eval_iters: Number of iterations to average loss over
@@ -388,8 +428,16 @@ class GPT(nn.Module):
         for split in splits:
             losses = torch.zeros(eval_iters)
             for k in range(eval_iters):
-                X, Y = data_loader.get_batch(split)
-                logits, loss = self(X, Y)
+                batch = data_loader.get_batch(split)
+                
+                # Handle both (X, Y) and (X, Y, loss_mask) formats
+                if isinstance(batch, (tuple, list)) and len(batch) == 3:
+                    X, Y, loss_mask = batch
+                    _, loss = self(X, Y, loss_mask=loss_mask)
+                else:
+                    X, Y = batch
+                    _, loss = self(X, Y)
+                
                 losses[k] = loss.item()
             out[split] = losses.mean()
         self.train()
@@ -445,8 +493,16 @@ class GPT(nn.Module):
                     )
             
             # Training step
-            xb, yb = data_loader.get_batch('train')
-            logits, loss = self(xb, yb)
+            batch = data_loader.get_batch('train')
+            
+            # Handle both (X, Y) and (X, Y, loss_mask) formats
+            if isinstance(batch, (tuple, list)) and len(batch) == 3:
+                xb, yb, loss_mask = batch
+                _, loss = self(xb, yb, loss_mask=loss_mask)
+            else:
+                xb, yb = batch
+                _, loss = self(xb, yb)
+            
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()

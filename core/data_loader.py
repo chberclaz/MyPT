@@ -12,6 +12,8 @@ class GPTDataLoader:
     1. In-memory: Loads entire dataset into memory (good for small datasets < 100M tokens)
     2. Sharded: Memory-maps binary shards from disk (good for large datasets >= 100M tokens)
     
+    Supports optional loss masking for SFT (supervised fine-tuning) scenarios.
+    
     Usage:
         # In-memory mode (legacy, for small datasets)
         data_loader = GPTDataLoader(config, tokenizer)
@@ -20,19 +22,30 @@ class GPTDataLoader:
         
         # Sharded mode (for large datasets)
         data_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/my_dataset")
+        
+        # With loss masking for SFT
+        data_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/chat_sft", 
+                                    use_loss_mask=True)
     """
-    def __init__(self, config, tokenizer, dataset_dir=None):
+    def __init__(self, config, tokenizer, dataset_dir=None, use_loss_mask=False):
         self.config = config
         self.tokenizer = tokenizer
         self.dataset_dir = dataset_dir
+        self.use_loss_mask = use_loss_mask
         
         # In-memory data (legacy mode)
         self.train_data = None
         self.val_data = None
         
+        # Loss masks (for SFT)
+        self.train_mask = None
+        self.val_mask = None
+        
         # Shard-based data (new mode)
         self.train_shards = []
         self.val_shards = []
+        self.train_mask_shards = []
+        self.val_mask_shards = []
         self.shard_cache = {}  # Cache for loaded shards
         self.use_shards = False
         
@@ -60,12 +73,32 @@ class GPTDataLoader:
         val_dir = os.path.join(dataset_dir, "val")
         
         if os.path.exists(train_dir):
-            self.train_shards = sorted(glob.glob(os.path.join(train_dir, "*.bin")))
+            # Load token shards (exclude mask files)
+            self.train_shards = sorted([f for f in glob.glob(os.path.join(train_dir, "*.bin"))
+                                       if not f.endswith("_mask.bin")])
+            # Load mask shards if using loss masking
+            if self.use_loss_mask:
+                self.train_mask_shards = sorted(glob.glob(os.path.join(train_dir, "*_mask.bin")))
+        
         if os.path.exists(val_dir):
-            self.val_shards = sorted(glob.glob(os.path.join(val_dir, "*.bin")))
+            # Load token shards (exclude mask files)
+            self.val_shards = sorted([f for f in glob.glob(os.path.join(val_dir, "*.bin"))
+                                     if not f.endswith("_mask.bin")])
+            # Load mask shards if using loss masking
+            if self.use_loss_mask:
+                self.val_mask_shards = sorted(glob.glob(os.path.join(val_dir, "*_mask.bin")))
         
         if not self.train_shards:
             raise FileNotFoundError(f"No training shards found in {train_dir}")
+        
+        # Validate mask shards if needed
+        if self.use_loss_mask:
+            if len(self.train_mask_shards) != len(self.train_shards):
+                print(f"   ⚠️ Warning: use_loss_mask=True but mask shards not found or incomplete")
+                print(f"   Expected {len(self.train_shards)} mask shards, found {len(self.train_mask_shards)}")
+                self.use_loss_mask = False
+            else:
+                print(f"   Using loss masking for SFT (assistant-only training)")
         
         self.use_shards = True
         print(f"   Using shard-based loading (low memory mode)")
@@ -127,7 +160,8 @@ class GPTDataLoader:
             split: 'train' or 'val'
         
         Returns:
-            Tuple of (x, y) tensors on device
+            - (x, y) if use_loss_mask=False
+            - (x, y, loss_mask) if use_loss_mask=True and masks are available
         """
         if self.use_shards:
             return self._get_batch_sharded(split)
@@ -146,6 +180,16 @@ class GPTDataLoader:
         x = torch.stack([batch_data[i:i + self.config.block_size] for i in ix])
         y = torch.stack([batch_data[i + 1:i + self.config.block_size + 1] for i in ix])
         x, y = x.to(self.config.device), y.to(self.config.device)
+        
+        # Return mask if available and requested
+        if self.use_loss_mask:
+            mask_data = self.train_mask if split == 'train' else self.val_mask
+            if mask_data is not None:
+                # Extract corresponding mask segments (aligned with y, not x)
+                mask = torch.stack([mask_data[i + 1:i + self.config.block_size + 1] for i in ix])
+                mask = mask.to(self.config.device)
+                return x, y, mask
+        
         return x, y
     
     def _get_batch_sharded(self, split='train'):
@@ -177,6 +221,19 @@ class GPTDataLoader:
         # Convert to torch tensors
         x = torch.from_numpy(x.astype(np.int64)).to(self.config.device)
         y = torch.from_numpy(y.astype(np.int64)).to(self.config.device)
+        
+        # Load and return mask if requested
+        if self.use_loss_mask:
+            mask_shards = self.train_mask_shards if split == 'train' else self.val_mask_shards
+            if mask_shards and shard_idx < len(mask_shards):
+                mask_shard_path = mask_shards[shard_idx]
+                mask_shard_data = self._load_shard(mask_shard_path)
+                
+                # Extract mask sequences (aligned with y, not x)
+                mask = np.stack([mask_shard_data[i+1:i+self.config.block_size+1] for i in indices])
+                mask = torch.from_numpy(mask.astype(np.float32)).to(self.config.device)
+                
+                return x, y, mask
         
         return x, y
 

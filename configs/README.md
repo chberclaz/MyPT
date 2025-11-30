@@ -8,20 +8,30 @@ This folder contains predefined model architecture configurations for different 
 
 ### Quick Reference
 
-| Config                 | Parameters | Layers | Heads | Embedding | Block Size | Vocab | Use Case                     |
-| ---------------------- | ---------- | ------ | ----- | --------- | ---------- | ----- | ---------------------------- |
-| **tiny.json**          | ~11M       | 4      | 4     | 192       | 128        | GPT-2 | Quick experiments            |
-| **tiny_char.json** 📝  | ~3M        | 4      | 4     | 192       | 128        | Char  | Quick char-level experiments |
-| **small.json**         | ~40M       | 6      | 6     | 384       | 256        | GPT-2 | Default, testing             |
-| **small_char.json** 📝 | ~22M       | 6      | 6     | 384       | 256        | Char  | Char-level, testing          |
-| **150M.json**          | ~150M      | 16     | 12    | 768       | 256        | GPT-2 | Production, small            |
-| **200M.json**          | ~200M      | 16     | 14    | 896       | 256        | GPT-2 | Production, medium           |
-| **250M.json**          | ~250M      | 16     | 16    | 1024      | 256        | GPT-2 | Production, large            |
-| **150M_1024.json** 🚀  | ~150M      | 16     | 12    | 768       | 1024       | GPT-2 | High context, powerful GPUs  |
-| **200M_1024.json** 🚀  | ~200M      | 16     | 14    | 896       | 1024       | GPT-2 | High context, powerful GPUs  |
-| **250M_1024.json** 🚀  | ~250M      | 16     | 16    | 1024      | 1024       | GPT-2 | High context, powerful GPUs  |
-| **350M_1024.json** 🚀  | ~350M      | 24     | 16    | 1024      | 1024       | GPT-2 | High context, 16GB+ VRAM     |
-| **500M_1024.json** 🚀  | ~500M      | 24     | 16    | 1280      | 1024       | GPT-2 | High context, 24GB+ VRAM     |
+| Config                         | Parameters | Layers | Heads | Embedding | Block Size | Vocab | Use Case                     |
+| ------------------------------ | ---------- | ------ | ----- | --------- | ---------- | ----- | ---------------------------- |
+| **tiny.json**                  | ~11M       | 4      | 4     | 192       | 128        | GPT-2 | Quick experiments            |
+| **tiny_char.json** 📝          | ~3M        | 4      | 4     | 192       | 128        | Char  | Quick char-level experiments |
+| **tiny_sft.json** 💬           | ~11M       | 6      | 6     | 384       | 128        | GPT-2 | Testing SFT pipeline         |
+| **small.json**                 | ~40M       | 6      | 6     | 384       | 256        | GPT-2 | Default, testing             |
+| **small_char.json** 📝         | ~22M       | 6      | 6     | 384       | 256        | Char  | Char-level, testing          |
+| **150M.json**                  | ~150M      | 16     | 12    | 768       | 256        | GPT-2 | Production, small            |
+| **150M_chat_sft.json** 💬      | ~150M      | 16     | 12    | 768       | 256        | GPT-2 | Chat/SFT, small              |
+| **200M.json**                  | ~200M      | 16     | 14    | 896       | 256        | GPT-2 | Production, medium           |
+| **200M_chat_sft.json** 💬      | ~200M      | 16     | 14    | 896       | 256        | GPT-2 | Chat/SFT, medium             |
+| **250M.json**                  | ~250M      | 16     | 16    | 1024      | 256        | GPT-2 | Production, large            |
+| **150M_1024.json** 🚀          | ~150M      | 16     | 12    | 768       | 1024       | GPT-2 | High context, powerful GPUs  |
+| **200M_1024.json** 🚀          | ~200M      | 16     | 14    | 896       | 1024       | GPT-2 | High context, powerful GPUs  |
+| **250M_1024.json** 🚀          | ~250M      | 16     | 16    | 1024      | 1024       | GPT-2 | High context, powerful GPUs  |
+| **250M_1024_chat_sft.json** 💬 | ~250M      | 16     | 16    | 1024      | 1024       | GPT-2 | High context chat/SFT        |
+| **350M_1024.json** 🚀          | ~350M      | 24     | 16    | 1024      | 1024       | GPT-2 | High context, 16GB+ VRAM     |
+| **500M_1024.json** 🚀          | ~500M      | 24     | 16    | 1280      | 1024       | GPT-2 | High context, 24GB+ VRAM     |
+
+**Legend:**
+
+- 📝 = Character-level tokenization (smaller vocab ~256)
+- 🚀 = High-context variant (block_size=1024)
+- 💬 = SFT/Chat variant (uses loss masking for assistant-only training)
 
 **Note:** Parameter counts are approximate. Character-level models (📝) use smaller vocab (~256) vs GPT-2 BPE (~50K), resulting in ~20M fewer parameters for same architecture.
 
@@ -307,6 +317,171 @@ These configs use **block_size=1024** for powerful GPUs, allowing the model to s
 **Training time:** ~5 hours on GPU for 1000 iterations  
 **Memory (Training):** ~22 GB  
 **Memory (Generation):** ~4 GB
+
+---
+
+## SFT Configs (Supervised Fine-Tuning) 💬
+
+These configs enable **loss masking** for supervised fine-tuning, particularly useful for chat/assistant-style training where you only want to compute loss on the assistant's responses, not user prompts.
+
+**What is loss masking?**
+
+When training chat models, you typically have conversations like:
+
+```
+<User>What is 2+2?</User>
+<Assistant>2+2 equals 4.</Assistant>
+```
+
+With `use_loss_mask: true`, the model only computes loss on the assistant's tokens. The user tokens are still seen as context (input), but don't contribute to the loss. This prevents the model from learning to generate user-style text and focuses training on high-quality assistant responses.
+
+**How it works:**
+
+1. Your dataset must include mask files (`*_mask.bin` shards) alongside token files
+2. Mask values: `1` = compute loss (assistant tokens), `0` = ignore (user tokens)
+3. The model sees the entire conversation but only updates weights based on assistant tokens
+
+**Benefits:**
+
+- Focus training on high-quality responses
+- Prevent model from role-playing the user
+- Cleaner separation between input and output
+- Standard practice for instruction-tuning
+
+---
+
+### `tiny_sft.json` - ~11M parameters
+
+**Best for:** Testing SFT pipeline, quick experiments
+
+```json
+{
+  "name": "GPT-Tiny-SFT",
+  "n_layer": 6,
+  "n_head": 6,
+  "n_embd": 384,
+  "block_size": 128,
+  "batch_size": 16,
+  "dropout": 0.1,
+  "use_loss_mask": true
+}
+```
+
+**Training time:** ~5 minutes on GPU for 1000 iterations  
+**Memory (Training):** ~500 MB  
+**Memory (Generation):** ~100 MB
+
+---
+
+### `150M_chat_sft.json` - ~150M parameters
+
+**Best for:** Production chat models, small-medium scale
+
+```json
+{
+  "name": "GPT-150M-Chat-SFT",
+  "n_layer": 16,
+  "n_head": 12,
+  "n_embd": 768,
+  "block_size": 256,
+  "batch_size": 32,
+  "dropout": 0.1,
+  "use_loss_mask": true
+}
+```
+
+**Training time:** ~1 hour on GPU for 1000 iterations  
+**Memory (Training):** ~8 GB  
+**Memory (Generation):** ~1 GB
+
+---
+
+### `200M_chat_sft.json` - ~200M parameters
+
+**Best for:** Production chat models, medium scale
+
+```json
+{
+  "name": "GPT-200M-Chat-SFT",
+  "n_layer": 16,
+  "n_head": 14,
+  "n_embd": 896,
+  "block_size": 256,
+  "batch_size": 32,
+  "dropout": 0.1,
+  "use_loss_mask": true
+}
+```
+
+**Training time:** ~1.5 hours on GPU for 1000 iterations  
+**Memory (Training):** ~10 GB  
+**Memory (Generation):** ~1.2 GB
+
+---
+
+### `250M_1024_chat_sft.json` - ~250M parameters
+
+**Best for:** Large chat models with high context
+
+```json
+{
+  "name": "GPT-250M-1024-Chat-SFT",
+  "n_layer": 16,
+  "n_head": 16,
+  "n_embd": 1024,
+  "block_size": 1024,
+  "batch_size": 16,
+  "dropout": 0.1,
+  "use_loss_mask": true
+}
+```
+
+**Training time:** ~3 hours on GPU for 1000 iterations  
+**Memory (Training):** ~14 GB  
+**Memory (Generation):** ~2.5 GB
+
+---
+
+### Using SFT Configs
+
+**Two-phase training (recommended):**
+
+```bash
+# Phase 1: Pre-train on general corpus (base model)
+python train.py \
+    --config_file configs/200M.json \
+    --model_name base_200M \
+    --dataset_dir data/general_corpus \
+    --max_iters 50000
+
+# Phase 2: SFT on chat data (with loss masking)
+python train.py \
+    --config_file configs/200M_chat_sft.json \
+    --model_name chat_200M \
+    --init_from_model base_200M \
+    --dataset_dir data/chat_sft \
+    --max_iters 10000 \
+    --learning_rate 3e-5
+```
+
+**Direct SFT (from scratch):**
+
+```bash
+# Train directly on chat data with loss masking
+python train.py \
+    --config_file configs/150M_chat_sft.json \
+    --model_name chat_model \
+    --dataset_dir data/chat_sft \
+    --max_iters 20000
+```
+
+**Important notes:**
+
+- SFT configs require datasets prepared with mask shards
+- Use `scripts/prepare_dataset.py` to create masked datasets (future feature)
+- For now, prepare datasets with `*_mask.bin` files alongside token files
+- Lower dropout (0.1 vs 0.2) is recommended for SFT
+- Use lower learning rates for fine-tuning (3e-5 vs 3e-4)
 
 ---
 
