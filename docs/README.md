@@ -99,6 +99,19 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - Sequence length differences
   - Trade-offs and when to use each
 
+- **[SFT_LOSS_MASKING.md](SFT_LOSS_MASKING.md)** - Supervised fine-tuning with loss masking
+  - What is loss masking and why use it
+  - Assistant-only training for chat models
+  - Implementation details and usage
+  - Creating masked datasets
+  - Best practices and examples
+
+- **[CONFIG_INHERITANCE_FIX.md](CONFIG_INHERITANCE_FIX.md)** - Config inheritance during fine-tuning
+  - How configs are handled when using --init_from_model
+  - Which parameters are inherited vs updated
+  - Enabling SFT during fine-tuning
+  - Dropout and batch size updates
+
 ### Development & Architecture
 
 - **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** - Initial refactoring details

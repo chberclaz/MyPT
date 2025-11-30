@@ -98,6 +98,29 @@ class CheckpointManager:
             # Validate tokenization compatibility
             self._validate_tokenization(base_tok_state, tokenization, init_from_model, model, config)
             
+            # Update model config with new training parameters
+            # Keep architecture params (n_layer, n_embd, etc.) from base model
+            # Update mutable training params from new config
+            print(f"Updating model config with new training parameters...")
+            model.config.batch_size = config.batch_size
+            model.config.dropout = config.dropout
+            model.config.use_loss_mask = config.use_loss_mask
+            model.config.device = config.device
+            
+            # Update dropout in model layers if it changed
+            if hasattr(model, 'blocks'):
+                for block in model.blocks:
+                    if hasattr(block, 'sa') and hasattr(block.sa, 'dropout'):
+                        block.sa.dropout.p = config.dropout
+                    if hasattr(block, 'fwd') and hasattr(block.fwd, 'net'):
+                        for layer in block.fwd.net:
+                            if isinstance(layer, torch.nn.Dropout):
+                                layer.p = config.dropout
+            
+            print(f"  use_loss_mask: {model.config.use_loss_mask}")
+            print(f"  dropout: {model.config.dropout}")
+            print(f"  batch_size: {model.config.batch_size}")
+            
             optimizer = model.configure_optimizer(learning_rate)
             return model, optimizer, 0  # start from step 0 for new training
         
