@@ -69,6 +69,12 @@ class Tokenizer():
             "token_kind": self.token_kind,
             "chars": self.chars,
         }
+    
+    def set_state(self, state):
+        """Restore tokenizer state from a saved state dictionary."""
+        self.token_kind = state["token_kind"]
+        self.chars = state.get("chars", None)
+        self.__set_encoding(self.token_kind)
 
 
     @classmethod

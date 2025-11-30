@@ -158,13 +158,23 @@ python scripts/prepare_dataset.py \
 ### Example 3: Character-Level
 
 ```bash
-# Character-level tokenization
+# Step 1: Prepare character-level dataset
 python scripts/prepare_dataset.py \
     --input_files shakespeare.txt dante.txt \
     --out_dir data/literature_char \
     --tokenization char \
     --tokens_per_shard 5000000  # Smaller shards for char-level
+
+# Step 2: Train with character-level tokenization
+python train.py \
+    --dataset_dir data/literature_char \
+    --tokenization char \  # Important: must match dataset!
+    --model_name char_model \
+    --config_file configs/small_char.json \
+    --max_iters 5000
 ```
+
+**Important:** When using character-level tokenization (`--tokenization char`), the tokenizer vocabulary is automatically loaded from `tokenizer_state.json` in the dataset directory. This ensures the model uses the exact same character vocabulary that was used during dataset preparation.
 
 ---
 
@@ -445,6 +455,33 @@ mv data/new_shards/val/*.bin data/my_dataset/val/
 | Sharded | ~1 GB | 2 seconds | Fast |
 
 **Recommendation:** Sharded is the only option
+
+---
+
+## Troubleshooting
+
+### Issue: Gibberish output with character-level tokenization
+
+**Symptom:** After training with `--tokenization char`, generation produces random characters instead of coherent text.
+
+**Cause:** This was an issue where the tokenizer vocabulary wasn't being loaded correctly from the dataset directory.
+
+**Solution:** This has been fixed! The training script now automatically loads `tokenizer_state.json` from the dataset directory, ensuring the correct character vocabulary is used.
+
+**Verify the fix:**
+```bash
+# Check training output - vocab_size should match your character set (e.g., ~95-256)
+python train.py --dataset_dir data/my_char_dataset --tokenization char ...
+
+# Should show:
+# Loading tokenizer state from data/my_char_dataset...
+# Vocabulary size: 95  ← Correct!
+
+# Generation should now work correctly
+python generate.py --model_name my_char_model --prompt "Hello"
+```
+
+**See also:** `docs/SHARDED_TOKENIZER_FIX.md` for technical details about this fix.
 
 ---
 
