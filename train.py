@@ -138,12 +138,29 @@ def main():
     
     # Read training text (only for in-memory mode)
     text = None
+    dataset_tokenizer_state = None
+    
     if args.input_file:
         print("Loading training data (in-memory mode)...")
         text = GPTDataLoader.read_text(args.input_file)
         print(f"Loaded {len(text):,} characters")
         print(f"Approximate tokens (char-level): {len(text):,}")
         print(f"Approximate tokens (GPT-2): ~{len(text)//4:,}")
+    elif args.dataset_dir:
+        # For sharded mode, load tokenizer state from dataset directory
+        import json
+        import os
+        tokenizer_state_path = os.path.join(args.dataset_dir, "tokenizer_state.json")
+        if os.path.exists(tokenizer_state_path):
+            print(f"Loading tokenizer state from {args.dataset_dir}...")
+            with open(tokenizer_state_path, 'r') as f:
+                dataset_tokenizer_state = json.load(f)
+            print(f"Tokenizer type: {dataset_tokenizer_state.get('token_kind', 'unknown')}")
+        else:
+            raise FileNotFoundError(
+                f"Tokenizer state not found in dataset directory: {tokenizer_state_path}\n"
+                f"Dataset must contain tokenizer_state.json created by prepare_dataset.py"
+            )
     
     # Initialize model (handles resume / init_from / fresh)
     print("\nInitializing model...")
@@ -152,7 +169,8 @@ def main():
         tokenization=args.tokenization,
         input_text=text,
         learning_rate=args.learning_rate,
-        init_from_model=args.init_from_model
+        init_from_model=args.init_from_model,
+        dataset_tokenizer_state=dataset_tokenizer_state
     )
     
     print(f"\n========== Model Configuration ==========")

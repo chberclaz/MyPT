@@ -37,7 +37,8 @@ class CheckpointManager:
         return self.exists_new_format() or self.exists_legacy_format()
     
     def initialize_for_training(self, config, tokenization, input_text, 
-                                learning_rate, init_from_model=None):
+                                learning_rate, init_from_model=None,
+                                dataset_tokenizer_state=None):
         """
         Initialize model for training. Handles 3 cases:
         1. Resume from this model's checkpoint
@@ -49,9 +50,10 @@ class CheckpointManager:
         Args:
             config: GPTConfig instance
             tokenization: 'gpt2' or 'char'
-            input_text: Training text (for char vocab building)
+            input_text: Training text (for char vocab building, in-memory mode)
             learning_rate: Learning rate for optimizer
             init_from_model: Optional model name to initialize from
+            dataset_tokenizer_state: Optional tokenizer state from dataset directory (sharded mode)
         
         Returns: (model, optimizer, start_step)
         """
@@ -106,7 +108,20 @@ class CheckpointManager:
             
             # Build tokenizer
             tokenizer = Tokenizer(config, tokenization)
-            if tokenization == 'char':
+            
+            # Load from dataset tokenizer state (sharded mode) or build from input_text (in-memory mode)
+            if dataset_tokenizer_state is not None:
+                print(f"Loading tokenizer from dataset...")
+                tokenizer.set_state(dataset_tokenizer_state)
+                if tokenization == 'char':
+                    config.vocab_size = len(tokenizer.chars)
+                else:
+                    config.vocab_size = 50304
+            elif tokenization == 'char':
+                if input_text is None:
+                    raise ValueError(
+                        "For character-level tokenization, either input_text or dataset_tokenizer_state must be provided."
+                    )
                 tokenizer.build_char_vocab(input_text)
                 config.vocab_size = len(tokenizer.chars)
             else:

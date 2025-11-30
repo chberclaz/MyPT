@@ -45,36 +45,49 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - Training lifecycle examples
 
 - **[CONFIGURATION_STORAGE.md](CONFIGURATION_STORAGE.md)** - Configuration storage details
+
   - Fixed vs mutable configurations
   - File structure breakdown
   - Complete checkpoint contents
   - Usage examples
 
 - **[PARAMETER_CALCULATION.md](PARAMETER_CALCULATION.md)** - Parameter calculation guide
+
   - How to calculate model parameters
   - Formula breakdown
   - Memory estimation
   - Using the calculator tool
 
 - **[LARGE_DATASET_TRAINING.md](LARGE_DATASET_TRAINING.md)** - Large dataset training guide
+
   - Sharded dataset system for 100M+ tokens
   - Minimal RAM usage (memory-mapped shards)
   - Step-by-step examples
   - Performance comparison
 
 - **[SHARDED_DATASET_IMPLEMENTATION.md](SHARDED_DATASET_IMPLEMENTATION.md)** - Sharded dataset implementation
+
   - Technical implementation details
   - Memory mapping explained
   - API reference
   - Use cases and examples
 
+- **[SHARDED_TOKENIZER_FIX.md](SHARDED_TOKENIZER_FIX.md)** - Sharded dataset tokenizer fix
+
+  - Fix for character-level tokenization with sharded datasets
+  - Root cause analysis (gibberish output issue)
+  - Implementation details
+  - Verification steps
+
 - **[DATASET_COVERAGE_ANALYSIS.md](DATASET_COVERAGE_ANALYSIS.md)** - Dataset coverage analysis
+
   - Automatic coverage calculation
   - Optimal training iterations
   - Coverage recommendations (2-5x)
   - Interactive warnings for low coverage
 
 - **[VOCAB_SIZE_EXPLAINED.md](VOCAB_SIZE_EXPLAINED.md)** - Vocabulary size and parameters
+
   - GPT-2 BPE vs character-level tokenization
   - Impact on parameter count (~20-40M difference)
   - Why configs show 50304
