@@ -65,6 +65,13 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - Step-by-step examples
   - Performance comparison
 
+- **[DATA_SOURCES_CONFIG.md](DATA_SOURCES_CONFIG.md)** - Data sources JSON configuration
+
+  - JSON format for defining data sources
+  - Configuring download URLs and weights
+  - Creating custom source files
+  - Usage with fetch_and_prepare_multilingual.py
+
 - **[SHARDED_DATASET_IMPLEMENTATION.md](SHARDED_DATASET_IMPLEMENTATION.md)** - Sharded dataset implementation
 
   - Technical implementation details
