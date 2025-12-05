@@ -207,7 +207,13 @@ class GPTDataLoader:
         shard_data = self._load_shard(shard_path)
         
         # Sample random positions from this shard
-        max_start = len(shard_data) - self.config.block_size - 1
+        while True:
+            shard_idx = np.random.randint(0, len(shards))
+            shard_data = self._load_shard(shards[shard_idx])
+            max_start = len(shard_data) - self.config.block_size - 1
+            if max_start > 0:
+                break  # found a usable shard
+        
         if max_start < self.config.batch_size:
             # Shard too small, fall back to sequential sampling
             indices = np.arange(min(self.config.batch_size, max_start))
