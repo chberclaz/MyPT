@@ -21,8 +21,8 @@ This guide explains how to configure data sources for the `fetch_and_prepare_mul
 
 ## Available Source Files
 
-| File | Description |
-|------|-------------|
+| File                      | Description                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------ |
 | `multilingual_de_en.json` | German-English multilingual dataset (Wikipedia, OpenSubtitles, Europarl, News) |
 
 ---
@@ -58,8 +58,8 @@ Each sources file should have this structure:
   "description": "Human-readable description",
   "version": "1.0",
   "default_weights": {
-    "source_key": 0.30,
-    "another_source": 0.70
+    "source_key": 0.3,
+    "another_source": 0.7
   },
   "sources": {
     "source_key": {
@@ -84,33 +84,33 @@ Each sources file should have this structure:
 
 ### Top-level Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | No | Human-readable name for the dataset |
-| `description` | No | Description of the dataset |
-| `version` | No | Version string |
-| `default_weights` | No | Default sampling weights for each source |
-| `sources` | **Yes** | Dictionary of data source configurations |
+| Field             | Required | Description                              |
+| ----------------- | -------- | ---------------------------------------- |
+| `name`            | No       | Human-readable name for the dataset      |
+| `description`     | No       | Description of the dataset               |
+| `version`         | No       | Version string                           |
+| `default_weights` | No       | Default sampling weights for each source |
+| `sources`         | **Yes**  | Dictionary of data source configurations |
 
 ### Source Configuration Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | **Yes** | Human-readable name |
-| `subdir` | **Yes** | Subdirectory name within data_dir |
-| `urls` | **Yes** | List of `[filename, url]` pairs to download |
-| `final_pattern` | **Yes** | Glob pattern for final data files (e.g., `*.txt`) |
-| `type` | **Yes** | One of: `zip`, `gzip`, `split_zip` |
-| `est_size_mb` | No | Estimated download size in MB |
-| `description` | No | Brief description |
-| `combined_name` | Only for `split_zip` | Filename for combined archive |
+| Field           | Required             | Description                                       |
+| --------------- | -------------------- | ------------------------------------------------- |
+| `name`          | **Yes**              | Human-readable name                               |
+| `subdir`        | **Yes**              | Subdirectory name within data_dir                 |
+| `urls`          | **Yes**              | List of `[filename, url]` pairs to download       |
+| `final_pattern` | **Yes**              | Glob pattern for final data files (e.g., `*.txt`) |
+| `type`          | **Yes**              | One of: `zip`, `gzip`, `split_zip`                |
+| `est_size_mb`   | No                   | Estimated download size in MB                     |
+| `description`   | No                   | Brief description                                 |
+| `combined_name` | Only for `split_zip` | Filename for combined archive                     |
 
 ### Source Types
 
-| Type | Description |
-|------|-------------|
-| `zip` | Standard ZIP archive - will be extracted |
-| `gzip` | GZIP compressed file - will be decompressed |
+| Type        | Description                                        |
+| ----------- | -------------------------------------------------- |
+| `zip`       | Standard ZIP archive - will be extracted           |
+| `gzip`      | GZIP compressed file - will be decompressed        |
 | `split_zip` | Multi-part archive - parts combined then extracted |
 
 ---
@@ -131,9 +131,7 @@ Each sources file should have this structure:
     "wiki_fr": {
       "name": "French Wikipedia",
       "subdir": "wikipedia_fr",
-      "urls": [
-        ["frwiki-dump.txt.gz", "https://example.com/frwiki.txt.gz"]
-      ],
+      "urls": [["frwiki-dump.txt.gz", "https://example.com/frwiki.txt.gz"]],
       "final_pattern": "*.txt",
       "type": "gzip",
       "est_size_mb": 5000,
@@ -159,9 +157,7 @@ Each sources file should have this structure:
     "github_python": {
       "name": "GitHub Python",
       "subdir": "github_python",
-      "urls": [
-        ["python_code.tar.gz", "https://example.com/python.tar.gz"]
-      ],
+      "urls": [["python_code.tar.gz", "https://example.com/python.tar.gz"]],
       "final_pattern": "*.py",
       "type": "gzip",
       "est_size_mb": 10000,
@@ -170,9 +166,7 @@ Each sources file should have this structure:
     "github_js": {
       "name": "GitHub JavaScript",
       "subdir": "github_js",
-      "urls": [
-        ["js_code.tar.gz", "https://example.com/js.tar.gz"]
-      ],
+      "urls": [["js_code.tar.gz", "https://example.com/js.tar.gz"]],
       "final_pattern": "*.js",
       "type": "gzip",
       "est_size_mb": 8000,
@@ -181,9 +175,7 @@ Each sources file should have this structure:
     "stackoverflow": {
       "name": "StackOverflow",
       "subdir": "stackoverflow",
-      "urls": [
-        ["so_dump.zip", "https://example.com/stackoverflow.zip"]
-      ],
+      "urls": [["so_dump.zip", "https://example.com/stackoverflow.zip"]],
       "final_pattern": "*.xml",
       "type": "zip",
       "est_size_mb": 5000,
@@ -208,6 +200,7 @@ Weights are automatically normalized to sum to 1.0. For example:
 ```
 
 Will be normalized to:
+
 - `source_a`: 0.50 (50%)
 - `source_b`: 0.33 (33%)
 - `source_c`: 0.17 (17%)
@@ -271,4 +264,3 @@ python scripts/fetch_and_prepare_multilingual.py --list_sources
 - [Sharded Dataset Implementation](SHARDED_DATASET_IMPLEMENTATION.md)
 - [scripts/prepare_weighted_dataset.py](../scripts/prepare_weighted_dataset.py)
 - [scripts/fetch_and_prepare_multilingual.py](../scripts/fetch_and_prepare_multilingual.py)
-
