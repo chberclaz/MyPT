@@ -9,6 +9,24 @@ import json
 # Local imports are placed here to avoid circulars when tooling loads files out of order
 from .tokenizer import Tokenizer
 
+def _resolve_dtype(dtype_str: str) -> torch.dtype:
+    """
+    Map a human-friendly dtype string to a torch.dtype.
+    Supports: fp32/float32, fp16/float16, bf16/bfloat16.
+    """
+    if dtype_str is None:
+        raise ValueError("dtype_str must not be None")
+
+    key = dtype_str.lower()
+    if key in ("fp32", "float32", "f32"):
+        return torch.float32
+    if key in ("fp16", "float16", "f16", "half"):
+        return torch.float16
+    if key in ("bf16", "bfloat16"):
+        return torch.bfloat16
+
+    raise ValueError(f"Unsupported dtype string: {dtype_str}")
+
 @dataclass
 class GPTConfig:
     batch_size: int = 32      # how many independent sequences will we process in parallel
@@ -209,49 +227,83 @@ class GPT(nn.Module):
 
         return logits, loss
     
-    def save(self, checkpoint_dir: str):
+    def save(self, checkpoint_dir: str, save_dtype: str | None = None):
         """
         Save model weights only (to model.pt).
+        Optionally cast floating-point tensors to a target dtype (e.g. 'float32', 'bfloat16').
+
         Config, tokenizer, and training state are saved separately via save_checkpoint_bundle().
-        
+
         Args:
             checkpoint_dir: Directory to save checkpoint (e.g., "checkpoints/dante")
+            save_dtype: Optional dtype string for checkpoint tensors
+                        ('float32', 'fp32', 'bfloat16', 'bf16', 'float16', 'fp16').
+                        If None, tensors are saved in their current dtype.
         """
         os.makedirs(checkpoint_dir, exist_ok=True)
         model_path = os.path.join(checkpoint_dir, "model.pt")
-        
-        # Save ONLY the model weights
-        torch.save(self.state_dict(), model_path)
-        print(f"Saved model weights to {model_path}")
+
+        state_dict = self.state_dict()
+        current_dtype = str(next(self.parameters()).dtype).replace("torch.", "")
+
+        checkpoint_payload: dict
+
+        if save_dtype is not None:
+            target_dtype = _resolve_dtype(save_dtype)
+            cast_state_dict = {}
+            for k, v in state_dict.items():
+                if torch.is_floating_point(v):
+                    cast_state_dict[k] = v.to(target_dtype)
+                else:
+                    cast_state_dict[k] = v
+            checkpoint_payload = {
+                "state_dict": cast_state_dict,
+                "checkpoint_dtype": save_dtype,
+                "model_dtype": current_dtype,
+            }
+        else:
+            # Backwards-compatible: still allow raw state_dict-only checkpoints
+            checkpoint_payload = state_dict
+
+        torch.save(checkpoint_payload, model_path)
+        print(f"Saved model weights to {model_path} (model dtype={current_dtype}, "
+              f"checkpoint dtype={save_dtype or current_dtype})")
+
     
-    def save_checkpoint_bundle(self, checkpoint_dir: str, step: int | None = None, 
-                               optimizer_state: dict | None = None, 
-                               training_config: dict | None = None):
+    def save_checkpoint_bundle(self, checkpoint_dir: str, step: int | None = None,
+                               optimizer_state: dict | None = None,
+                               training_config: dict | None = None,
+                               save_dtype: str | None = None):
         """
         Save complete checkpoint bundle: model weights + config + tokenizer + training state.
-        
+
         File structure:
             checkpoint_dir/
-                ├── model.pt              (model weights only)
+                ├── model.pt              (model weights only; may be cast to save_dtype)
                 ├── config.json           (architecture config)
                 ├── tokenizer.json        (tokenizer state)
-                └── training_state.json   (step, optimizer, training hyperparameters)
-        
+                └── training_state.json   (step, optimizer, training hyperparameters, dtype info)
+
         Args:
             checkpoint_dir: Directory to save all files
             step: Current training step (optional)
             optimizer_state: Optimizer state dict (optional, for resuming)
             training_config: Training hyperparameters dict (optional, e.g. max_iters, learning_rate, etc.)
+            save_dtype: Optional target dtype for checkpoint weights
+                        ('float32'/'fp32', 'bfloat16'/'bf16', 'float16'/'fp16').
+                        If None, weights are saved in their current dtype.
         """
         os.makedirs(checkpoint_dir, exist_ok=True)
-        
-        # 1. Save model weights
-        self.save(checkpoint_dir)
-        
+
+        current_dtype = str(next(self.parameters()).dtype).replace("torch.", "")
+
+        # 1. Save model weights (possibly cast to save_dtype)
+        self.save(checkpoint_dir, save_dtype=save_dtype)
+
         # 2. Save config
         config_path = os.path.join(checkpoint_dir, "config.json")
         self.config.save_json(config_path)
-        
+
         # 3. Save tokenizer state
         if hasattr(self, "tokenizer") and self.tokenizer is not None:
             tokenizer_path = os.path.join(checkpoint_dir, "tokenizer.json")
@@ -262,47 +314,62 @@ class GPT(nn.Module):
                 print(f"Saved tokenizer to {tokenizer_path}")
             except Exception as e:
                 print(f"Warning: Could not save tokenizer: {e}")
-        
+
         # 4. Save training state (optional but recommended)
         if step is not None or optimizer_state is not None or training_config is not None:
             training_state_path = os.path.join(checkpoint_dir, "training_state.json")
-            training_state = {}
-            
+            training_state: dict = {}
+
             # Save current step
             if step is not None:
                 training_state["step"] = step
-            
+
             # Save training hyperparameters (for resuming with same config)
             if training_config is not None:
                 training_state["training_config"] = training_config
-            
+
+            # Record dtype info
+            training_state["model_dtype_at_save"] = current_dtype
+            if save_dtype is not None:
+                training_state["checkpoint_dtype"] = save_dtype
+
             # Optimizer state is saved separately as .pt (it's large and contains tensors)
             if optimizer_state is not None:
                 optimizer_path = os.path.join(checkpoint_dir, "optimizer.pt")
                 torch.save(optimizer_state, optimizer_path)
                 training_state["optimizer_file"] = "optimizer.pt"
                 print(f"Saved optimizer state to {optimizer_path}")
-            
+
             with open(training_state_path, 'w') as f:
                 json.dump(training_state, f, indent=2)
             print(f"Saved training state to {training_state_path}")
 
+
     @classmethod
-    def load(cls, checkpoint_dir: str, map_location: str | torch.device | None = None):
+    def load(cls, checkpoint_dir: str,
+             map_location: str | torch.device | None = None,
+             load_dtype: str | None = None):
         """
         Load model from checkpoint bundle (new JSON-based format).
-        
+
         Expected structure:
             checkpoint_dir/
                 ├── model.pt              (required)
                 ├── config.json           (required)
                 ├── tokenizer.json        (required)
                 └── training_state.json   (optional)
-        
+
+        model.pt can be either:
+            - a raw state_dict (old behavior)
+            - a dict with keys: 'state_dict', 'checkpoint_dtype', 'model_dtype'
+
         Args:
             checkpoint_dir: Directory containing checkpoint files
-            map_location: Device to load model to
-        
+            map_location: Device to load tensors to (for torch.load)
+            load_dtype: Optional dtype string to cast model weights after loading
+                        ('float32'/'fp32', 'bfloat16'/'bf16', 'float16'/'fp16').
+                        If None, weights are left in stored dtype and then moved to config.device.
+
         Returns:
             Tuple of (model, tokenizer_state, step, optimizer_state)
         """
@@ -311,32 +378,55 @@ class GPT(nn.Module):
         if not os.path.exists(config_path):
             raise FileNotFoundError(f"Config file not found: {config_path}")
         config = GPTConfig.load_json(config_path)
-        
+
         # 2. Load tokenizer state
         tokenizer_path = os.path.join(checkpoint_dir, "tokenizer.json")
         tokenizer_state = None
         if os.path.exists(tokenizer_path):
             with open(tokenizer_path, 'r') as f:
                 tokenizer_state = json.load(f)
-        
+
         # 3. Create model with config
         model = cls(config)
-        
-        # 4. Load model weights
+
+        # 4. Load model weights (handle both raw state_dict and dict-with-metadata)
         model_path = os.path.join(checkpoint_dir, "model.pt")
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model weights not found: {model_path}")
-        model.load_state_dict(torch.load(model_path, map_location=map_location, weights_only=True))
-        model.to(config.device)
+
+        ckpt_obj = torch.load(model_path, map_location=map_location, weights_only=False)
+
+        checkpoint_dtype = None
+        if isinstance(ckpt_obj, dict) and "state_dict" in ckpt_obj:
+            state_dict = ckpt_obj["state_dict"]
+            checkpoint_dtype = ckpt_obj.get("checkpoint_dtype", None)
+        else:
+            # Backwards-compatible: old style state_dict-only
+            state_dict = ckpt_obj
+
+        if load_dtype is not None:
+            target_dtype = _resolve_dtype(load_dtype)
+            for k, v in state_dict.items():
+                if torch.is_floating_point(v):
+                    state_dict[k] = v.to(target_dtype)
+        model.load_state_dict(state_dict)
+
+        # Move model to device and dtype
+        if load_dtype is not None:
+            target_dtype = _resolve_dtype(load_dtype)
+            model = model.to(device=config.device, dtype=target_dtype)
+        else:
+            model = model.to(config.device)
+
         model.eval()
-        
+
         # 5. Reattach tokenizer
         if tokenizer_state is not None:
             try:
                 model.tokenizer = Tokenizer.from_state(config, tokenizer_state)
             except Exception as e:
                 print(f"Warning: Could not restore tokenizer: {e}")
-        
+
         # 6. Load training state (optional)
         step = None
         optimizer_state = None
@@ -345,14 +435,15 @@ class GPT(nn.Module):
             with open(training_state_path, 'r') as f:
                 training_state = json.load(f)
             step = training_state.get("step", None)
-            
+
             # Load optimizer state if it exists
             if "optimizer_file" in training_state:
                 optimizer_path = os.path.join(checkpoint_dir, training_state["optimizer_file"])
                 if os.path.exists(optimizer_path):
                     optimizer_state = torch.load(optimizer_path, map_location=map_location, weights_only=True)
-        
+
         return model, tokenizer_state, step, optimizer_state
+
     
     @classmethod
     def load_legacy(cls, path: str, map_location: str | torch.device | None = None):
@@ -520,6 +611,7 @@ class GPT(nn.Module):
                 step=iter, 
                 optimizer_state=optimizer.state_dict(),
                 training_config=training_config
+                save_dtype="bf16"
             )
             print(f"Training finished. Model saved to: {checkpoint_dir}")
         
