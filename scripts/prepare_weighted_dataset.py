@@ -497,6 +497,7 @@ def pass2_write_shards(
     # Save metadata
     metadata = {
         "total_tokens_written": total_tokens_written,
+        "total_tokens": total_tokens_written,
         "total_shards": num_shards,
         "train_shards": len(train_shards),
         "val_shards": len(val_shards),
