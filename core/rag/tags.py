@@ -31,11 +31,11 @@ ASSISTANT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_assistant_close"]
 ASSISTANT_CONTEXT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_assistant_context_open"]
 ASSISTANT_CONTEXT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_assistant_context_close"]
 
-TOOL_CALL_OPEN = SPECIAL_TOKEN_STRINGS["myPT_tool_call_open"]
-TOOL_CALL_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_tool_call_close"]
+TOOLCALL_OPEN = SPECIAL_TOKEN_STRINGS["myPT_toolcall_open"]
+TOOLCALL_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_toolcall_close"]
 
-TOOL_RESULT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_tool_result_open"]
-TOOL_RESULT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_tool_result_close"]
+TOOLRESULT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_toolresult_open"]
+TOOLRESULT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_toolresult_close"]
 
 EOT = SPECIAL_TOKEN_STRINGS["myPT_eot"]
 
@@ -64,14 +64,14 @@ def wrap_assistant(text: str) -> str:
     return f"{ASSISTANT_OPEN}{text}{ASSISTANT_CLOSE}"
 
 
-def wrap_tool_call(text: str) -> str:
-    """Wrap text in tool call tags."""
-    return f"{TOOL_CALL_OPEN}{text}{TOOL_CALL_CLOSE}"
+def wrap_toolcall(text: str) -> str:
+    """Wrap text in toolcall tags."""
+    return f"{TOOLCALL_OPEN}{text}{TOOLCALL_CLOSE}"
 
 
-def wrap_tool_result(text: str) -> str:
-    """Wrap text in tool result tags."""
-    return f"{TOOL_RESULT_OPEN}{text}{TOOL_RESULT_CLOSE}"
+def wrap_toolresult(text: str) -> str:
+    """Wrap text in toolresult tags."""
+    return f"{TOOLRESULT_OPEN}{text}{TOOLRESULT_CLOSE}"
 
 
 # ============================================================
