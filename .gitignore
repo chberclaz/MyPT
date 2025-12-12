@@ -3,6 +3,10 @@ checkpoints/
 checkpoints/*
 data/
 data/*
+workspace/docs/*
+workspace/index/*
+workspace/*
+
 
 
 # Python
