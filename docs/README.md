@@ -125,6 +125,14 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - Enabling SFT during fine-tuning
   - Dropout and batch size updates
 
+### RAG (Retrieval-Augmented Generation)
+
+- **[chat_sft_with_context.md](chat_sft_with_context.md)** - Chat SFT with RAG context
+  - JSONL input format for conversations
+  - Loss masking for assistant-only training
+  - Creating datasets from RAG logs
+  - Full training pipeline example
+
 ### Development & Architecture
 
 - **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** - Initial refactoring details
