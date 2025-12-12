@@ -41,6 +41,9 @@ class GPTConfig:
     
     # SFT / loss-masking behavior
     use_loss_mask: bool = False   # if True, expect loss_mask from data loader during SFT
+    
+    # Checkpoint dtype (None = use current model dtype)
+    save_dtype: str | None = None  # 'fp32', 'bf16', 'fp16', or None
 
     def __str__(self):
         return (
@@ -48,7 +51,7 @@ class GPTConfig:
             f'vocab_size:{self.vocab_size}, n_embd:{self.n_embd}, '
             f'n_head:{self.n_head}, n_layer:{self.n_layer}, '
             f'dropout:{self.dropout}, bias:{self.bias}, device:{self.device}, '
-            f'use_loss_mask:{self.use_loss_mask}'
+            f'use_loss_mask:{self.use_loss_mask}, save_dtype:{self.save_dtype}'
         )
     
     def to_dict(self):
@@ -179,7 +182,7 @@ class GPT(nn.Module):
             targets: Target token indices (B, T), optional
             loss_mask: Binary mask for loss computation (B, T), optional
                        1 = compute loss, 0 = ignore position
-                       Used for assistant-only training in chat scenarios
+                       Used for assistant-only training in chat/RAG scenarios
         
         Returns:
             logits: Predicted logits (B, T, vocab_size) or (B*T, vocab_size) if targets provided
@@ -535,7 +538,8 @@ class GPT(nn.Module):
         return out
     
     def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
-            eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None):
+            eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None,
+            save_dtype=None):
         """
         Main training loop - the model trains itself!
         
@@ -548,6 +552,8 @@ class GPT(nn.Module):
             checkpoint_dir: Where to save checkpoints (None to skip saving)
             start_step: Starting iteration (for resuming)
             learning_rate: Learning rate (optional, for recording in training state)
+            save_dtype: Optional dtype for saving checkpoints ('fp32', 'bf16', 'fp16').
+                       If None, uses config.save_dtype or current model dtype.
         
         Returns:
             Dict with final train/val losses
@@ -556,6 +562,9 @@ class GPT(nn.Module):
         
         self.train()
         
+        # Determine save dtype: explicit param > config > None (use model dtype)
+        effective_save_dtype = save_dtype if save_dtype is not None else self.config.save_dtype
+        
         # Prepare training configuration for saving
         training_config = {
             "max_iters": max_iters,
@@ -563,6 +572,7 @@ class GPT(nn.Module):
             "eval_iters": eval_iters,
             "learning_rate": learning_rate if learning_rate is not None else optimizer.param_groups[0]['lr'],
             "start_step": start_step,
+            "save_dtype": effective_save_dtype,
         }
         
         for iter in range(start_step, max_iters):
@@ -580,7 +590,8 @@ class GPT(nn.Module):
                         checkpoint_dir, 
                         step=iter, 
                         optimizer_state=optimizer.state_dict(),
-                        training_config=training_config
+                        training_config=training_config,
+                        save_dtype=effective_save_dtype
                     )
             
             # Training step
@@ -611,7 +622,7 @@ class GPT(nn.Module):
                 step=iter, 
                 optimizer_state=optimizer.state_dict(),
                 training_config=training_config,
-                save_dtype="bf16"
+                save_dtype=effective_save_dtype
             )
             print(f"Training finished. Model saved to: {checkpoint_dir}")
         
