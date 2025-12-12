@@ -9,5 +9,6 @@
   "n_layer": 4,
   "dropout": 0.01,
   "bias": false,
-  "use_loss_mask": true
+  "use_loss_mask": true,
+  "save_dtype": "bf16"
 }

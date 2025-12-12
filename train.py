@@ -60,6 +60,9 @@ def parse_args():
                         help="Dropout rate")
     parser.add_argument("--bias", action="store_true",
                         help="Use bias in Linear/LayerNorm like GPT-2")
+    parser.add_argument("--save_dtype", type=str, default=None,
+                        choices=["fp32", "float32", "bf16", "bfloat16", "fp16", "float16"],
+                        help="Dtype for saving checkpoints (default: use model dtype)")
     
     return parser.parse_args()
 
@@ -90,6 +93,10 @@ def main():
             import torch
             config_dict["device"] = 'cuda' if torch.cuda.is_available() else 'cpu'
         
+        # Allow CLI override for save_dtype
+        if args.save_dtype is not None:
+            config_dict["save_dtype"] = args.save_dtype
+        
         config = GPTConfig(**config_dict)
         
         if config_name:
@@ -101,12 +108,13 @@ def main():
         config = GPTConfig(
             batch_size=args.batch_size,
             block_size=args.block_size,
-            vocab_size=50304,  # Will be adjusted for char-level if needed
+            vocab_size=args.vocab_size,  # Will be adjusted for char-level if needed
             n_embd=args.n_embd,
             n_head=args.n_head,
             n_layer=args.n_layer,
             dropout=args.dropout,
             bias=args.bias,
+            save_dtype=args.save_dtype,
         )
     
     print(f"========== Training Configuration ==========")
