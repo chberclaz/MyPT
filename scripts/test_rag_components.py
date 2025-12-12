@@ -409,7 +409,7 @@ def main():
         
         print("\n🚀 Next steps:")
         print("   1. Train a model: python train.py --model_name my_model ...")
-        print("   2. Use RAG chat: python scripts/rag_chat.py --model_name my_model --index_dir workspace/index/latest")
+        print("   2. Use workspace chat: python scripts/workspace_chat.py --model_name my_model --workspace_dir workspace/")
         
         if args.keep_temp:
             print(f"\n📁 Test files kept at: {temp_dir}")

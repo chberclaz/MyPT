@@ -115,7 +115,7 @@ Note: Use a config with `"use_loss_mask": true`.
 ### 3. Use for RAG Generation
 
 ```bash
-python scripts/rag_chat.py \
+python scripts/workspace_chat.py \
     --model_name my_rag_model \
     --index_dir workspace/index/latest
 ```
@@ -199,7 +199,7 @@ output_dir/
 
 1. **Start small** - Use micro config first to validate pipeline
 2. **Monitor loss** - Should decrease on assistant tokens
-3. **Check generation** - Test with `rag_chat.py` periodically
+3. **Check generation** - Test with `workspace_chat.py` periodically
 4. **Fine-tune from pretrained** - Start from a base model, not random init:
    ```bash
    python train.py --init_from_model pretrained_base --config_file configs/sft1/small.json ...
@@ -251,7 +251,7 @@ python train.py \
     --max_iters 10000
 
 # 4. Chat with RAG
-python scripts/rag_chat.py \
+python scripts/workspace_chat.py \
     --model_name my_rag_assistant \
     --index_dir workspace/index/v1
 ```
