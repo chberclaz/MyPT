@@ -11,6 +11,9 @@ torch>=2.0.0
 # Tiktoken - OpenAI's tokenizer for GPT-2 BPE encoding
 tiktoken>=0.5.0
 
+# NumPy - Array operations for embeddings, data loading, shards
+numpy>=1.21.0
+
 # Optional: Development dependencies (for testing, linting, etc.)
 # Uncomment to install:
 # pytest>=7.0.0

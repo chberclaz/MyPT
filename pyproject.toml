@@ -31,6 +31,7 @@ classifiers = [
 dependencies = [
     "torch>=2.0.0",
     "tiktoken>=0.5.0",
+    "numpy>=1.21.0",
 ]
 
 [project.optional-dependencies]
@@ -48,14 +49,30 @@ Repository = "https://github.com/yourusername/mypt"
 Documentation = "https://github.com/yourusername/mypt/blob/main/README.md"
 
 [project.scripts]
+# Core commands
 mypt-train = "train:main"
 mypt-generate = "generate:main"
-mypt-inspect = "inspect_model:main"
-mypt-convert = "convert_legacy_checkpoints:main"
+
+# Agentic RAG
+mypt-workspace-chat = "scripts.workspace_chat:main"
+mypt-build-index = "scripts.build_rag_index:main"
+mypt-generate-sft = "scripts.generate_agent_sft:main"
+
+# Dataset preparation
+mypt-prepare-dataset = "scripts.prepare_dataset:main"
+mypt-prepare-chat-sft = "scripts.prepare_chat_sft:main"
+mypt-prepare-tool-sft = "scripts.prepare_tool_sft:main"
+mypt-prepare-weighted = "scripts.prepare_weighted_dataset:main"
+mypt-fetch-multilingual = "scripts.fetch_and_prepare_multilingual:main"
+
+# Utilities
+mypt-show-configs = "scripts.show_configs:main"
+mypt-calculate-params = "scripts.calculate_params:main"
+mypt-convert-legacy = "scripts.convert_legacy_checkpoints:main"
 
 [tool.setuptools.packages.find]
-include = ["core*", "*.py"]
-exclude = ["__pycache__*", "*.pyc", "checkpoints*"]
+include = ["core*", "scripts*"]
+exclude = ["__pycache__*", "*.pyc", "checkpoints*", "tests*"]
 
 [tool.black]
 line-length = 100
