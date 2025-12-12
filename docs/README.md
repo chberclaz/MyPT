@@ -101,18 +101,21 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - How to calculate correctly for char-level
 
 - **[TOKENIZATION_COMPARISON.md](TOKENIZATION_COMPARISON.md)** - Complete tokenization comparison
+
   - Detailed GPT-2 BPE vs char-level comparison
   - Parameter breakdown by tokenization
   - Sequence length differences
   - Trade-offs and when to use each
 
 - **[SPECIAL_TOKENS.md](SPECIAL_TOKENS.md)** - Special tokens for structured text
+
   - Available special tokens (user, assistant, tool calls, etc.)
   - Token ID assignment and encoding/decoding
   - Usage examples and helper methods
   - Adding custom special tokens
 
 - **[SFT_LOSS_MASKING.md](SFT_LOSS_MASKING.md)** - Supervised fine-tuning with loss masking
+
   - What is loss masking and why use it
   - Assistant-only training for chat models
   - Implementation details and usage
@@ -128,10 +131,17 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
 ### RAG (Retrieval-Augmented Generation)
 
 - **[chat_sft_with_context.md](chat_sft_with_context.md)** - Chat SFT with RAG context
+
   - JSONL input format for conversations
   - Loss masking for assistant-only training
   - Creating datasets from RAG logs
   - Full training pipeline example
+
+- **[DATA_PERSISTENCE.md](DATA_PERSISTENCE.md)** - Data persistence and reusability
+  - Which data can be reused across model runs
+  - Tokenization compatibility constraints
+  - RAG index independence from models
+  - Recommended workflow for experimentation
 
 ### Development & Architecture
 
