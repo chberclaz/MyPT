@@ -88,6 +88,7 @@ class AgentController:
         tools: WorkspaceTools instance
         system_prompt: System prompt (default: DEFAULT_SYSTEM_PROMPT)
         max_result_chars: Max chars for tool results (default: 2000)
+        safety_margin: Token buffer below block_size (default: 64)
     """
     
     def __init__(
@@ -96,11 +97,23 @@ class AgentController:
         tools,
         system_prompt: str = None,
         max_result_chars: int = 2000,
+        safety_margin: int = 64,
     ):
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self.max_result_chars = max_result_chars
+        self.safety_margin = safety_margin
+        
+        # Get block_size and tokenizer from model
+        self.block_size = getattr(model, 'config', None)
+        if self.block_size:
+            self.block_size = getattr(self.block_size, 'block_size', 1024)
+        else:
+            self.block_size = 1024  # Default fallback
+        
+        # Get tokenizer from model if available
+        self.tokenizer = getattr(model, 'tokenizer', None)
     
     def build_prompt(self, history: List[Dict[str, Any]]) -> str:
         """
@@ -145,6 +158,55 @@ class AgentController:
         
         return "\n".join(parts)
     
+    def _trim_history_to_block_size(self, history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Trim history until the rendered prompt fits within block_size.
+        
+        Prevents prompt overflow by dropping oldest non-system messages first.
+        Always preserves:
+        - System message (first element if role == "system")
+        - At least the most recent user message
+        
+        Args:
+            history: Conversation history
+            
+        Returns:
+            Trimmed history that fits within block_size - safety_margin tokens
+        """
+        # Safety fallback: if no tokenizer, can't measure tokens
+        if self.tokenizer is None:
+            return history
+        
+        working = list(history)
+        max_tokens = self.block_size - self.safety_margin
+        
+        while True:
+            # Build prompt and measure token count
+            prompt = self.build_prompt(working)
+            try:
+                token_ids = self.tokenizer.encode(prompt)
+                token_count = len(token_ids)
+            except Exception:
+                # If encoding fails, return as-is
+                return working
+            
+            # Check if we fit within budget
+            if token_count <= max_tokens:
+                return working
+            
+            # If nothing left to trim (keep at least system + 1 message), stop
+            if len(working) <= 2:
+                return working
+            
+            # Determine which message to drop:
+            # Preserve system message at index 0 if present
+            if working[0].get("role") == "system":
+                drop_index = 1  # Drop second message (oldest non-system)
+            else:
+                drop_index = 0  # No system message, drop oldest
+            
+            working.pop(drop_index)
+    
     def run(
         self, 
         history: List[Dict[str, Any]], 
@@ -173,6 +235,9 @@ class AgentController:
         tool_calls = []
         
         for step in range(max_steps):
+            # Trim history to fit within block_size (prevents overflow)
+            history = self._trim_history_to_block_size(history)
+            
             # Build prompt
             prompt = self.build_prompt(history)
             
