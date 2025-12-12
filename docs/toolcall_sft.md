@@ -5,10 +5,133 @@ This guide covers how to create and train on SFT datasets for agentic tool-calli
 ## Overview
 
 Toolcall SFT teaches your model to:
+
 1. Recognize when to call workspace tools
 2. Format toolcall blocks with correct JSON
 3. Interpret tool results
 4. Generate final answers based on tool outputs
+
+---
+
+## Complete Pipeline
+
+The agentic RAG SFT pipeline has three steps:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         AGENTIC RAG SFT PIPELINE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Step 1: Generate Synthetic Data
+────────────────────────────────
+    python scripts/generate_agent_sft.py \
+        --docs_dir workspace/docs \
+        --output data/agent_sft.jsonl \
+        --num_examples 500
+                    │
+                    ▼
+            ┌───────────────────┐
+            │  agent_sft.jsonl  │  ← Human-readable intermediate format
+            │  (JSONL format)   │    Uses: "role", "content", "messages"
+            └───────────────────┘
+                    │
+Step 2: Convert to Training Format
+──────────────────────────────────
+    python scripts/prepare_tool_sft.py \
+        --input data/agent_sft.jsonl \
+        --output_dir data/agent_sft
+                    │
+                    ▼
+            ┌───────────────────────────────────────────┐
+            │  data/agent_sft/                          │
+            │    train/shard_00000.bin      (tokens)    │
+            │    train/shard_00000_mask.bin (loss mask) │  ← Tokenized format
+            │    val/shard_00000.bin                    │    Uses: <myPT_*> tags
+            │    val/shard_00000_mask.bin               │
+            │    tokenizer_state.json                   │
+            └───────────────────────────────────────────┘
+                    │
+Step 3: Train Model
+───────────────────
+    python train.py \
+        --model_name my_agent \
+        --init_from_model base_model \
+        --dataset_dir data/agent_sft \
+        --config_file configs/sft2/toolchat.json
+```
+
+---
+
+## Special Tokens (from `core/special_tokens.py`)
+
+The training data uses these special tokens:
+
+| Token Name              | String               | Used For                 |
+| ----------------------- | -------------------- | ------------------------ |
+| `myPT_system_open`      | `<myPT_system>`      | System message start     |
+| `myPT_system_close`     | `</myPT_system>`     | System message end       |
+| `myPT_user_open`        | `<myPT_user>`        | User message start       |
+| `myPT_user_close`       | `</myPT_user>`       | User message end         |
+| `myPT_assistant_open`   | `<myPT_assistant>`   | Assistant response start |
+| `myPT_assistant_close`  | `</myPT_assistant>`  | Assistant response end   |
+| `myPT_toolcall_open`    | `<myPT_toolcall>`    | Tool call start          |
+| `myPT_toolcall_close`   | `</myPT_toolcall>`   | Tool call end            |
+| `myPT_toolresult_open`  | `<myPT_toolresult>`  | Tool result start        |
+| `myPT_toolresult_close` | `</myPT_toolresult>` | Tool result end          |
+| `myPT_eot`              | `<myPT_eot>`         | End of turn/conversation |
+
+---
+
+## Data Format Conversion
+
+### Input: JSONL (Human-Readable)
+
+The JSONL format is an **intermediate representation** for humans to read and edit:
+
+```json
+{
+  "system": "You are MyPT assistant.",
+  "messages": [
+    { "role": "user", "content": "Search for Python docs" },
+    {
+      "role": "assistant_toolcall",
+      "name": "workspace.search",
+      "arguments": { "query": "Python" }
+    },
+    {
+      "role": "toolresult",
+      "name": "workspace.search",
+      "content": { "documents": [{ "text": "Python is great" }] }
+    },
+    { "role": "assistant", "content": "Found Python documentation." }
+  ]
+}
+```
+
+### Output: Training Text (What LLM Sees)
+
+`prepare_tool_sft.py` converts the JSONL to actual training text using special tokens:
+
+```
+<myPT_system>You are MyPT assistant.</myPT_system>
+<myPT_user>Search for Python docs</myPT_user>
+<myPT_assistant><myPT_toolcall>{"name":"workspace.search","query":"Python"}</myPT_toolcall></myPT_assistant>
+<myPT_toolresult>{"documents":[{"text":"Python is great"}]}</myPT_toolresult>
+<myPT_assistant>Found Python documentation.</myPT_assistant>
+<myPT_eot>
+```
+
+### Conversion Rules
+
+| JSONL Role                                                          | Serialized As                                                                                |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `"system": "text"`                                                  | `<myPT_system>text</myPT_system>`                                                            |
+| `{"role": "user", "content": "text"}`                               | `<myPT_user>text</myPT_user>`                                                                |
+| `{"role": "assistant", "content": "text"}`                          | `<myPT_assistant>text</myPT_assistant>`                                                      |
+| `{"role": "assistant_toolcall", "name": "...", "arguments": {...}}` | `<myPT_assistant><myPT_toolcall>{"name":"...","arg":"val"}</myPT_toolcall></myPT_assistant>` |
+| `{"role": "toolresult", "content": {...}}`                          | `<myPT_toolresult>{...json...}</myPT_toolresult>`                                            |
+
+---
 
 ## JSONL Input Format
 
@@ -18,32 +141,59 @@ Each line is a JSON object representing a conversation with tool usage:
 {
   "system": "You are MyPT workspace assistant with access to search and document tools.",
   "messages": [
-    {"role": "user", "content": "Find docs about machine learning and summarize them"},
-    {"role": "assistant_toolcall", "name": "workspace.search", "arguments": {"query": "machine learning", "top_k": 3}},
-    {"role": "toolresult", "name": "workspace.search", "content": {"documents": [{"doc_id": "abc", "text": "ML is..."}], "total": 3}},
-    {"role": "assistant_toolcall", "name": "workspace.summarize", "arguments": {"doc_id": "abc"}},
-    {"role": "toolresult", "name": "workspace.summarize", "content": {"summary": "Machine learning is..."}},
-    {"role": "assistant", "content": "Based on the documents, machine learning is a subset of AI that..."}
+    {
+      "role": "user",
+      "content": "Find docs about machine learning and summarize them"
+    },
+    {
+      "role": "assistant_toolcall",
+      "name": "workspace.search",
+      "arguments": { "query": "machine learning", "top_k": 3 }
+    },
+    {
+      "role": "toolresult",
+      "name": "workspace.search",
+      "content": {
+        "documents": [{ "doc_id": "abc", "text": "ML is..." }],
+        "total": 3
+      }
+    },
+    {
+      "role": "assistant_toolcall",
+      "name": "workspace.summarize",
+      "arguments": { "doc_id": "abc" }
+    },
+    {
+      "role": "toolresult",
+      "name": "workspace.summarize",
+      "content": { "summary": "Machine learning is..." }
+    },
+    {
+      "role": "assistant",
+      "content": "Based on the documents, machine learning is a subset of AI that..."
+    }
   ]
 }
 ```
 
 ### Message Roles
 
-| Role | Description | Mask |
-|------|-------------|------|
-| `user` | User's question/request | 0 |
-| `assistant` | Final natural language answer | **1** |
-| `assistant_toolcall` | Assistant calling a tool | **1** |
-| `toolresult` | Tool execution result | 0 |
+| Role                 | Description                   | Mask  |
+| -------------------- | ----------------------------- | ----- |
+| `user`               | User's question/request       | 0     |
+| `assistant`          | Final natural language answer | **1** |
+| `assistant_toolcall` | Assistant calling a tool      | **1** |
+| `toolresult`         | Tool execution result         | 0     |
 
 ### Role Details
 
 **`assistant_toolcall`**:
+
 - `name`: Tool name (e.g., `workspace.search`)
 - `arguments`: Dict of tool arguments
 
 **`toolresult`**:
+
 - `name`: Tool name (should match the toolcall)
 - `content`: Tool result (dict or JSON string)
 
@@ -65,98 +215,175 @@ The pipeline serializes to this format (using `core/special_tokens.py`):
 ## Loss Masking
 
 The loss mask ensures the model only learns to generate:
+
 - Tool calls (including the JSON formatting)
 - Final answers
 
-| Content | Mask | Trained? |
-|---------|------|----------|
-| System prompt | 0 | No |
-| User messages | 0 | No |
-| **Assistant messages** | **1** | **Yes** |
-| **Assistant toolcalls** | **1** | **Yes** |
-| Tool results | 0 | No |
+| Content                 | Mask  | Trained? |
+| ----------------------- | ----- | -------- |
+| System prompt           | 0     | No       |
+| User messages           | 0     | No       |
+| **Assistant messages**  | **1** | **Yes**  |
+| **Assistant toolcalls** | **1** | **Yes**  |
+| Tool results            | 0     | No       |
+
+### Visual Loss Mask Example
+
+```
+                                                        LOSS MASK
+                                                        ─────────
+<myPT_system>You are MyPT assistant.</myPT_system>      0000000... (don't train)
+<myPT_user>Search for Python docs</myPT_user>           0000000... (don't train)
+<myPT_assistant><myPT_toolcall>{"name":"workspace.search"...}</myPT_toolcall></myPT_assistant>
+                                                        1111111... (TRAIN!)
+<myPT_toolresult>{"documents":[...]}</myPT_toolresult>  0000000... (don't train)
+<myPT_assistant>Found Python documentation.</myPT_assistant>
+                                                        1111111... (TRAIN!)
+<myPT_eot>                                              0000000... (don't train)
+```
 
 **Why mask tool results?**
+
 - Tool results come from executing code, not from the model
 - We don't want the model to "learn" tool outputs
-- The model should learn to *use* tool outputs, not *generate* them
+- The model should learn to _use_ tool outputs, not _generate_ them
 
 ## Available Tools
 
 The default workspace tools are:
 
 ### `workspace.search`
+
 Search documents by semantic similarity.
 
 ```json
-{"name": "workspace.search", "query": "search terms", "top_k": 5}
+{ "name": "workspace.search", "query": "search terms", "top_k": 5 }
 ```
 
 Returns:
+
 ```json
-{"documents": [{"chunk_id": "...", "doc_id": "...", "text": "...", "score": 0.85}], "total": 5}
+{
+  "documents": [
+    { "chunk_id": "...", "doc_id": "...", "text": "...", "score": 0.85 }
+  ],
+  "total": 5
+}
 ```
 
 ### `workspace.list_docs`
+
 List all documents in workspace.
 
 ```json
-{"name": "workspace.list_docs"}
+{ "name": "workspace.list_docs" }
 ```
 
 Returns:
+
 ```json
-{"documents": [{"doc_id": "...", "title": "...", "path": "..."}], "total": 10}
+{
+  "documents": [{ "doc_id": "...", "title": "...", "path": "..." }],
+  "total": 10
+}
 ```
 
 ### `workspace.get_doc`
+
 Get full document text.
 
 ```json
-{"name": "workspace.get_doc", "doc_id": "abc123"}
+{ "name": "workspace.get_doc", "doc_id": "abc123" }
 ```
 
 Returns:
+
 ```json
-{"doc_id": "abc123", "title": "Document Title", "text": "Full document text...", "length": 5000}
+{
+  "doc_id": "abc123",
+  "title": "Document Title",
+  "text": "Full document text...",
+  "length": 5000
+}
 ```
 
 ### `workspace.summarize`
+
 Summarize a document or text.
 
 ```json
-{"name": "workspace.summarize", "doc_id": "abc123"}
+{ "name": "workspace.summarize", "doc_id": "abc123" }
 ```
 
 Returns:
+
 ```json
-{"summary": "This document discusses...", "source": "doc_id", "original_length": 5000}
+{
+  "summary": "This document discusses...",
+  "source": "doc_id",
+  "original_length": 5000
+}
 ```
 
 ## Usage
 
-### 1. Prepare Dataset
+### Step 0. Prepare Workspace Documents
+
+Add documents to your workspace:
+
+```bash
+mkdir -p workspace/docs
+# Add .txt and .md files to workspace/docs/
+```
+
+### Step 1. Generate Synthetic Training Data (Optional)
+
+If you don't have hand-crafted training data, generate synthetic examples:
+
+```bash
+python scripts/generate_agent_sft.py \
+    --docs_dir workspace/docs \
+    --output data/agent_sft.jsonl \
+    --num_examples 500 \
+    --include_errors
+```
+
+This creates JSONL with realistic tool-use patterns:
+
+- `workspace.search` → find relevant chunks → answer
+- `workspace.list_docs` → enumerate docs → describe
+- `workspace.get_doc` → read full doc → quote/summarize
+- `workspace.summarize` → condense content → report
+- Multi-step: search → get_doc → answer
+
+### Step 2. Convert to Tokenized Shards
 
 ```bash
 python scripts/prepare_tool_sft.py \
-    --input data/tool_conversations.jsonl \
-    --output_dir data/tool_sft \
+    --input data/agent_sft.jsonl \
+    --output_dir data/agent_sft \
     --tokenization gpt2 \
     --val_split 0.1
 ```
 
-### 2. Train with Loss Masking
+This converts JSONL to:
+
+- `train/shard_*.bin` - tokenized text with `<myPT_*>` tags
+- `train/shard_*_mask.bin` - loss mask (1=train, 0=context)
+- `tokenizer_state.json` - tokenizer configuration
+
+### Step 3. Train with Loss Masking
 
 ```bash
 python train.py \
     --model_name my_agent \
     --init_from_model base_model \
-    --dataset_dir data/tool_sft \
+    --dataset_dir data/agent_sft \
     --config_file configs/sft2/toolchat.json \
     --max_iters 5000
 ```
 
-### 3. Test Agent
+### Step 4. Test Agent
 
 ```bash
 python scripts/workspace_chat.py \
@@ -167,7 +394,27 @@ python scripts/workspace_chat.py \
 
 ## Creating Training Data
 
-### Manual Creation
+You have three options for creating training data:
+
+### Option A: Synthetic Generation (Recommended for Starting)
+
+Use `generate_agent_sft.py` to create synthetic examples from your documents:
+
+```bash
+python scripts/generate_agent_sft.py \
+    --docs_dir workspace/docs \
+    --output data/agent_sft.jsonl \
+    --num_examples 500 \
+    --seed 42
+```
+
+Options:
+
+- `--num_examples`: Number of synthetic conversations (default: 500)
+- `--include_errors`: Add examples with "no results found"
+- `--max_doc_chars`: Truncate long documents (default: 2000)
+
+### Option B: Manual Creation
 
 Create JSONL files manually with diverse tool-use patterns:
 
@@ -195,7 +442,7 @@ with open("data/tool_sft.jsonl", "w") as f:
         f.write(json.dumps(ex) + "\n")
 ```
 
-### From Agent Logs
+### Option C: From Agent Logs
 
 If you have a working agent, log interactions for training:
 
@@ -205,12 +452,12 @@ def log_for_training(history, result):
     item = {
         "messages": history + [{"role": "assistant", "content": result["content"]}]
     }
-    
+
     # Include tool calls
     for tc in result.get("tool_calls", []):
         # These are already in history from the agent
         pass
-    
+
     with open("data/agent_logs.jsonl", "a") as f:
         f.write(json.dumps(item) + "\n")
 ```
@@ -220,14 +467,20 @@ def log_for_training(history, result):
 ### Data Quality
 
 1. **Diverse patterns** - Include various tool combinations:
+
    - Search only
    - Search → summarize
    - List → get_doc → answer
    - Multi-step reasoning
 
 2. **Error cases** - Include examples where tools return errors:
+
    ```json
-   {"role": "toolresult", "name": "workspace.get_doc", "content": {"error": "Document not found"}}
+   {
+     "role": "toolresult",
+     "name": "workspace.get_doc",
+     "content": { "error": "Document not found" }
+   }
    ```
 
 3. **No-tool cases** - Include conversations without tools:
@@ -302,4 +555,3 @@ A minimal example dataset:
 - [Workspace API](workspace_api.md) - Tool implementations
 - [SFT Loss Masking](SFT_LOSS_MASKING.md) - Loss masking details
 - [Chat SFT with Context](chat_sft_with_context.md) - Phase 3A RAG training
-

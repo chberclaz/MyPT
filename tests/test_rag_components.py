@@ -11,10 +11,10 @@ This script validates:
 5. Retrieval (search)
 
 Usage:
-    python scripts/test_rag_components.py
+    python tests/test_rag_components.py
     
     # With custom test documents
-    python scripts/test_rag_components.py --docs_dir my_docs/
+    python tests/test_rag_components.py --docs_dir my_docs/
 """
 
 import argparse

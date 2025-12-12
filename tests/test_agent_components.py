@@ -10,7 +10,7 @@ Validates:
 4. AgentController (with mock model)
 
 Usage:
-    python scripts/test_agent_components.py
+    python tests/test_agent_components.py
 """
 
 import os
@@ -210,9 +210,6 @@ def test_serialization():
     print("\n" + "=" * 50)
     print("TEST 5: Conversation Serialization")
     print("=" * 50)
-    
-    # Import the serialization function
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     
     from core.special_tokens import SPECIAL_TOKEN_STRINGS
     
