@@ -143,6 +143,18 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - RAG index independence from models
   - Recommended workflow for experimentation
 
+### Agentic RAG (Phase 3B)
+
+- **[toolcall_sft.md](toolcall_sft.md)** - Toolcall SFT training
+  - JSONL format for tool-augmented conversations
+  - Loss masking for toolcalls
+  - Training an agent to use tools
+
+- **[workspace_api.md](workspace_api.md)** - Workspace API reference
+  - WorkspaceEngine for document management
+  - WorkspaceTools implementations
+  - AgentController orchestration
+
 ### Development & Architecture
 
 - **[REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)** - Initial refactoring details

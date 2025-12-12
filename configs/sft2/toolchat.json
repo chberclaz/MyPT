@@ -1,0 +1,15 @@
+{
+  "name": "Toolchat-Small",
+  "description": "Small model for toolcall SFT training",
+  "batch_size": 8,
+  "block_size": 512,
+  "vocab_size": 50304,
+  "n_embd": 384,
+  "n_head": 6,
+  "n_layer": 6,
+  "dropout": 0.05,
+  "bias": false,
+  "use_loss_mask": true,
+  "save_dtype": "bf16"
+}
+
