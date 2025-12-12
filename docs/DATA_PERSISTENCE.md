@@ -38,9 +38,9 @@ workspace/index/
 python scripts/build_rag_index.py --docs_dir workspace/docs --out_dir workspace/index/v1
 
 # Use with different models (same index!)
-python scripts/rag_chat.py --model_name model_A --index_dir workspace/index/v1
-python scripts/rag_chat.py --model_name model_B --index_dir workspace/index/v1
-python scripts/rag_chat.py --model_name model_C --index_dir workspace/index/v1
+python scripts/workspace_chat.py --model_name model_A --index_dir workspace/index/v1
+python scripts/workspace_chat.py --model_name model_B --index_dir workspace/index/v1
+python scripts/workspace_chat.py --model_name model_C --index_dir workspace/index/v1
 ```
 
 ### When to Rebuild
@@ -190,7 +190,7 @@ python train.py --model_name exp3 --init_from_model exp2 \
 # PHASE 3: INFERENCE (reuse RAG index with any model)
 # ============================================================
 
-python scripts/rag_chat.py --model_name exp3 --index_dir workspace/index/v1
+python scripts/workspace_chat.py --model_name exp3 --index_dir workspace/index/v1
 ```
 
 ---
