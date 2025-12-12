@@ -9,9 +9,9 @@ SPECIAL_TOKEN_STRINGS = {
     "myPT_assistant_close": "</myPT_assistant>",
     "myPT_assistant_context_open": "<myPT_assistant_context>",
     "myPT_assistant_context_close": "</myPT_assistant_context>",
-    "myPT_tool_call_open": "<myPT_tool_call>",
-    "myPT_tool_call_close": "</myPT_tool_call>",
-    "myPT_tool_result_open": "<myPT_tool_result>",
-    "myPT_tool_result_close": "</myPT_tool_result>",
+    "myPT_toolcall_open": "<myPT_toolcall>",
+    "myPT_toolcall_close": "</myPT_toolcall>",
+    "myPT_toolresult_open": "<myPT_toolresult>",
+    "myPT_toolresult_close": "</myPT_toolresult>",
     "myPT_eot": "<myPT_eot>",  # end of turn / message separator
 }
