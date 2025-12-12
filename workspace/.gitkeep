@@ -1,0 +1,8 @@
+# This file ensures the workspace directory structure is preserved in git.
+# 
+# workspace/
+#   docs/     - Drop documents here for RAG indexing
+#   index/    - Generated embedding indexes are stored here
+#
+# See docs/chat_sft_with_context.md for usage.
+
