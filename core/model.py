@@ -610,7 +610,7 @@ class GPT(nn.Module):
                 checkpoint_dir, 
                 step=iter, 
                 optimizer_state=optimizer.state_dict(),
-                training_config=training_config
+                training_config=training_config,
                 save_dtype="bf16"
             )
             print(f"Training finished. Model saved to: {checkpoint_dir}")
