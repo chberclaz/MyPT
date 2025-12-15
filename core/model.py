@@ -60,8 +60,15 @@ class GPTConfig:
     
     @classmethod
     def from_dict(cls, config_dict):
-        """Create config from dictionary"""
-        return cls(**config_dict)
+        """Create config from dictionary, ignoring unknown fields."""
+        # Get valid field names from the dataclass
+        import dataclasses
+        valid_fields = {f.name for f in dataclasses.fields(cls)}
+        
+        # Filter to only include valid fields
+        filtered_dict = {k: v for k, v in config_dict.items() if k in valid_fields}
+        
+        return cls(**filtered_dict)
     
     def save_json(self, path):
         """Save config to JSON file"""

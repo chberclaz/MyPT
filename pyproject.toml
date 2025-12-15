@@ -35,12 +35,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+webapp = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.6",
+    "websockets>=12.0",
+]
 dev = [
     "pytest>=7.0.0",
     "black>=23.0.0",
     "isort>=5.12.0",
     "flake8>=6.0.0",
     "mypy>=1.0.0",
+]
+all = [
+    "mypt[webapp,dev]",
 ]
 
 [project.urls]
@@ -70,8 +80,11 @@ mypt-show-configs = "scripts.show_configs:main"
 mypt-calculate-params = "scripts.calculate_params:main"
 mypt-convert-legacy = "scripts.convert_legacy_checkpoints:main"
 
+# Web Application (requires: pip install mypt[webapp])
+mypt-webapp = "webapp.main:main"
+
 [tool.setuptools.packages.find]
-include = ["core*", "scripts*"]
+include = ["core*", "scripts*", "webapp*"]
 exclude = ["__pycache__*", "*.pyc", "checkpoints*", "tests*"]
 
 [tool.black]
