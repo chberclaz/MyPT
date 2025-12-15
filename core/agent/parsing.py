@@ -242,3 +242,5 @@ def extract_text_after_toolresult(text: str) -> str:
     last_match = matches[-1]
     return text[last_match.end():].strip()
 
+
+

@@ -321,3 +321,5 @@ class WorkspaceEngine:
         """Number of indexed chunks."""
         return self._retriever.num_chunks if self._retriever else 0
 
+
+

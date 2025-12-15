@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Training{% endblock %}
+
+{% block content %}
+<div class="training-content">
+    <div class="training-grid">
+        <!-- Training Mode Selection -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Training Mode</h3>
+            </div>
+            <div class="card-body">
+                <div class="training-mode-selector">
+                    <div class="training-mode-option selected" data-mode="pretrain">
+                        <div class="mode-radio"></div>
+                        <div class="mode-info">
+                            <h4>Pre-training</h4>
+                            <p>Train from scratch on raw text</p>
+                        </div>
+                    </div>
+                    <div class="training-mode-option" data-mode="chat_sft">
+                        <div class="mode-radio"></div>
+                        <div class="mode-info">
+                            <h4>Chat SFT</h4>
+                            <p>Fine-tune for conversations</p>
+                        </div>
+                    </div>
+                    <div class="training-mode-option" data-mode="tool_sft">
+                        <div class="mode-radio"></div>
+                        <div class="mode-info">
+                            <h4>Tool SFT</h4>
+                            <p>Fine-tune for workspace agent</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Configuration -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Configuration</h3>
+            </div>
+            <div class="card-body">
+                <div class="form-group">
+                    <label class="form-label">Model Size</label>
+                    <select id="config-modelSize" class="form-select">
+                        <option value="tiny">tiny (~11M)</option>
+                        <option value="small">small (~40M)</option>
+                        <option value="150M" selected>150M</option>
+                        <option value="200M">200M</option>
+                        <option value="250M">250M</option>
+                        <option value="350M_1024">350M (1024 ctx)</option>
+                        <option value="500M_1024">500M (1024 ctx)</option>
+                    </select>
+                </div>
+                
+                <div id="base-model-group" class="form-group" style="display: none;">
+                    <label class="form-label">Base Model (for fine-tuning)</label>
+                    <select id="config-baseModel" class="form-select">
+                        <option value="">None (start fresh)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Dataset Directory</label>
+                    <input 
+                        type="text" 
+                        id="config-datasetDir"
+                        class="form-input" 
+                        placeholder="data/my_dataset/"
+                    >
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Output Model Name</label>
+                    <input 
+                        type="text" 
+                        id="config-outputName"
+                        class="form-input" 
+                        placeholder="my_model"
+                    >
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label class="form-label">Max Iterations</label>
+                        <input 
+                            type="number" 
+                            id="config-maxIters"
+                            class="form-input" 
+                            value="5000"
+                            min="100"
+                            step="100"
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Eval Interval</label>
+                        <input 
+                            type="number" 
+                            id="config-evalInterval"
+                            class="form-input" 
+                            value="50"
+                            min="10"
+                            step="10"
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Learning Rate</label>
+                        <input 
+                            type="text" 
+                            id="config-learningRate"
+                            class="form-input" 
+                            value="3e-4"
+                            placeholder="3e-4"
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Batch Size</label>
+                        <input 
+                            type="text" 
+                            id="config-batchSize"
+                            class="form-input" 
+                            value="auto"
+                            placeholder="auto"
+                        >
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Training Progress -->
+        <div class="card" style="grid-column: 1 / -1;">
+            <div class="card-header">
+                <h3 class="card-title">Training Progress</h3>
+                <div class="flex gap-sm">
+                    <button id="start-training-btn" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Start Training
+                    </button>
+                    <button id="stop-training-btn" class="btn btn-secondary" style="display: none;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="4" width="4" height="16"/>
+                            <rect x="14" y="4" width="4" height="16"/>
+                        </svg>
+                        Stop
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Progress Bar -->
+                <div class="mb-md">
+                    <div class="flex justify-between mb-sm">
+                        <span class="text-sm text-muted">
+                            Step <span id="progress-step" class="font-mono">0</span> / <span id="progress-max-steps" class="font-mono">5000</span>
+                        </span>
+                        <span class="text-sm text-muted">
+                            <span id="progress-percent">0</span>%
+                        </span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+                    </div>
+                </div>
+                
+                <!-- Stats -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div id="stat-train-loss" class="stat-value">—</div>
+                        <div class="stat-label">Train Loss</div>
+                    </div>
+                    <div class="stat-card">
+                        <div id="stat-val-loss" class="stat-value">—</div>
+                        <div class="stat-label">Val Loss</div>
+                    </div>
+                    <div class="stat-card">
+                        <div id="stat-eta" class="stat-value">—</div>
+                        <div class="stat-label">ETA</div>
+                    </div>
+                </div>
+                
+                <!-- Logs -->
+                <div class="mt-md">
+                    <div class="sidebar-title mb-sm">Training Logs</div>
+                    <div id="log-output" class="log-output">
+                        <span class="text-muted">No logs yet. Start training to see output.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
