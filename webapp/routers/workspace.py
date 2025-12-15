@@ -18,7 +18,10 @@ from pydantic import BaseModel
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from webapp.logging_config import DebugLogger, is_debug_mode
+
 router = APIRouter()
+log = DebugLogger("workspace")
 
 
 class RebuildIndexRequest(BaseModel):
@@ -43,9 +46,13 @@ def get_index_dir() -> Path:
 @router.get("/info")
 async def get_workspace_info():
     """Get workspace information including document count and index status."""
+    log.request("GET", "/info")
+    
     workspace_dir = get_workspace_dir()
     docs_dir = get_docs_dir()
     index_dir = get_index_dir()
+    
+    log.workspace("scan", workspace=str(workspace_dir))
     
     # Count documents
     documents = []
@@ -77,6 +84,22 @@ async def get_workspace_info():
                 with open(meta_file, 'r') as f:
                     num_chunks = sum(1 for _ in f)
     
+    if is_debug_mode():
+        log.section("WORKSPACE INFO")
+        print(f"  Workspace:  {workspace_dir}")
+        print(f"  Docs Dir:   {docs_dir}")
+        print(f"  Index Dir:  {index_dir}")
+        print(f"  Documents:  {len(documents)}")
+        print(f"  Chunks:     {num_chunks}")
+        print(f"  Has Index:  {has_index}")
+        if documents:
+            print(f"  Files:")
+            for doc in documents:
+                print(f"    - {doc['title']} ({doc['path']})")
+        log.section("END WORKSPACE INFO")
+    
+    log.response(200, docs=len(documents), chunks=num_chunks, indexed=has_index)
+    
     return {
         "workspace_dir": str(workspace_dir),
         "documents": documents,
@@ -90,10 +113,20 @@ async def get_workspace_info():
 @router.post("/rebuild-index")
 async def rebuild_index(request: RebuildIndexRequest):
     """Rebuild the RAG index from documents."""
+    log.section("REBUILD INDEX")
+    log.request("POST", "/rebuild-index")
+    
     docs_dir = Path(request.docs_dir) if request.docs_dir else get_docs_dir()
     index_dir = get_index_dir()
     
+    if is_debug_mode():
+        print(f"  Source:      {docs_dir}")
+        print(f"  Destination: {index_dir}")
+    
+    log.rag("init", docs_dir=str(docs_dir), index_dir=str(index_dir))
+    
     if not docs_dir.exists():
+        log.error(f"Documents directory not found: {docs_dir}")
         raise HTTPException(status_code=400, detail=f"Documents directory not found: {docs_dir}")
     
     # Create index directory
@@ -105,16 +138,28 @@ async def rebuild_index(request: RebuildIndexRequest):
         from core.embeddings import LocalEmbedder
         from core.rag import Retriever
         
+        if is_debug_mode():
+            log.section("LOADING DOCUMENTS")
+        
         # Load documents
         loader = DocumentLoader()
         documents = loader.load_directory(str(docs_dir))
         
+        if is_debug_mode():
+            print(f"  Loaded {len(documents)} documents:")
+            for doc in documents:
+                print(f"    - {doc.title} ({len(doc.text)} chars)")
+        
         if not documents:
+            log.warning("No documents found to index")
             return {
                 "success": True,
                 "message": "No documents found to index",
                 "num_chunks": 0
             }
+        
+        if is_debug_mode():
+            log.section("CHUNKING DOCUMENTS")
         
         # Chunk documents
         chunker = TextChunker(chunk_size=500, overlap=50)
@@ -123,18 +168,34 @@ async def rebuild_index(request: RebuildIndexRequest):
         for doc in documents:
             chunks = chunker.chunk(doc)
             all_chunks.extend(chunks)
+            if is_debug_mode():
+                print(f"    {doc.title}: {len(chunks)} chunks")
+        
+        if is_debug_mode():
+            print(f"  Total chunks: {len(all_chunks)}")
         
         if not all_chunks:
+            log.warning("No chunks generated from documents")
             return {
                 "success": True,
                 "message": "No chunks generated from documents",
                 "num_chunks": 0
             }
         
+        if is_debug_mode():
+            log.section("GENERATING EMBEDDINGS")
+            print(f"  Creating embeddings for {len(all_chunks)} chunks...")
+        
         # Create embeddings
         embedder = LocalEmbedder()
         texts = [chunk.text for chunk in all_chunks]
         embeddings = embedder.embed(texts)
+        
+        if is_debug_mode():
+            print(f"  Embeddings shape: {embeddings.shape}")
+        
+        if is_debug_mode():
+            log.section("SAVING INDEX")
         
         # Save index
         import numpy as np
@@ -142,6 +203,8 @@ async def rebuild_index(request: RebuildIndexRequest):
         
         # Save embeddings
         np.save(str(index_dir / "embeddings.npy"), embeddings)
+        if is_debug_mode():
+            print(f"  Saved: embeddings.npy")
         
         # Save metadata
         with open(index_dir / "meta.jsonl", 'w') as f:
@@ -155,6 +218,9 @@ async def rebuild_index(request: RebuildIndexRequest):
                 }
                 f.write(json.dumps(meta) + "\n")
         
+        if is_debug_mode():
+            print(f"  Saved: meta.jsonl ({len(all_chunks)} entries)")
+        
         # Save config
         config = {
             "docs_dir": str(docs_dir),
@@ -166,6 +232,15 @@ async def rebuild_index(request: RebuildIndexRequest):
         with open(index_dir / "config.json", 'w') as f:
             json.dump(config, f, indent=2)
         
+        if is_debug_mode():
+            print(f"  Saved: config.json")
+            log.section("INDEX COMPLETE")
+            print(f"  ✓ {len(documents)} documents")
+            print(f"  ✓ {len(all_chunks)} chunks")
+            print(f"  ✓ {embeddings.shape[1]}-dim embeddings")
+        
+        log.info(f"Index rebuilt: {len(documents)} docs, {len(all_chunks)} chunks")
+        
         return {
             "success": True,
             "message": f"Index rebuilt successfully",
@@ -174,19 +249,27 @@ async def rebuild_index(request: RebuildIndexRequest):
         }
         
     except ImportError as e:
-        # RAG components not available
+        log.error(f"RAG components not available: {e}")
+        if is_debug_mode():
+            import traceback
+            traceback.print_exc()
         return {
             "success": False,
             "error": f"RAG components not available: {e}",
             "num_chunks": 0
         }
     except Exception as e:
+        log.error(f"Failed to rebuild index: {e}")
+        if is_debug_mode():
+            import traceback
+            traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to rebuild index: {e}")
 
 
 @router.get("/documents")
 async def list_documents():
     """List all documents in the workspace."""
+    log.request("GET", "/documents")
     docs_dir = get_docs_dir()
     
     documents = []
@@ -201,5 +284,11 @@ async def list_documents():
                     "modified": f.stat().st_mtime
                 })
     
+    if is_debug_mode():
+        log.section("DOCUMENT LIST")
+        for doc in documents:
+            print(f"  - {doc['title']} ({doc['size']} bytes)")
+        log.section("END DOCUMENT LIST")
+    
+    log.response(200, count=len(documents))
     return {"documents": documents, "total": len(documents)}
-
