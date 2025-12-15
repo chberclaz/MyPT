@@ -22,6 +22,7 @@ Usage:
     print(result["content"])  # Final answer
 """
 
+import json
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -77,6 +78,68 @@ class Message:
         if self.name:
             d["name"] = self.name
         return d
+
+
+def _debug_section(title: str, verbose: bool):
+    """Print a debug section header."""
+    if verbose:
+        width = 60
+        padding = (width - len(title) - 2) // 2
+        print(f"\n{'═' * padding} {title} {'═' * padding}")
+
+
+def _debug_end_section(title: str, verbose: bool):
+    """Print a debug section footer."""
+    if verbose:
+        width = 60
+        padding = (width - len(f"END {title}") - 2) // 2
+        print(f"{'═' * padding} END {title} {'═' * padding}")
+
+
+def _debug_prompt(prompt: str, verbose: bool, label: str = "FULL PROMPT"):
+    """Print the full prompt with line numbers."""
+    if verbose:
+        _debug_section(label, True)
+        lines = prompt.split('\n')
+        for i, line in enumerate(lines, 1):
+            # Show full line but truncate extremely long ones
+            if len(line) > 300:
+                print(f"  {i:3d} | {line[:300]}...")
+            else:
+                print(f"  {i:3d} | {line}")
+        print(f"\n  [Total: {len(prompt)} chars, {len(lines)} lines]")
+        _debug_end_section(label, True)
+
+
+def _debug_generation(output: str, verbose: bool, label: str = "MODEL OUTPUT"):
+    """Print the generated output."""
+    if verbose:
+        _debug_section(label, True)
+        lines = output.split('\n')
+        for i, line in enumerate(lines, 1):
+            if len(line) > 300:
+                print(f"  {i:3d} | {line[:300]}...")
+            else:
+                print(f"  {i:3d} | {line}")
+        print(f"\n  [Total: {len(output)} chars]")
+        _debug_end_section(label, True)
+
+
+def _debug_tool_call(name: str, arguments: dict, result: Any, verbose: bool):
+    """Print a tool call with full details."""
+    if verbose:
+        _debug_section(f"TOOL CALL: {name}", True)
+        print(f"  Arguments:")
+        for k, v in arguments.items():
+            print(f"    {k}: {v}")
+        print(f"\n  Result:")
+        result_str = json.dumps(result, indent=4, ensure_ascii=False)
+        lines = result_str.split('\n')
+        for line in lines[:30]:  # Show first 30 lines
+            print(f"    {line}")
+        if len(lines) > 30:
+            print(f"    ... ({len(lines) - 30} more lines)")
+        _debug_end_section(f"TOOL CALL: {name}", True)
 
 
 class AgentController:
@@ -221,7 +284,7 @@ class AgentController:
             history: Initial conversation history
             max_steps: Maximum tool execution steps
             max_new_tokens: Max tokens per generation
-            verbose: Print debug info
+            verbose: Print debug info (full prompts, tool calls, etc.)
             
         Returns:
             Final assistant message dict with:
@@ -234,6 +297,27 @@ class AgentController:
         history = [msg.copy() for msg in history]
         tool_calls = []
         
+        if verbose:
+            _debug_section("AGENT RUN START", True)
+            print(f"  Max steps:      {max_steps}")
+            print(f"  Max new tokens: {max_new_tokens}")
+            print(f"  History length: {len(history)} messages")
+            print(f"  Block size:     {self.block_size}")
+            _debug_section("SYSTEM PROMPT", True)
+            for i, line in enumerate(self.system_prompt.split('\n'), 1):
+                print(f"  {i:3d} | {line}")
+            _debug_end_section("SYSTEM PROMPT", True)
+            
+            _debug_section("INPUT HISTORY", True)
+            for i, msg in enumerate(history):
+                role = msg.get('role', 'unknown')
+                content = msg.get('content', '')
+                if len(content) > 100:
+                    print(f"  [{i+1}] {role.upper()}: {content[:100]}... ({len(content)} chars)")
+                else:
+                    print(f"  [{i+1}] {role.upper()}: {content}")
+            _debug_end_section("INPUT HISTORY", True)
+        
         for step in range(max_steps):
             # Trim history to fit within block_size (prevents overflow)
             history = self._trim_history_to_block_size(history)
@@ -242,13 +326,26 @@ class AgentController:
             prompt = self.build_prompt(history)
             
             if verbose:
-                print(f"\n--- Step {step + 1} ---")
-                print(f"Prompt length: {len(prompt)} chars")
+                _debug_section(f"STEP {step + 1}/{max_steps}", True)
+                print(f"  Prompt length: {len(prompt)} chars")
+                if self.tokenizer:
+                    try:
+                        token_count = len(self.tokenizer.encode(prompt))
+                        print(f"  Prompt tokens: {token_count}")
+                    except:
+                        pass
+                
+                # Log the FULL prompt being sent to model
+                _debug_prompt(prompt, True, f"PROMPT TO MODEL (Step {step + 1})")
             
             # Generate
             try:
+                if verbose:
+                    print(f"\n  [Generating with max_new_tokens={max_new_tokens}...]")
                 output = self.model.generate(prompt, max_new_tokens=max_new_tokens)
             except Exception as e:
+                if verbose:
+                    print(f"\n  [ERROR] Generation failed: {e}")
                 return {
                     "role": "assistant",
                     "content": f"Error generating response: {e}",
@@ -256,6 +353,10 @@ class AgentController:
                     "steps": step + 1,
                     "error": str(e),
                 }
+            
+            # Log raw model output
+            if verbose:
+                _debug_generation(output, True, f"RAW MODEL OUTPUT (Step {step + 1})")
             
             # Extract generated part (after prompt)
             if prompt in output:
@@ -270,7 +371,7 @@ class AgentController:
             generated = generated.strip()
             
             if verbose:
-                print(f"Generated: {generated[:200]}...")
+                _debug_generation(generated, True, f"EXTRACTED GENERATION (Step {step + 1})")
             
             # Check for toolcall
             if has_toolcall(generated):
@@ -278,19 +379,23 @@ class AgentController:
                 
                 if toolcall:
                     if verbose:
-                        print(f"Tool call: {toolcall.name}({toolcall.arguments})")
+                        print(f"\n  [TOOLCALL DETECTED]")
+                        print(f"    Name: {toolcall.name}")
+                        print(f"    Args: {json.dumps(toolcall.arguments, indent=2)}")
                     
                     # Execute tool
                     try:
                         result = self.tools.execute(toolcall.name, toolcall.arguments)
                     except Exception as e:
                         result = {"error": str(e)}
+                        if verbose:
+                            print(f"    [TOOL ERROR] {e}")
+                    
+                    # Log full tool call and result
+                    _debug_tool_call(toolcall.name, toolcall.arguments, result, verbose)
                     
                     # Truncate large results
                     result = truncate_toolresult(result, self.max_result_chars)
-                    
-                    if verbose:
-                        print(f"Tool result: {str(result)[:200]}...")
                     
                     # Record tool call
                     tool_calls.append({
@@ -306,17 +411,27 @@ class AgentController:
                         "name": toolcall.name,
                     })
                     
-                    import json
                     history.append({
                         "role": "toolresult",
                         "content": json.dumps(result, ensure_ascii=False),
                         "name": toolcall.name,
                     })
                     
+                    if verbose:
+                        print(f"\n  [Continuing to next step...]")
+                    
                     # Continue loop
                     continue
             
             # No toolcall - this is the final answer
+            if verbose:
+                _debug_section("FINAL ANSWER", True)
+                for i, line in enumerate(generated.split('\n'), 1):
+                    print(f"  {i:3d} | {line}")
+                _debug_end_section("FINAL ANSWER", True)
+                
+                print(f"\n  [Agent completed in {step + 1} step(s), {len(tool_calls)} tool call(s)]")
+            
             return {
                 "role": "assistant",
                 "content": generated,
@@ -325,6 +440,9 @@ class AgentController:
             }
         
         # Max steps reached without final answer
+        if verbose:
+            print(f"\n  [WARNING] Max steps ({max_steps}) reached without final answer")
+        
         return {
             "role": "assistant",
             "content": "I apologize, but I wasn't able to complete the task within the allowed steps.",
@@ -358,4 +476,3 @@ class AgentController:
         history.append({"role": "user", "content": user_input})
         
         return self.run(history, **kwargs)
-

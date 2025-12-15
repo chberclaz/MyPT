@@ -23,7 +23,10 @@ from pydantic import BaseModel
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from webapp.logging_config import DebugLogger
+
 router = APIRouter()
+log = DebugLogger("training")
 
 # Training state (thread-safe via GIL for simple operations)
 _training_state = {
@@ -83,6 +86,16 @@ def get_config_file(mode: str, model_size: str) -> str:
 
 def add_log(level: str, message: str):
     """Add a log entry (thread-safe)."""
+    # Also log to console
+    if level == "error":
+        log.error(message)
+    elif level == "warning":
+        log.warning(message)
+    elif level == "success":
+        log.info(f"✓ {message}")
+    else:
+        log.info(message)
+    
     with _state_lock:
         log_entry = {"level": level, "message": message}
         _training_state["logs"].append(log_entry)
