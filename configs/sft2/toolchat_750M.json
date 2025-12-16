@@ -1,0 +1,15 @@
+{
+  "name": "GPT-750M-1024-ToolSFT",
+  "description": "750M agentic tool-calling fine-tuning. Train on A100, deploy on RTX 2060.",
+  "batch_size": 8,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1536,
+  "n_head": 24,
+  "n_layer": 24,
+  "dropout": 0.05,
+  "bias": false,
+  "learning_rate": 2e-5,
+  "use_loss_mask": true
+}
+
