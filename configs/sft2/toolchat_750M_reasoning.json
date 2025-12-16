@@ -1,0 +1,15 @@
+{
+  "name": "GPT-750M-1024-Reasoning-ToolSFT",
+  "description": "Reasoning-optimized 750M for agentic tool-calling. 32 layers = better 'should I use a tool?' decisions.",
+  "batch_size": 6,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.05,
+  "bias": false,
+  "learning_rate": 2e-5,
+  "use_loss_mask": true
+}
+

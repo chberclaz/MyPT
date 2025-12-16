@@ -219,75 +219,83 @@ async def send_message(request: SendMessageRequest, session_id: str = "default")
             print(f"  Device:     {model.config.device}")
             log.section("END MODEL INFO")
         
-        # Check if this is an agent model (has workspace tools)
+        # =================================================================
+        # TRUE AGENTIC MODE: Always use AgentController
+        # The MODEL decides whether to use tools, not the code!
+        # =================================================================
+        
         workspace_dir = PROJECT_ROOT / "workspace"
         index_dir = workspace_dir / "index" / "latest"
         
         log.workspace("check_index", path=str(index_dir), exists=index_dir.exists())
+        log.info("Using AGENTIC mode - model decides tool usage")
         
-        if index_dir.exists():
-            # Use agent controller for RAG
-            log.info("RAG index found - using Agent mode")
+        try:
+            from core.workspace import WorkspaceEngine, WorkspaceTools
+            from core.agent import AgentController
             
-            try:
-                from core.workspace import WorkspaceEngine, WorkspaceTools
-                from core.agent import AgentController
-                
-                log.rag("init_engine", docs_dir=str(workspace_dir / "docs"))
-                engine = WorkspaceEngine(
-                    base_dir=str(workspace_dir),
-                    index_dir=str(index_dir)
-                )
-                
-                if is_debug_mode():
-                    log.section("WORKSPACE ENGINE")
-                    print(f"  Documents: {engine.num_docs}")
-                    print(f"  Chunks:    {engine.num_chunks}")
-                    print(f"  Has Index: {engine.has_index}")
-                    log.section("END WORKSPACE")
-                
-                log.agent("init_tools")
-                tools = WorkspaceTools(engine)
-                
-                log.agent("init_controller")
-                controller = AgentController(model, tools)
-                
-                # Build history for agent
-                agent_history = [
-                    {"role": msg["role"], "content": msg["content"]}
-                    for msg in session["messages"]
-                    if msg["role"] in ("user", "assistant")
-                ]
-                agent_history.append({"role": "user", "content": request.message})
-                
-                # Log the full history being sent
-                log_agent_history(agent_history)
-                
-                log.agent("history_built", turns=len(agent_history))
-                
-                # Run agent with verbose mode for full logging
-                log.section("AGENT EXECUTION START")
-                log.agent("run_start", max_steps=5)
-                
-                # Capture the agent's internal prompt building if possible
-                if is_debug_mode():
-                    # Log the system prompt if available
-                    if hasattr(controller, 'system_prompt'):
-                        log.section("AGENT SYSTEM PROMPT")
-                        print(controller.system_prompt)
-                        log.section("END SYSTEM PROMPT")
-                
-                result = controller.run(
-                    agent_history,
-                    max_steps=5,
-                    verbose=True  # Always verbose in agent for debug capture
-                )
-                
-                # Log tool calls with full details
-                tool_calls = result.get("tool_calls", [])
-                steps = result.get("steps", 0)
-                
-                if is_debug_mode() and tool_calls:
+            # Initialize workspace engine (works even without index)
+            log.rag("init_engine", docs_dir=str(workspace_dir / "docs"))
+            engine = WorkspaceEngine(
+                base_dir=str(workspace_dir),
+                index_dir=str(index_dir)
+            )
+            
+            if is_debug_mode():
+                log.section("WORKSPACE ENGINE")
+                print(f"  Workspace:  {workspace_dir}")
+                print(f"  Index Dir:  {index_dir}")
+                print(f"  Documents:  {engine.num_docs}")
+                print(f"  Chunks:     {engine.num_chunks}")
+                print(f"  Has Index:  {engine.has_index}")
+                if not engine.has_index:
+                    print(f"  [NOTE] No index built - workspace.search will return empty")
+                    print(f"         Run 'Rebuild Index' or: python scripts/build_rag_index.py")
+                log.section("END WORKSPACE")
+            
+            log.agent("init_tools")
+            tools = WorkspaceTools(engine)
+            
+            log.agent("init_controller")
+            controller = AgentController(model, tools)
+            
+            # Build history for agent
+            agent_history = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in session["messages"]
+                if msg["role"] in ("user", "assistant")
+            ]
+            agent_history.append({"role": "user", "content": request.message})
+            
+            # Log the full history being sent
+            log_agent_history(agent_history)
+            
+            log.agent("history_built", turns=len(agent_history))
+            
+            # Run agent - this ALWAYS wraps prompt with system instructions
+            # The model sees tool descriptions and decides whether to use them
+            log.section("AGENT EXECUTION START")
+            log.agent("run_start", max_steps=5)
+            
+            # Log system prompt so user sees the full agentic context
+            if is_debug_mode():
+                log.section("AGENT SYSTEM PROMPT")
+                print(controller.system_prompt)
+                log.section("END SYSTEM PROMPT")
+            
+            # Run with verbose mode when debug is enabled
+            result = controller.run(
+                agent_history,
+                max_steps=5,
+                verbose=is_debug_mode()
+            )
+            
+            # Log tool calls with full details
+            tool_calls = result.get("tool_calls", [])
+            steps = result.get("steps", 0)
+            
+            if is_debug_mode():
+                if tool_calls:
                     log.section("ALL TOOL CALLS")
                     for i, tc in enumerate(tool_calls):
                         print(f"\n  === Tool Call {i+1} ===")
@@ -299,61 +307,45 @@ async def send_message(request: SendMessageRequest, session_id: str = "default")
                         else:
                             print(f"  Result: {result_str}")
                     log.section("END TOOL CALLS")
-                
-                log.agent("run_complete", steps=steps, tool_calls=len(tool_calls))
-                
-                # Log the final response
-                content = result.get("content", "")
-                log_model_response(content, "FINAL ANSWER")
-                
-                elapsed = time.time() - start_time
-                log.response(200, time=f"{elapsed:.2f}s", steps=steps, tool_calls=len(tool_calls))
-                
-                return SendMessageResponse(
-                    content=content,
-                    tool_calls=tool_calls,
-                    steps=steps
-                )
-                
-            except ImportError as e:
-                log.warning(f"Agent modules not available: {e}")
-                log.info("Falling back to simple generation")
-            except Exception as e:
-                log.error("Agent execution failed", e)
-                if is_debug_mode():
-                    import traceback
-                    traceback.print_exc()
-                log.info("Falling back to simple generation")
-        else:
-            log.info("No RAG index - using simple generation mode")
-        
-        # Simple generation (no RAG)
-        prompt = request.message
-        
-        # Log the exact prompt going to the model
-        log_full_prompt(prompt, "SIMPLE GENERATION")
-        
-        log.model("generate", request.model, max_tokens=200)
-        response = model.generate(prompt, max_new_tokens=200)
-        
-        # Log the raw model output
-        log_model_response(response, "RAW OUTPUT")
-        
-        # Extract just the generated part (after the prompt)
-        if response.startswith(prompt):
-            response = response[len(prompt):].strip()
+                else:
+                    log.info("Model answered directly without tool calls")
+            
+            log.agent("run_complete", steps=steps, tool_calls=len(tool_calls))
+            
+            # Log the final response
+            content = result.get("content", "")
+            log_model_response(content, "FINAL ANSWER")
+            
+            elapsed = time.time() - start_time
+            log.response(200, time=f"{elapsed:.2f}s", steps=steps, tool_calls=len(tool_calls))
+            
+            return SendMessageResponse(
+                content=content,
+                tool_calls=tool_calls,
+                steps=steps
+            )
+            
+        except ImportError as e:
+            # Agent modules not available - this is a code issue, not runtime
+            log.error(f"Agent modules not available: {e}")
             if is_debug_mode():
-                log.debug(f"Extracted response (removed prompt prefix)")
-                log_model_response(response, "EXTRACTED")
-        
-        elapsed = time.time() - start_time
-        log.response(200, time=f"{elapsed:.2f}s", mode="simple")
-        
-        return SendMessageResponse(
-            content=response,
-            tool_calls=[],
-            steps=0
-        )
+                import traceback
+                traceback.print_exc()
+            return SendMessageResponse(
+                content=f"Agent system not available: {e}. Check core/agent/ and core/workspace/ modules.",
+                tool_calls=[],
+                steps=0
+            )
+        except Exception as e:
+            log.error("Agent execution failed", e)
+            if is_debug_mode():
+                import traceback
+                traceback.print_exc()
+            return SendMessageResponse(
+                content=f"Error in agent execution: {str(e)}",
+                tool_calls=[],
+                steps=0
+            )
         
     except Exception as e:
         log.error("Chat request failed", e)
