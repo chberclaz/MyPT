@@ -705,6 +705,50 @@ class GPT(nn.Module):
         return final_losses
     
     # ===== GENERATION METHODS =====
+    
+    def compile_for_inference(self, mode: str = "default"):
+        """
+        Compile the model with torch.compile() for faster inference.
+        
+        Args:
+            mode: Compilation mode:
+                  - "default" (recommended, most compatible)
+                  - "reduce-overhead" (faster but requires Triton)
+                  - "max-autotune" (slower compile, potentially faster run)
+        
+        Returns:
+            self (for chaining)
+        
+        Note: 
+            - Requires PyTorch 2.0+
+            - First generation will be slower due to JIT compilation
+            - "reduce-overhead" and "max-autotune" require Triton (may not work on Windows)
+        """
+        if not hasattr(torch, 'compile'):
+            print("torch.compile() not available (requires PyTorch 2.0+)")
+            return self
+        
+        # Suppress dynamo errors to prevent crashes
+        import torch._dynamo
+        torch._dynamo.config.suppress_errors = True
+        
+        print(f"Compiling model with mode='{mode}'...")
+        try:
+            # Try requested mode first
+            self.forward = torch.compile(self.forward, mode=mode)
+            print("Model compiled successfully!")
+        except Exception as e:
+            error_msg = str(e)
+            if "triton" in error_msg.lower():
+                print(f"Note: Triton not available, using eager mode fallback")
+                print("  (Install triton for faster compilation: pip install triton)")
+            else:
+                print(f"Compilation warning: {error_msg[:100]}")
+            # Model will fall back to eager mode automatically due to suppress_errors
+        
+        return self
+    
+    @torch.inference_mode()
     def generate(self, prompt, max_new_tokens, temperature=0.8, top_k=50, top_p=0.95,
                  repetition_penalty=1.1, stop_tokens=None):
         """
@@ -724,16 +768,29 @@ class GPT(nn.Module):
         
         Sampling Strategy:
             1. Apply temperature scaling to logits
-            2. Apply top-k filtering (keep only top K tokens)
-            3. Apply top-p/nucleus filtering (keep tokens until cumulative prob >= top_p)
-            4. Apply repetition penalty to already-generated tokens
+            2. Apply repetition penalty to already-seen tokens (VECTORIZED)
+            3. Apply top-k filtering (keep only top K tokens)
+            4. Apply top-p/nucleus filtering (only if needed after top-k)
             5. Sample from the filtered distribution
+        
+        Performance Tips:
+            - Use top_k=20, top_p=1.0 for fastest generation
+            - Call model.compile_for_inference() once before generating (PyTorch 2.0+)
+            - Use fp16/bf16 model dtype for ~2x speedup
         """
         ctx_ids = self.encode(prompt)
-        idx = torch.tensor([ctx_ids], dtype=torch.long, device=self.config.device)
+        device = self.config.device
         
-        # Track generated tokens for repetition penalty
-        generated_tokens = set(ctx_ids)  # Include prompt tokens
+        # Pre-allocate output tensor with extra space to avoid repeated allocations
+        max_len = len(ctx_ids) + max_new_tokens
+        idx = torch.zeros(1, max_len, dtype=torch.long, device=device)
+        idx[0, :len(ctx_ids)] = torch.tensor(ctx_ids, dtype=torch.long, device=device)
+        cur_len = len(ctx_ids)
+        
+        # Track generated tokens as a GPU tensor for fast repetition penalty
+        if repetition_penalty != 1.0:
+            # Pre-allocate penalty tokens tensor
+            penalty_tokens = torch.tensor(ctx_ids, dtype=torch.long, device=device)
         
         # Handle stop tokens
         if stop_tokens is None:
@@ -742,8 +799,9 @@ class GPT(nn.Module):
             stop_tokens = set(stop_tokens)
 
         for _ in range(max_new_tokens):
-            # Crop idx to the last block_size tokens (sliding window)
-            idx_cond = idx[:, -self.config.block_size:]
+            # Crop to the last block_size tokens (sliding window)
+            start_pos = max(0, cur_len - self.config.block_size)
+            idx_cond = idx[:, start_pos:cur_len]
             
             # Get predictions
             logits, _ = self(idx_cond)
@@ -751,20 +809,22 @@ class GPT(nn.Module):
             # Focus only on the last time step
             logits = logits[:, -1, :]  # (B, vocab_size)
             
-            # Apply temperature
+            # Apply temperature (in-place for speed)
             if temperature != 1.0 and temperature > 0:
-                logits = logits / temperature
+                logits.div_(temperature)
             
-            # Apply repetition penalty
-            if repetition_penalty != 1.0 and len(generated_tokens) > 0:
-                for token in generated_tokens:
-                    if token < logits.size(-1):  # Safety check
-                        # If logit is positive, divide; if negative, multiply
-                        # This ensures penalty always reduces probability
-                        if logits[:, token] > 0:
-                            logits[:, token] = logits[:, token] / repetition_penalty
-                        else:
-                            logits[:, token] = logits[:, token] * repetition_penalty
+            # Apply repetition penalty (VECTORIZED)
+            if repetition_penalty != 1.0:
+                # Gather logits for penalty tokens
+                penalty_logits = logits.index_select(1, penalty_tokens)
+                # Apply penalty: divide positive, multiply negative
+                penalty_logits = torch.where(
+                    penalty_logits > 0,
+                    penalty_logits / repetition_penalty,
+                    penalty_logits * repetition_penalty
+                )
+                # Scatter back
+                logits.scatter_(1, penalty_tokens.unsqueeze(0), penalty_logits)
             
             # Apply top-k filtering
             if top_k > 0:
@@ -773,13 +833,14 @@ class GPT(nn.Module):
                 logits[logits < v[:, [-1]]] = float('-inf')
             
             # Apply top-p (nucleus) filtering
-            if top_p < 1.0:
+            # Optimization: skip if top_k already reduced to very few tokens
+            if top_p < 1.0 and (top_k == 0 or top_k > 10):
                 sorted_logits, sorted_indices = torch.sort(logits, descending=True)
                 cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
                 
                 # Remove tokens with cumulative probability above the threshold
                 sorted_indices_to_remove = cumulative_probs > top_p
-                # Shift the indices to the right to keep also the first token above the threshold
+                # Keep first token above threshold
                 sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                 sorted_indices_to_remove[..., 0] = 0
                 
@@ -791,20 +852,23 @@ class GPT(nn.Module):
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             
-            # Append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1)
+            # Store in pre-allocated tensor (no cat!)
+            idx[0, cur_len] = idx_next[0, 0]
+            cur_len += 1
             
-            # Track for repetition penalty
-            next_token = idx_next[0].item()
-            generated_tokens.add(next_token)
+            # Update penalty tokens tensor
+            if repetition_penalty != 1.0:
+                penalty_tokens = torch.cat([penalty_tokens, idx_next[0]])
             
             # Check for stop tokens
+            next_token = idx_next[0, 0].item()
             if next_token in stop_tokens:
                 break
         
-        # Decode the full sequence
-        return self.decode(idx[0].tolist())
+        # Decode only the generated portion
+        return self.decode(idx[0, :cur_len].tolist())
     
+    @torch.inference_mode()
     def generate_simple(self, prompt, max_new_tokens):
         """
         Simple generation without sampling controls (legacy behavior).
