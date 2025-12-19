@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from pydantic import BaseModel
 
 # Add project root to path
@@ -24,6 +24,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from webapp.logging_config import DebugLogger
+from webapp.auth import require_admin, User
 
 router = APIRouter()
 log = DebugLogger("training")
@@ -393,8 +394,8 @@ def run_training_thread(request: TrainingRequest):
 
 
 @router.get("/status")
-async def get_status():
-    """Get current training status."""
+async def get_status(user: User = Depends(require_admin)):
+    """Get current training status - admin only."""
     with _state_lock:
         return {
             "is_training": _training_state["is_training"],
@@ -404,8 +405,9 @@ async def get_status():
 
 
 @router.post("/start")
-async def start_training(request: TrainingRequest):
-    """Start training."""
+async def start_training(request: TrainingRequest, user: User = Depends(require_admin)):
+    """Start training - admin only."""
+    log.info(f"Training started by {user.username}")
     with _state_lock:
         if _training_state["is_training"]:
             raise HTTPException(status_code=400, detail="Training already in progress")
@@ -433,8 +435,9 @@ async def start_training(request: TrainingRequest):
 
 
 @router.post("/stop")
-async def stop_training():
-    """Stop training."""
+async def stop_training(user: User = Depends(require_admin)):
+    """Stop training - admin only."""
+    log.info(f"Training stopped by {user.username}")
     with _state_lock:
         _training_state["should_stop"] = True
     return {"success": True, "message": "Stop signal sent"}

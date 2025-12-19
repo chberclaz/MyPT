@@ -567,6 +567,63 @@ a:hover {
     box-shadow: 0 0 6px var(--accent-warning);
 }
 
+/* User Badge (Authentication) */
+.user-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: 4px var(--space-sm) 4px var(--space-md);
+    background: rgba(136, 192, 208, 0.1);
+    border-radius: 9999px;
+    border: 1px solid var(--border-color);
+    font-size: 0.8rem;
+    margin-left: var(--space-sm);
+}
+
+.user-badge svg {
+    color: var(--text-muted);
+}
+
+.user-badge .user-name {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.user-badge .user-role {
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.user-badge .user-role.admin {
+    background: rgba(180, 142, 173, 0.2);
+    color: var(--accent-info);
+}
+
+.user-badge .user-role.user {
+    background: rgba(163, 190, 140, 0.2);
+    color: var(--accent-success);
+}
+
+.user-badge .logout-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    margin-left: var(--space-xs);
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.user-badge .logout-link:hover {
+    color: var(--accent-error);
+    background: rgba(191, 97, 106, 0.2);
+}
+
 /* ============================================================================
    Training Page Specific
    ============================================================================ */

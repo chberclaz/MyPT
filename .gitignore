@@ -72,3 +72,5 @@ dmypy.json
 *.tmp
 *.bak
 *.backup
+
+webapp/users.json

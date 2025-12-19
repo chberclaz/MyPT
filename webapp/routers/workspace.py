@@ -11,7 +11,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 # Add project root to path
@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from webapp.logging_config import DebugLogger, is_debug_mode
+from webapp.auth import require_user, require_admin, User
 
 router = APIRouter()
 log = DebugLogger("workspace")
@@ -44,9 +45,9 @@ def get_index_dir() -> Path:
 
 
 @router.get("/info")
-async def get_workspace_info():
+async def get_workspace_info(user: User = Depends(require_user)):
     """Get workspace information including document count and index status."""
-    log.request("GET", "/info")
+    log.request("GET", "/info", user=user.username)
     
     workspace_dir = get_workspace_dir()
     docs_dir = get_docs_dir()
@@ -111,10 +112,10 @@ async def get_workspace_info():
 
 
 @router.post("/rebuild-index")
-async def rebuild_index(request: RebuildIndexRequest):
-    """Rebuild the RAG index from documents."""
+async def rebuild_index(request: RebuildIndexRequest, user: User = Depends(require_admin)):
+    """Rebuild the RAG index from documents - admin only."""
     log.section("REBUILD INDEX")
-    log.request("POST", "/rebuild-index")
+    log.request("POST", "/rebuild-index", user=user.username)
     
     docs_dir = Path(request.docs_dir) if request.docs_dir else get_docs_dir()
     index_dir = get_index_dir()
@@ -266,9 +267,9 @@ async def rebuild_index(request: RebuildIndexRequest):
 
 
 @router.get("/documents")
-async def list_documents():
+async def list_documents(user: User = Depends(require_user)):
     """List all documents in the workspace."""
-    log.request("GET", "/documents")
+    log.request("GET", "/documents", user=user.username)
     docs_dir = get_docs_dir()
     
     documents = []

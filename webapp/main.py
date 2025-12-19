@@ -38,12 +38,13 @@ import os
 import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Form, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 # Add project root to path for imports
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -51,6 +52,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from webapp.logging_config import setup_logging, get_logger, set_debug_mode, is_debug_mode
 from webapp.routers import chat, training, workspace
+from webapp.auth import (
+    User, authenticate_user, require_user, require_admin, optional_user,
+    create_login_response, create_logout_response, get_current_user
+)
 from core.banner import print_banner, ROBOT_HEAD
 
 # Paths
@@ -97,36 +102,86 @@ app.include_router(workspace.router, prefix="/api/workspace", tags=["workspace"]
 
 
 # ============================================================================
-# Page Routes
+# Authentication Routes
+# ============================================================================
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/", error: str = None):
+    """Login page."""
+    # If already logged in, redirect
+    user = await get_current_user(request)
+    if user:
+        return RedirectResponse(url=next, status_code=302)
+    
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "next_url": next,
+        "error": error
+    })
+
+
+@app.post("/login")
+async def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/")
+):
+    """Handle login form submission."""
+    user = authenticate_user(username, password)
+    
+    if not user:
+        log.warning(f"Failed login attempt for user: {username}")
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "next_url": next,
+            "error": "Invalid username or password"
+        })
+    
+    log.info(f"User logged in: {username} (role: {user.role})")
+    return create_login_response(user, redirect_url=next)
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    """Log out the current user."""
+    user = await get_current_user(request)
+    if user:
+        log.info(f"User logged out: {user.username}")
+    return create_logout_response()
+
+
+# ============================================================================
+# Page Routes (Protected)
 # ============================================================================
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def index(request: Request, user: User = Depends(require_user)):
     """Redirect to chat page."""
-    return templates.TemplateResponse("chat.html", {"request": request})
+    return templates.TemplateResponse("chat.html", {"request": request, "user": user})
 
 
 @app.get("/chat", response_class=HTMLResponse)
-async def chat_page(request: Request):
-    """Chat/RAG interface page."""
-    return templates.TemplateResponse("chat.html", {"request": request})
+async def chat_page(request: Request, user: User = Depends(require_user)):
+    """Chat/RAG interface page - requires user or admin."""
+    return templates.TemplateResponse("chat.html", {"request": request, "user": user})
 
 
 @app.get("/training", response_class=HTMLResponse)
-async def training_page(request: Request):
-    """Training pipeline page."""
-    return templates.TemplateResponse("training.html", {"request": request})
+async def training_page(request: Request, user: User = Depends(require_admin)):
+    """Training pipeline page - requires admin."""
+    return templates.TemplateResponse("training.html", {"request": request, "user": user})
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for monitoring."""
+    """Health check endpoint for monitoring (public)."""
     return {"status": "healthy", "version": "0.2.0", "debug": is_debug_mode()}
 
 
 @app.get("/api/debug/status")
-async def debug_status():
-    """Get debug mode status and logging info."""
+async def debug_status(user: User = Depends(require_admin)):
+    """Get debug mode status and logging info - admin only."""
     return {
         "debug_mode": is_debug_mode(),
         "static_dir": str(STATIC_DIR),
@@ -134,16 +189,23 @@ async def debug_status():
         "project_root": str(PROJECT_ROOT),
         "checkpoints_dir": str(PROJECT_ROOT / "checkpoints"),
         "workspace_dir": str(PROJECT_ROOT / "workspace"),
+        "user": user.username,
     }
 
 
 @app.post("/api/debug/toggle")
-async def toggle_debug():
-    """Toggle debug mode at runtime."""
+async def toggle_debug(user: User = Depends(require_admin)):
+    """Toggle debug mode at runtime - admin only."""
     new_state = not is_debug_mode()
     set_debug_mode(new_state)
-    log.info(f"Debug mode {'enabled' if new_state else 'disabled'}")
+    log.info(f"Debug mode {'enabled' if new_state else 'disabled'} by {user.username}")
     return {"debug_mode": new_state}
+
+
+@app.get("/api/auth/me")
+async def get_me(user: User = Depends(require_user)):
+    """Get current user info."""
+    return {"username": user.username, "role": user.role, "is_admin": user.is_admin()}
 
 
 # ============================================================================
@@ -190,7 +252,7 @@ def main():
     log = get_logger("main")
     
     # Print banner
-    print_banner("MyPT Web Application", "Offline GPT Training & RAG Pipeline")
+    print_banner("MyPT Web Application", "Offline GPT Training & Agentic RAG Pipeline")
     
     if args.host == "127.0.0.1":
         print(f"  Mode:   Local Agent")
@@ -202,6 +264,8 @@ def main():
     if args.debug:
         print(f"  Debug:  ENABLED (verbose logging)")
     
+    print(f"  Auth:   ENABLED (user/admin roles)")
+    print(f"          Default: admin:admin, user:user")
     print("=" * 60 + "\n")
     
     # Set log level for uvicorn
