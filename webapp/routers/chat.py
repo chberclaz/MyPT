@@ -14,7 +14,7 @@ import time
 import json
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 # Add project root to path
@@ -22,6 +22,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from webapp.logging_config import DebugLogger, is_debug_mode
+from webapp.auth import require_user, User
 
 router = APIRouter()
 log = DebugLogger("chat")
@@ -152,26 +153,26 @@ def log_agent_history(history: list):
 
 
 @router.get("/models")
-async def get_models():
-    """List available models."""
-    log.request("GET", "/models")
+async def get_models(user: User = Depends(require_user)):
+    """List available models - requires authentication."""
+    log.request("GET", "/models", user=user.username)
     models = list_available_models()
     log.response(200, count=len(models))
     return {"models": models}
 
 
 @router.get("/history")
-async def get_history(session_id: str = "default"):
-    """Get chat history for a session."""
-    log.request("GET", "/history", session=session_id)
+async def get_history(session_id: str = "default", user: User = Depends(require_user)):
+    """Get chat history for a session - requires authentication."""
+    log.request("GET", "/history", session=session_id, user=user.username)
     history = _chat_sessions.get(session_id, {}).get("messages", [])
     log.response(200, messages=len(history))
     return {"messages": history}
 
 
 @router.post("/send")
-async def send_message(request: SendMessageRequest, session_id: str = "default"):
-    """Send a message and get a response."""
+async def send_message(request: SendMessageRequest, session_id: str = "default", user: User = Depends(require_user)):
+    """Send a message and get a response - requires authentication."""
     log.section("NEW CHAT REQUEST")
     log.request("POST", "/send", session=session_id, model=request.model, verbose=request.verbose)
     
@@ -360,9 +361,9 @@ async def send_message(request: SendMessageRequest, session_id: str = "default")
 
 
 @router.post("/clear")
-async def clear_history(session_id: str = "default"):
-    """Clear chat history for a session."""
-    log.request("POST", "/clear", session=session_id)
+async def clear_history(session_id: str = "default", user: User = Depends(require_user)):
+    """Clear chat history for a session - requires authentication."""
+    log.request("POST", "/clear", session=session_id, user=user.username)
     if session_id in _chat_sessions:
         _chat_sessions[session_id] = {"messages": [], "history": []}
     log.response(200)

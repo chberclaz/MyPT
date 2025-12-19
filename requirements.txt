@@ -35,6 +35,10 @@ python-multipart>=0.0.6
 # WebSockets for real-time updates
 websockets>=12.0
 
+# Authentication
+passlib[bcrypt]>=1.7.4  # Password hashing with bcrypt
+python-jose[cryptography]>=3.3.0  # JWT tokens (optional, has fallback)
+
 # ============================================================================
 # Optional: Development dependencies (for testing, linting, etc.)
 # ============================================================================
