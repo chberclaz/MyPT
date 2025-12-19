@@ -762,17 +762,9 @@ def main():
         print(f"\n  ERROR loading sources file: {e}")
         sys.exit(1)
     
-    # Print banner
-    print()
-    print("=" * 70)
-    print("  ███╗   ███╗██╗   ██╗██████╗ ████████╗")
-    print("  ████╗ ████║╚██╗ ██╔╝██╔══██╗╚══██╔══╝")
-    print("  ██╔████╔██║ ╚████╔╝ ██████╔╝   ██║   ")
-    print("  ██║╚██╔╝██║  ╚██╔╝  ██╔═══╝    ██║   ")
-    print("  ██║ ╚═╝ ██║   ██║   ██║        ██║   ")
-    print("  ╚═╝     ╚═╝   ╚═╝   ╚═╝        ╚═╝   ")
-    print("  Multilingual Dataset Fetcher & Preparer")
-    print("=" * 70)
+    # Print banner with robot head
+    from core.banner import print_banner
+    print_banner("MyPT Dataset Fetcher", "Multilingual Data Preparation Pipeline")
     print()
     print(f"  Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  Sources file: {args.sources_file}")

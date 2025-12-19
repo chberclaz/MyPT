@@ -187,7 +187,7 @@ class CheckpointManager:
             print(f"Using base model's char vocabulary (size: {len(base_chars)})")
     
     @staticmethod
-    def load_for_inference(model_name, base_dir="checkpoints", legacy_filename=None):
+    def load_for_inference(model_name, base_dir="checkpoints", legacy_filename=None, load_dtype=None):
         """
         Load model for generation/inference.
         Automatically detects new JSON format or legacy single-file format.
@@ -196,6 +196,8 @@ class CheckpointManager:
             model_name: Name of the model
             base_dir: Base checkpoints directory
             legacy_filename: If specified, load this specific legacy file (e.g., "final.pt")
+            load_dtype: Optional dtype to load model as ('fp32', 'fp16', 'bf16').
+                       If None, uses smart defaults (auto-converts bf16 to fp32 on older GPUs).
         
         Returns:
             Loaded GPT model
@@ -206,7 +208,7 @@ class CheckpointManager:
         # Try new JSON format first
         if ckpt_manager.exists_new_format():
             print(f"Loading model '{model_name}' (new format)")
-            model, _, _, _ = GPT.load(ckpt_manager.checkpoint_dir, map_location=device)
+            model, _, _, _ = GPT.load(ckpt_manager.checkpoint_dir, map_location=device, load_dtype=load_dtype)
             return model
         
         # Fall back to legacy format

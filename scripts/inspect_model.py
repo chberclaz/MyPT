@@ -5,6 +5,9 @@ import json
 import torch
 from core.checkpoint import CheckpointManager
 from core.model import GPTConfig
+from core.banner import print_banner
+
+print_banner("MyPT Inspector", "Model Checkpoint Analyzer")
 
 parser = argparse.ArgumentParser()
 parser.add_argument(

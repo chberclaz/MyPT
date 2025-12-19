@@ -109,6 +109,10 @@ class RAGPipeline:
         max_new_tokens: int = 256,
         include_source: bool = True,
         return_context: bool = False,
+        temperature: float = 0.7,
+        top_k_sampling: int = 50,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.1,
     ) -> str | tuple:
         """
         Generate a RAG-augmented answer.
@@ -121,6 +125,10 @@ class RAGPipeline:
             max_new_tokens: Maximum tokens to generate
             include_source: Include source attribution in context
             return_context: If True, return (answer, context_chunks) tuple
+            temperature: Sampling temperature (0.0=deterministic, 1.0=neutral)
+            top_k_sampling: Only sample from top K tokens (0=disabled)
+            top_p: Nucleus sampling threshold (1.0=disabled)
+            repetition_penalty: Penalize repeated tokens (1.0=disabled)
             
         Returns:
             Generated answer string, or (answer, chunks) if return_context=True
@@ -137,7 +145,14 @@ class RAGPipeline:
         )
         
         # Generate answer
-        full_response = self.model.generate(prompt, max_new_tokens=max_new_tokens)
+        full_response = self.model.generate(
+            prompt, 
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k_sampling,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty
+        )
         
         # Extract just the assistant's response (after the prompt)
         # The prompt ends with <myPT_assistant>, response follows

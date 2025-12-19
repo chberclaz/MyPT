@@ -130,6 +130,9 @@ def find_all_legacy_checkpoints(base_dir="checkpoints"):
 
 
 def main():
+    from core.banner import print_banner
+    print_banner("MyPT Converter", "Legacy Checkpoint Migration")
+    
     parser = argparse.ArgumentParser(
         description="Convert legacy checkpoints to new JSON-based format"
     )

@@ -279,7 +279,15 @@ class WorkspaceTools:
         )
         
         try:
-            response = self.model.generate(prompt, max_new_tokens=max_length // 4)
+            # Use factual/focused settings for summarization
+            response = self.model.generate(
+                prompt, 
+                max_new_tokens=max_length // 4,
+                temperature=0.3,      # Focused
+                top_k=20,             # Restricted vocabulary
+                top_p=0.9,            # Tight nucleus
+                repetition_penalty=1.2  # Avoid repetitive summaries
+            )
             # Extract just the generated part
             if ASSISTANT_OPEN in response:
                 response = response.split(ASSISTANT_OPEN)[-1]

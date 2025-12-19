@@ -10,6 +10,7 @@ from core import (
     get_model_info,
     calculate_dataset_coverage,
     print_coverage_analysis,
+    banner_train,
 )
 
 
@@ -69,6 +70,8 @@ def parse_args():
 
 def main():
     """Main training entry point"""
+    banner_train()
+    
     args = parse_args()
     
     # Load config from file or use CLI arguments

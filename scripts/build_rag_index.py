@@ -91,9 +91,8 @@ Examples:
 def main():
     args = parse_args()
     
-    print("=" * 60)
-    print("RAG Index Builder")
-    print("=" * 60)
+    from core.banner import print_banner
+    print_banner("MyPT RAG Index", "Document Embedding Builder")
     
     # Validate input directory
     if not os.path.isdir(args.docs_dir):

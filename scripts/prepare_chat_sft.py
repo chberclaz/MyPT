@@ -194,9 +194,8 @@ def save_shard(
 def main():
     args = parse_args()
     
-    print("=" * 60)
-    print("Chat SFT Dataset Preparer")
-    print("=" * 60)
+    from core.banner import print_banner
+    print_banner("MyPT Chat SFT", "Conversation Dataset Preparer")
     
     # Validate input
     if not os.path.exists(args.input):

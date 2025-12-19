@@ -222,9 +222,8 @@ def save_shard(tokens: np.ndarray, masks: np.ndarray, shard_path: str) -> None:
 def main():
     args = parse_args()
     
-    print("=" * 60)
-    print("Toolcall SFT Dataset Preparer")
-    print("=" * 60)
+    from core.banner import print_banner
+    print_banner("MyPT Tool SFT", "Tool-Calling Dataset Preparer")
     
     # Validate input
     if not os.path.exists(args.input):

@@ -681,9 +681,8 @@ def main():
     normalize_text = not args.no_normalize
     filter_lines = not args.no_filter
 
-    print("=" * 70)
-    print("MyPT Weighted Dataset Preparation")
-    print("=" * 70)
+    from core.banner import print_banner
+    print_banner("MyPT Weighted Dataset", "Sharded Multi-Source Data Preparation")
     print(f"Sources: {len(sources)}")
     for name, spec in sources.items():
         print(f"  - {name}: {len(spec.files)} files")

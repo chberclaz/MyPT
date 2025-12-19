@@ -488,9 +488,8 @@ def generate_no_results_example(
 def main():
     args = parse_args()
     
-    print("=" * 60)
-    print("Agentic RAG SFT Data Generator")
-    print("=" * 60)
+    from core.banner import print_banner
+    print_banner("MyPT Agentic SFT", "Synthetic Tool-Calling Data Generator")
     
     # Determine docs directory
     docs_dir = args.docs_dir or os.path.join(args.workspace_dir, "docs")
