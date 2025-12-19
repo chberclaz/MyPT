@@ -148,7 +148,7 @@ async def rebuild_index(request: RebuildIndexRequest):
         if is_debug_mode():
             print(f"  Loaded {len(documents)} documents:")
             for doc in documents:
-                print(f"    - {doc.title} ({len(doc.text)} chars)")
+                print(f"    - {doc.filename} ({len(doc.text)} chars)")
         
         if not documents:
             log.warning("No documents found to index")
@@ -162,14 +162,14 @@ async def rebuild_index(request: RebuildIndexRequest):
             log.section("CHUNKING DOCUMENTS")
         
         # Chunk documents
-        chunker = TextChunker(chunk_size=500, overlap=50)
+        chunker = TextChunker(chunk_size=500, chunk_overlap=50)
         all_chunks = []
         
         for doc in documents:
-            chunks = chunker.chunk(doc)
+            chunks = chunker.chunk_document(doc, start_chunk_id=len(all_chunks))
             all_chunks.extend(chunks)
             if is_debug_mode():
-                print(f"    {doc.title}: {len(chunks)} chunks")
+                print(f"    {doc.filename}: {len(chunks)} chunks")
         
         if is_debug_mode():
             print(f"  Total chunks: {len(all_chunks)}")
@@ -189,7 +189,7 @@ async def rebuild_index(request: RebuildIndexRequest):
         # Create embeddings
         embedder = LocalEmbedder()
         texts = [chunk.text for chunk in all_chunks]
-        embeddings = embedder.embed(texts)
+        embeddings = embedder.encode_batch(texts)
         
         if is_debug_mode():
             print(f"  Embeddings shape: {embeddings.shape}")
@@ -209,12 +209,11 @@ async def rebuild_index(request: RebuildIndexRequest):
         # Save metadata
         with open(index_dir / "meta.jsonl", 'w') as f:
             for chunk in all_chunks:
+                # Chunk has: chunk_id, text, source (dict with file, filename, start_char, etc.)
                 meta = {
                     "chunk_id": chunk.chunk_id,
-                    "doc_id": chunk.doc_id,
                     "text": chunk.text,
-                    "position": chunk.position,
-                    "metadata": chunk.metadata
+                    "source": chunk.source,  # Contains file, filename, start_line, end_line, etc.
                 }
                 f.write(json.dumps(meta) + "\n")
         
@@ -227,7 +226,7 @@ async def rebuild_index(request: RebuildIndexRequest):
             "num_docs": len(documents),
             "num_chunks": len(all_chunks),
             "chunk_size": 500,
-            "overlap": 50
+            "chunk_overlap": 50
         }
         with open(index_dir / "config.json", 'w') as f:
             json.dump(config, f, indent=2)
