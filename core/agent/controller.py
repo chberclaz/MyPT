@@ -309,6 +309,10 @@ class AgentController:
         max_steps: int = 5,
         max_new_tokens: int = 512,
         verbose: bool = False,
+        temperature: float = 0.7,
+        top_k: int = 50,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.1,
     ) -> Dict[str, Any]:
         """
         Run the agent loop until final answer or max_steps.
@@ -318,6 +322,10 @@ class AgentController:
             max_steps: Maximum tool execution steps
             max_new_tokens: Max tokens per generation
             verbose: Print debug info (full prompts, tool calls, etc.)
+            temperature: Sampling temperature (0.0=deterministic, 1.0=neutral)
+            top_k: Only sample from top K tokens (0=disabled)
+            top_p: Nucleus sampling threshold (1.0=disabled)
+            repetition_penalty: Penalize repeated tokens (1.0=disabled)
             
         Returns:
             Final assistant message dict with:
@@ -374,8 +382,16 @@ class AgentController:
             # Generate
             try:
                 if verbose:
-                    print(f"\n  [Generating with max_new_tokens={max_new_tokens}...]")
-                output = self.model.generate(prompt, max_new_tokens=max_new_tokens)
+                    print(f"\n  [Generating with max_new_tokens={max_new_tokens}, "
+                          f"temp={temperature}, top_k={top_k}, top_p={top_p}...]")
+                output = self.model.generate(
+                    prompt, 
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                    repetition_penalty=repetition_penalty
+                )
             except Exception as e:
                 if verbose:
                     print(f"\n  [ERROR] Generation failed: {e}")

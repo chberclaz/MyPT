@@ -1,37 +1,81 @@
 import argparse
-from core import load_model, get_model_info, Generator
+from core import load_model, get_model_info, Generator, banner_generate
 
 
 def parse_args():
     """Parse command-line arguments for generation"""
     parser = argparse.ArgumentParser(description="Generate text using a trained GPT model")
     
+    # Model selection
     parser.add_argument("--model_name", type=str, default="default",
                         help="Name of the model/checkpoint set to load (e.g. dante, shakespeare)")
     parser.add_argument("--legacy_checkpoint", type=str, default=None,
                         help="Optional: specific legacy checkpoint file (e.g. final.pt, latest.pt). "
                              "If not specified, will auto-detect new JSON format or legacy format.")
+    
+    # Basic generation options
     parser.add_argument("--prompt", type=str, default="Die Nacht",
                         help="Prompt text to start generation from")
     parser.add_argument("--max_new_tokens", type=int, default=100,
                         help="Number of tokens to generate")
     parser.add_argument("--mode", type=str, default="basic",
-                        choices=["basic", "qa"],
-                        help="Generation mode: basic (text completion) or qa (question answering)")
+                        choices=["basic", "qa", "creative", "factual", "code"],
+                        help="Generation mode/preset")
     parser.add_argument("--show_info", action="store_true",
                         help="Show model info before generating")
+    
+    # Sampling parameters
+    parser.add_argument("--temperature", type=float, default=0.8,
+                        help="Sampling temperature (0.0=deterministic, 1.0=neutral, >1.0=creative)")
+    parser.add_argument("--top_k", type=int, default=50,
+                        help="Top-K sampling (0=disabled)")
+    parser.add_argument("--top_p", type=float, default=0.95,
+                        help="Top-P/nucleus sampling threshold (1.0=disabled)")
+    parser.add_argument("--repetition_penalty", type=float, default=1.1,
+                        help="Repetition penalty (1.0=disabled, >1.0=penalize repeats)")
+    
+    # Presets override individual parameters
+    parser.add_argument("--preset", type=str, default=None,
+                        choices=["chat", "creative", "factual", "code", "deterministic"],
+                        help="Use a preset configuration (overrides individual sampling params)")
     
     return parser.parse_args()
 
 
+# Preset configurations
+PRESETS = {
+    "chat": {"temperature": 0.7, "top_k": 50, "top_p": 0.9, "repetition_penalty": 1.1},
+    "creative": {"temperature": 1.0, "top_k": 100, "top_p": 0.95, "repetition_penalty": 1.2},
+    "factual": {"temperature": 0.3, "top_k": 10, "top_p": 0.8, "repetition_penalty": 1.0},
+    "code": {"temperature": 0.2, "top_k": 40, "top_p": 0.95, "repetition_penalty": 1.0},
+    "deterministic": {"temperature": 0.0, "top_k": 1, "top_p": 1.0, "repetition_penalty": 1.0},
+}
+
+
 def main():
     """Main generation entry point"""
+    banner_generate()
+    
     args = parse_args()
+    
+    # Apply preset if specified
+    if args.preset:
+        preset = PRESETS[args.preset]
+        args.temperature = preset["temperature"]
+        args.top_k = preset["top_k"]
+        args.top_p = preset["top_p"]
+        args.repetition_penalty = preset["repetition_penalty"]
     
     print(f"========== Generation Configuration ==========")
     print(f"Model: {args.model_name}")
     print(f"Mode: {args.mode}")
     print(f"Max new tokens: {args.max_new_tokens}")
+    print(f"Temperature: {args.temperature}")
+    print(f"Top-K: {args.top_k}")
+    print(f"Top-P: {args.top_p}")
+    print(f"Repetition penalty: {args.repetition_penalty}")
+    if args.preset:
+        print(f"Preset: {args.preset}")
     print()
     
     # Optional: Show model info without loading (fast preview)
@@ -83,25 +127,39 @@ def main():
     
     if args.mode == "basic":
         print(f"Prompt: {args.prompt}\n")
-        output = gen.generate(args.prompt, args.max_new_tokens)
+        output = gen.generate(
+            args.prompt, 
+            args.max_new_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            repetition_penalty=args.repetition_penalty
+        )
+        print(output)
+    
+    elif args.mode == "creative":
+        print(f"Prompt: {args.prompt}\n")
+        output = gen.generate_creative(args.prompt, args.max_new_tokens)
+        print(output)
+    
+    elif args.mode == "factual":
+        print(f"Prompt: {args.prompt}\n")
+        output = gen.generate_factual(args.prompt, args.max_new_tokens)
+        print(output)
+    
+    elif args.mode == "code":
+        print(f"Prompt: {args.prompt}\n")
+        output = gen.generate_code(args.prompt, args.max_new_tokens)
         print(output)
     
     elif args.mode == "qa":
         question = args.prompt  # Use prompt as question
         print(f"Question: {question}\n")
-        answer = gen.generate_qa(question, args.max_new_tokens)
+        # Q&A uses factual settings
+        answer = gen.generate_factual(question, args.max_new_tokens)
         print(f"Answer: {answer}")
     
     print("\n========== Generation Complete ==========")
-    
-    # Optional: Additional Q&A example (can be removed or made conditional)
-    if args.mode == "basic" and model.tokenizer.token_kind != "char":
-        print("\n========== Q&A Example ==========")
-        question = "How far is the moon?"
-        print(f"Question: {question}")
-        answer = gen.generate_qa(question, 150)
-        print(f"Answer: {answer}")
-        print()
 
 
 if __name__ == "__main__":

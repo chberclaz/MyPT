@@ -58,6 +58,19 @@ from .checkpoint import CheckpointManager
 # Generator
 from .generator import Generator
 
+# Banner
+from .banner import (
+    print_banner,
+    print_section,
+    get_banner_string,
+    banner_train,
+    banner_generate,
+    banner_webapp,
+    banner_workspace,
+    banner_dataset,
+    ROBOT_HEAD,
+)
+
 # Training utilities
 from .training_utils import (
     calculate_dataset_coverage,
@@ -98,6 +111,17 @@ __all__ = [
     'print_coverage_analysis',
     'estimate_training_time',
     'print_training_estimates',
+    
+    # Banner
+    'print_banner',
+    'print_section',
+    'get_banner_string',
+    'banner_train',
+    'banner_generate',
+    'banner_webapp',
+    'banner_workspace',
+    'banner_dataset',
+    'ROBOT_HEAD',
 ]
 
 
@@ -154,7 +178,7 @@ def create_model(
     return model
 
 
-def load_model(model_name: str, base_dir: str = "checkpoints") -> GPT:
+def load_model(model_name: str, base_dir: str = "checkpoints", load_dtype: str | None = None) -> GPT:
     """
     Load a trained model from checkpoint.
     Automatically detects new JSON format or legacy format.
@@ -162,15 +186,20 @@ def load_model(model_name: str, base_dir: str = "checkpoints") -> GPT:
     Args:
         model_name: Name of the model (e.g., 'dante', 'shakespeare')
         base_dir: Base checkpoints directory
+        load_dtype: Optional dtype to load model as ('fp32', 'fp16', 'bf16').
+                   If None, uses smart defaults:
+                   - bf16 checkpoint on older GPU → auto-converts to fp32
+                   - fp16/fp32 checkpoints → keeps original dtype
     
     Returns:
         Loaded GPT model ready for generation
     
     Example:
-        >>> model = load_model("dante")
+        >>> model = load_model("dante")  # Smart defaults
+        >>> model = load_model("dante", load_dtype="fp16")  # Force fp16
         >>> output = model.generate("Nel mezzo del cammin", max_new_tokens=100)
     """
-    return CheckpointManager.load_for_inference(model_name, base_dir=base_dir)
+    return CheckpointManager.load_for_inference(model_name, base_dir=base_dir, load_dtype=load_dtype)
 
 
 def get_model_info(model_name: str, base_dir: str = "checkpoints") -> dict:

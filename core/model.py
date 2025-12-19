@@ -378,7 +378,10 @@ class GPT(nn.Module):
             map_location: Device to load tensors to (for torch.load)
             load_dtype: Optional dtype string to cast model weights after loading
                         ('float32'/'fp32', 'bfloat16'/'bf16', 'float16'/'fp16').
-                        If None, weights are left in stored dtype and then moved to config.device.
+                        If None, uses smart defaults based on checkpoint dtype and device:
+                        - bf16 checkpoint on non-bf16 GPU → auto-convert to fp32
+                        - fp16 checkpoint → keep as fp16
+                        - fp32 checkpoint → keep as fp32
 
         Returns:
             Tuple of (model, tokenizer_state, step, optimizer_state)
@@ -413,22 +416,60 @@ class GPT(nn.Module):
         else:
             # Backwards-compatible: old style state_dict-only
             state_dict = ckpt_obj
+            # Detect dtype from first float tensor
+            for v in state_dict.values():
+                if torch.is_floating_point(v):
+                    checkpoint_dtype = str(v.dtype).replace("torch.", "")
+                    break
 
-        if load_dtype is not None:
-            target_dtype = _resolve_dtype(load_dtype)
+        # 5. Smart dtype handling
+        effective_dtype = load_dtype
+        
+        if effective_dtype is None and checkpoint_dtype is not None:
+            # Auto-detect: check if we need to convert bf16 on unsupported hardware
+            device = config.device
+            is_cuda = device.startswith('cuda') if isinstance(device, str) else (device.type == 'cuda')
+            
+            if checkpoint_dtype in ('bf16', 'bfloat16') and is_cuda:
+                # Check if GPU supports bf16 (Ampere+ = compute capability 8.0+)
+                if torch.cuda.is_available():
+                    capability = torch.cuda.get_device_capability()
+                    if capability[0] < 8:
+                        print(f"⚠️  Checkpoint is bf16 but GPU (compute {capability[0]}.{capability[1]}) "
+                              f"doesn't have native bf16 support.")
+                        print(f"   Auto-converting to fp32 for compatibility.")
+                        effective_dtype = 'fp32'
+                    else:
+                        print(f"✓ Loading bf16 checkpoint on bf16-capable GPU (compute {capability[0]}.{capability[1]})")
+            
+            elif checkpoint_dtype in ('fp16', 'float16'):
+                print(f"✓ Loading fp16 checkpoint")
+            
+            elif checkpoint_dtype in ('fp32', 'float32'):
+                print(f"✓ Loading fp32 checkpoint")
+        
+        if effective_dtype is not None:
+            print(f"  Converting weights to {effective_dtype}")
+            target_dtype = _resolve_dtype(effective_dtype)
             for k, v in state_dict.items():
                 if torch.is_floating_point(v):
                     state_dict[k] = v.to(target_dtype)
+        
         model.load_state_dict(state_dict)
 
         # Move model to device and dtype
-        if load_dtype is not None:
-            target_dtype = _resolve_dtype(load_dtype)
+        if effective_dtype is not None:
+            target_dtype = _resolve_dtype(effective_dtype)
             model = model.to(device=config.device, dtype=target_dtype)
         else:
             model = model.to(config.device)
 
         model.eval()
+        
+        # Log final model dtype
+        final_dtype = str(next(model.parameters()).dtype).replace("torch.", "")
+        print(f"  Model loaded: {config.n_layer}L/{config.n_embd}E/{config.n_head}H, "
+              f"dtype={final_dtype}, device={config.device}")
 
         # 5. Reattach tokenizer
         if tokenizer_state is not None:
@@ -546,7 +587,7 @@ class GPT(nn.Module):
     
     def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
             eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None,
-            save_dtype=None):
+            save_dtype='bf16', final_save_dtype='fp16'):
         """
         Main training loop - the model trains itself!
         
@@ -559,8 +600,17 @@ class GPT(nn.Module):
             checkpoint_dir: Where to save checkpoints (None to skip saving)
             start_step: Starting iteration (for resuming)
             learning_rate: Learning rate (optional, for recording in training state)
-            save_dtype: Optional dtype for saving checkpoints ('fp32', 'bf16', 'fp16').
-                       If None, uses config.save_dtype or current model dtype.
+            save_dtype: Dtype for eval/training checkpoints (default: 'bf16').
+                       Options: 'fp32', 'bf16', 'fp16'. Use 'bf16' for A100/modern GPUs.
+            final_save_dtype: Dtype for final deployment checkpoint (default: 'fp16').
+                             Use 'fp16' for older GPUs (2060, etc). Set to None to skip.
+        
+        Checkpoint Strategy:
+            - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
+                               Includes optimizer state for resuming training on A100.
+            - Final checkpoints: Two versions are saved:
+                1. checkpoint_dir/ in bf16 - for resume capability (A100)
+                2. checkpoint_dir_fp16/ in fp16 - deployment version (2060, etc)
         
         Returns:
             Dict with final train/val losses
@@ -569,7 +619,7 @@ class GPT(nn.Module):
         
         self.train()
         
-        # Determine save dtype: explicit param > config > None (use model dtype)
+        # Determine save dtype for eval checkpoints: explicit param > config > None (model dtype)
         effective_save_dtype = save_dtype if save_dtype is not None else self.config.save_dtype
         
         # Prepare training configuration for saving
@@ -591,7 +641,7 @@ class GPT(nn.Module):
                 losses = self.estimate_loss(data_loader, eval_iters)
                 print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                 
-                # Save checkpoint bundle (model + config + tokenizer + training state)
+                # Save eval checkpoint (fp32 by default, includes optimizer for resuming)
                 if checkpoint_dir:
                     self.save_checkpoint_bundle(
                         checkpoint_dir, 
@@ -621,9 +671,10 @@ class GPT(nn.Module):
         print(f"final step {iter}: train loss {final_losses['train']:.4f}, "
               f"val loss {final_losses['val']:.4f}")
         
-        # Save final model bundle
+        # Save final model bundles
         if checkpoint_dir:
-            print("\n----- Saving final model ------")
+            # 1. Save full checkpoint (fp32) for potential training resume
+            print("\n----- Saving final model (full, fp32) ------")
             self.save_checkpoint_bundle(
                 checkpoint_dir, 
                 step=iter, 
@@ -631,32 +682,146 @@ class GPT(nn.Module):
                 training_config=training_config,
                 save_dtype=effective_save_dtype
             )
-            print(f"Training finished. Model saved to: {checkpoint_dir}")
+            print(f"Full checkpoint saved to: {checkpoint_dir}")
+            
+            # 2. Save lightweight deployment checkpoint (fp16) - no optimizer state
+            if final_save_dtype is not None:
+                deploy_dir = f"{checkpoint_dir}_{final_save_dtype}"
+                print(f"\n----- Saving deployment model ({final_save_dtype}) ------")
+                self.save_checkpoint_bundle(
+                    deploy_dir, 
+                    step=iter, 
+                    optimizer_state=None,  # No optimizer for deployment
+                    training_config=training_config,
+                    save_dtype=final_save_dtype
+                )
+                print(f"Deployment checkpoint saved to: {deploy_dir}")
+            
+            print(f"\nTraining finished!")
+            print(f"  Resume training from: {checkpoint_dir}")
+            if final_save_dtype:
+                print(f"  Deploy inference from: {deploy_dir}")
         
         return final_losses
     
     # ===== GENERATION METHODS =====
-    def generate(self, prompt, max_new_tokens):
+    def generate(self, prompt, max_new_tokens, temperature=0.8, top_k=50, top_p=0.95,
+                 repetition_penalty=1.1, stop_tokens=None):
+        """
+        Generate text with advanced sampling controls.
+        
+        Args:
+            prompt: Input text to continue from
+            max_new_tokens: Maximum number of tokens to generate
+            temperature: Controls randomness (0.0=deterministic, 1.0=neutral, >1.0=more random)
+            top_k: Only sample from top K most likely tokens (0=disabled)
+            top_p: Nucleus sampling - keep tokens with cumulative prob <= top_p (1.0=disabled)
+            repetition_penalty: Penalize repeated tokens (1.0=disabled, >1.0=discourage repeats)
+            stop_tokens: Optional list of token IDs to stop generation on
+        
+        Returns:
+            Generated text string
+        
+        Sampling Strategy:
+            1. Apply temperature scaling to logits
+            2. Apply top-k filtering (keep only top K tokens)
+            3. Apply top-p/nucleus filtering (keep tokens until cumulative prob >= top_p)
+            4. Apply repetition penalty to already-generated tokens
+            5. Sample from the filtered distribution
+        """
+        ctx_ids = self.encode(prompt)
+        idx = torch.tensor([ctx_ids], dtype=torch.long, device=self.config.device)
+        
+        # Track generated tokens for repetition penalty
+        generated_tokens = set(ctx_ids)  # Include prompt tokens
+        
+        # Handle stop tokens
+        if stop_tokens is None:
+            stop_tokens = set()
+        elif not isinstance(stop_tokens, set):
+            stop_tokens = set(stop_tokens)
+
+        for _ in range(max_new_tokens):
+            # Crop idx to the last block_size tokens (sliding window)
+            idx_cond = idx[:, -self.config.block_size:]
+            
+            # Get predictions
+            logits, _ = self(idx_cond)
+            
+            # Focus only on the last time step
+            logits = logits[:, -1, :]  # (B, vocab_size)
+            
+            # Apply temperature
+            if temperature != 1.0 and temperature > 0:
+                logits = logits / temperature
+            
+            # Apply repetition penalty
+            if repetition_penalty != 1.0 and len(generated_tokens) > 0:
+                for token in generated_tokens:
+                    if token < logits.size(-1):  # Safety check
+                        # If logit is positive, divide; if negative, multiply
+                        # This ensures penalty always reduces probability
+                        if logits[:, token] > 0:
+                            logits[:, token] = logits[:, token] / repetition_penalty
+                        else:
+                            logits[:, token] = logits[:, token] * repetition_penalty
+            
+            # Apply top-k filtering
+            if top_k > 0:
+                top_k_actual = min(top_k, logits.size(-1))
+                v, _ = torch.topk(logits, top_k_actual)
+                logits[logits < v[:, [-1]]] = float('-inf')
+            
+            # Apply top-p (nucleus) filtering
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                # Remove tokens with cumulative probability above the threshold
+                sorted_indices_to_remove = cumulative_probs > top_p
+                # Shift the indices to the right to keep also the first token above the threshold
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                
+                # Scatter sorted tensors to original indexing
+                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                logits[indices_to_remove] = float('-inf')
+            
+            # Convert to probabilities and sample
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            
+            # Append sampled index to the running sequence
+            idx = torch.cat((idx, idx_next), dim=1)
+            
+            # Track for repetition penalty
+            next_token = idx_next[0].item()
+            generated_tokens.add(next_token)
+            
+            # Check for stop tokens
+            if next_token in stop_tokens:
+                break
+        
+        # Decode the full sequence
+        return self.decode(idx[0].tolist())
+    
+    def generate_simple(self, prompt, max_new_tokens):
+        """
+        Simple generation without sampling controls (legacy behavior).
+        Useful for testing or when you want pure model output.
+        """
         ctx_ids = self.encode(prompt)
         idx = torch.tensor([ctx_ids], dtype=torch.long, device=self.config.device)
 
-        # idx is (B, T) array of indices in the current  context
         for _ in range(max_new_tokens):
-            # crop idx to the last block_size tokens
             idx_cond = idx[:, -self.config.block_size:]
-            #get the predictions
-            logits, loss = self(idx_cond)
-            # focus only on the last time step
-            logits = logits[:, -1, :] # becomes (b,C)
-            # apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1) # (B,C)
-            # sample from the distribution
-            idx_next= torch.multinomial(probs, num_samples=1) # (B,1)
-            # append sampled index to the running squence
-            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
-            # decode the response
-            response = self.decode(idx[0].tolist())
-        return response
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+        
+        return self.decode(idx[0].tolist())
 
     # ---- Convenience helpers to avoid juggling tokenizer outside the model ----
     def encode(self, text: str) -> list[int]:

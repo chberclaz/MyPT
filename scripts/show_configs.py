@@ -163,6 +163,9 @@ def show_all_configs(configs_dir="configs"):
 
 
 def main():
+    from core.banner import print_banner
+    print_banner("MyPT Configs", "Model Configuration Browser")
+    
     parser = argparse.ArgumentParser(description="Show available model configurations")
     parser.add_argument("--config_file", type=str, default=None,
                         help="Show details for specific config file")

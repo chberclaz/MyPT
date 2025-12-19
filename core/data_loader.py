@@ -63,10 +63,12 @@ class GPTDataLoader:
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
+            # Support both 'total_tokens' and 'total_tokens_written' for backwards compatibility
+            total_tokens = metadata.get('total_tokens', metadata.get('total_tokens_written', 0))
             print(f"📦 Loaded sharded dataset:")
-            print(f"   Total tokens: {metadata['total_tokens']:,}")
-            print(f"   Train shards: {metadata['train_shards']}")
-            print(f"   Val shards: {metadata['val_shards']}")
+            print(f"   Total tokens: {total_tokens:,}")
+            print(f"   Train shards: {metadata.get('train_shards', 'unknown')}")
+            print(f"   Val shards: {metadata.get('val_shards', 'unknown')}")
         
         # Find shard files
         train_dir = os.path.join(dataset_dir, "train")

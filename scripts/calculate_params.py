@@ -246,6 +246,9 @@ def interactive_mode():
 
 
 def main():
+    from core.banner import print_banner
+    print_banner("MyPT Calculator", "Model Parameter Estimator")
+    
     parser = argparse.ArgumentParser(
         description="Calculate GPT model parameters",
         formatter_class=argparse.RawDescriptionHelpFormatter,

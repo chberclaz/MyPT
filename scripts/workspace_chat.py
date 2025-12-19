@@ -88,9 +88,8 @@ def print_tool_calls(tool_calls: list):
 def main():
     args = parse_args()
     
-    print("=" * 60)
-    print("MyPT Workspace Agent")
-    print("=" * 60)
+    from core.banner import print_banner
+    print_banner("MyPT Workspace Agent", "Agentic RAG Chat Interface")
     
     # Determine index directory
     index_dir = args.index_dir

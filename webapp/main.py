@@ -51,6 +51,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from webapp.logging_config import setup_logging, get_logger, set_debug_mode, is_debug_mode
 from webapp.routers import chat, training, workspace
+from core.banner import print_banner, ROBOT_HEAD
 
 # Paths
 WEBAPP_DIR = Path(__file__).parent
@@ -78,7 +79,7 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="MyPT",
-    description="Offline GPT Training & RAG Pipeline",
+    description="Offline GPT Training & Agentic RAG Pipeline",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -188,10 +189,8 @@ def main():
     setup_logging(debug=args.debug)
     log = get_logger("main")
     
-    print("\n" + "=" * 60)
-    print("  MyPT Web Application")
-    print("  Offline GPT Training & RAG Pipeline")
-    print("=" * 60)
+    # Print banner
+    print_banner("MyPT Web Application", "Offline GPT Training & RAG Pipeline")
     
     if args.host == "127.0.0.1":
         print(f"  Mode:   Local Agent")

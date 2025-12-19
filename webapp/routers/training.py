@@ -185,36 +185,75 @@ def run_training_thread(request: TrainingRequest):
             except ValueError:
                 pass
         
-        add_log("info", f"Model: {config.n_layer} layers, {config.n_embd} embd, {config.n_head} heads")
+        add_log("info", f"Selected config: {config.n_layer} layers, {config.n_embd} embd, {config.n_head} heads")
         
-        # Create or load model
-        if request.baseModel and request.mode != "pretrain":
+        # Check for existing checkpoint to resume from
+        output_checkpoint_dir = PROJECT_ROOT / "checkpoints" / request.outputName
+        start_step = 0
+        optimizer_state = None
+        is_resuming = False
+        
+        # Priority: 1) Resume existing, 2) Load base model (SFT), 3) Create new
+        if output_checkpoint_dir.exists() and (output_checkpoint_dir / "model.pt").exists():
+            # RESUME from existing checkpoint
+            # IMPORTANT: When resuming, we use the CHECKPOINT's config, not user-selected config!
+            add_log("info", f"Found existing checkpoint: {request.outputName}")
+            add_log("warning", "Resuming from checkpoint - your selected model size will be IGNORED")
+            add_log("info", "The checkpoint's architecture will be used instead")
+            try:
+                model, _, start_step, optimizer_state = GPT.load(str(output_checkpoint_dir))
+                start_step = start_step or 0
+                is_resuming = True
+                # Log the ACTUAL config being used (from checkpoint)
+                add_log("info", f"Checkpoint config: {model.config.n_layer} layers, {model.config.n_embd} embd, {model.config.n_head} heads")
+                add_log("success", f"Resumed from step {start_step}")
+            except Exception as e:
+                add_log("error", f"Failed to load checkpoint: {e}")
+                add_log("info", "Starting fresh instead...")
+                model = GPT(config)
+                start_step = 0
+                optimizer_state = None
+        elif request.baseModel and request.mode != "pretrain":
+            # FINE-TUNE from base model
+            # When fine-tuning, architecture comes from base model
             add_log("info", f"Loading base model: {request.baseModel}")
+            add_log("info", "Fine-tuning mode: base model architecture will be used")
             try:
                 model, _, _, _ = GPT.load(str(PROJECT_ROOT / "checkpoints" / request.baseModel))
-                add_log("success", f"Base model loaded")
+                # Update mutable training params from user config (like train.py does)
+                model.config.batch_size = config.batch_size
+                model.config.dropout = config.dropout
+                model.config.use_loss_mask = config.use_loss_mask
+                add_log("info", f"Using architecture: {model.config.n_layer} layers, {model.config.n_embd} embd")
+                add_log("success", f"Base model loaded for fine-tuning")
             except Exception as e:
                 add_log("error", f"Failed to load base model: {e}")
                 queue_completion(False, str(e))
                 return
         else:
-            add_log("info", "Creating new model...")
+            # CREATE new model with user-selected config
+            add_log("info", "Creating new model with selected configuration...")
             model = GPT(config)
         
-        model.to(config.device)
-        add_log("success", f"Model ready on {config.device}")
+        # Use MODEL's config for device (checkpoint may have different device setting)
+        model.to(model.config.device)
+        add_log("success", f"Model ready on {model.config.device}")
         
         # Setup data loader
+        # IMPORTANT: Always use model.config (which is from checkpoint when resuming)
+        # This matches train.py behavior and ensures batch_size/block_size match the model
+        active_config = model.config
         dataset_dir = request.datasetDir if request.datasetDir else None
         
         if dataset_dir and os.path.exists(dataset_dir):
             add_log("info", f"Loading dataset from {dataset_dir}")
+            add_log("info", f"Using batch_size={active_config.batch_size}, block_size={active_config.block_size}")
             try:
                 data_loader = GPTDataLoader(
-                    config,
+                    active_config,  # Use model's config, not user-selected config!
                     model.tokenizer,
                     dataset_dir=dataset_dir,
-                    use_loss_mask=config.use_loss_mask
+                    use_loss_mask=active_config.use_loss_mask
                 )
                 add_log("success", "Dataset loaded")
             except Exception as e:
@@ -234,7 +273,7 @@ def run_training_thread(request: TrainingRequest):
             try:
                 with open(input_file, 'r', encoding='utf-8') as f:
                     text = f.read()
-                data_loader = GPTDataLoader(config, model.tokenizer)
+                data_loader = GPTDataLoader(active_config, model.tokenizer)  # Use model's config!
                 data_loader.load_from_text(text)
                 add_log("success", f"Loaded {len(text):,} characters")
             except Exception as e:
@@ -242,24 +281,34 @@ def run_training_thread(request: TrainingRequest):
                 queue_completion(False, str(e))
                 return
         
-        # Setup optimizer
-        optimizer = model.configure_optimizer(learning_rate=learning_rate)
-        add_log("info", f"Optimizer configured (lr={learning_rate})")
+        # Setup optimizer (restore state if resuming)
+        optimizer = model.configure_optimizer(learning_rate=learning_rate, optimizer_state=optimizer_state)
+        if optimizer_state:
+            add_log("info", f"Optimizer restored from checkpoint (lr={learning_rate})")
+        else:
+            add_log("info", f"Optimizer configured (lr={learning_rate})")
         
         # Checkpoint directory
         checkpoint_dir = PROJECT_ROOT / "checkpoints" / request.outputName
         add_log("info", f"Output: {checkpoint_dir}")
         
+        # Calculate total steps needed
+        total_steps = request.maxIters
+        remaining_steps = total_steps - start_step
+        
         # Update max steps
         with _state_lock:
-            _training_state["progress"]["maxSteps"] = request.maxIters
+            _training_state["progress"]["maxSteps"] = total_steps
+            _training_state["progress"]["step"] = start_step
         
+        if start_step > 0:
+            add_log("info", f"Resuming from step {start_step}, {remaining_steps} steps remaining")
         add_log("success", "Starting training loop...")
         
         # Training loop
         start_time = time.time()
         
-        for step in range(request.maxIters):
+        for step in range(start_step, total_steps):
             # Check for stop signal
             with _state_lock:
                 if _training_state["should_stop"]:
@@ -289,7 +338,7 @@ def run_training_thread(request: TrainingRequest):
                 _training_state["progress"]["step"] = step + 1
             
             # Evaluation
-            if step % request.evalInterval == 0 or step == request.maxIters - 1:
+            if step % request.evalInterval == 0 or step == total_steps - 1:
                 try:
                     losses = model.estimate_loss(data_loader, eval_iters=50)
                     train_loss = float(losses['train'])
@@ -297,10 +346,10 @@ def run_training_thread(request: TrainingRequest):
                     
                     # Calculate ETA
                     elapsed = time.time() - start_time
-                    steps_done = step + 1
-                    steps_remaining = request.maxIters - steps_done
-                    if steps_done > 0:
-                        time_per_step = elapsed / steps_done
+                    steps_done_session = step - start_step + 1  # Steps done in this session
+                    steps_remaining = total_steps - (step + 1)
+                    if steps_done_session > 0:
+                        time_per_step = elapsed / steps_done_session
                         eta_seconds = steps_remaining * time_per_step
                         if eta_seconds < 60:
                             eta_str = f"{int(eta_seconds)}s"

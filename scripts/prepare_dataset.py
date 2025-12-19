@@ -132,6 +132,9 @@ def dedup_lines(lines, verbose=True):
 
 
 def main():
+    from core.banner import print_banner
+    print_banner("MyPT Dataset", "Sharded Dataset Preparer")
+    
     parser = argparse.ArgumentParser(
         description="Prepare sharded dataset for large-scale training",
         formatter_class=argparse.RawDescriptionHelpFormatter,
