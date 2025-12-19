@@ -67,7 +67,7 @@ def list_available_models() -> list[str]:
 
 
 def get_or_load_model(model_name: str):
-    """Get or load a model by name."""
+    """Get or load a model by name, with optional torch.compile() for faster inference."""
     if model_name in _loaded_models:
         log.model("cache_hit", model_name)
         return _loaded_models[model_name]
@@ -76,12 +76,33 @@ def get_or_load_model(model_name: str):
     start = time.time()
     
     try:
+        import torch
         from core import load_model
         model = load_model(model_name)
-        _loaded_models[model_name] = model
         
-        elapsed = time.time() - start
-        log.model("loaded", model_name, time=f"{elapsed:.2f}s", device=str(model.config.device))
+        load_elapsed = time.time() - start
+        log.model("loaded", model_name, time=f"{load_elapsed:.2f}s", device=str(model.config.device))
+        
+        # Compile model for faster inference (PyTorch 2.0+)
+        # Only compile if torch.compile is available and we're on CUDA
+        if hasattr(torch, 'compile') and model.config.device == 'cuda':
+            # Suppress dynamo errors so compilation failure doesn't crash generation
+            import torch._dynamo
+            torch._dynamo.config.suppress_errors = True
+            
+            try:
+                log.info(f"Compiling model for faster inference...")
+                compile_start = time.time()
+                # Use 'default' mode which is more compatible than 'reduce-overhead'
+                # 'reduce-overhead' requires Triton which may not be installed
+                model.compile_for_inference(mode="default")
+                compile_elapsed = time.time() - compile_start
+                log.info(f"Model compiled in {compile_elapsed:.2f}s (first generation will trigger JIT)")
+            except Exception as e:
+                log.warning(f"torch.compile() skipped: {str(e)[:100]}")
+                log.info("Using uncompiled model (still fast with other optimizations)")
+        
+        _loaded_models[model_name] = model
         return model
     except Exception as e:
         log.error(f"Failed to load model {model_name}", e)

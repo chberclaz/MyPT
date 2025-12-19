@@ -1,51 +1,121 @@
-# Core dependencies for MyPT
-# A minimal GPT implementation with modular architecture
+# =============================================================================
+# MyPT - Complete Dependencies for Offline Installation
+# =============================================================================
+# This file lists ALL dependencies required for full MyPT functionality.
+# For offline installation:
+#   1. On online machine: pip download -r requirements.txt -d ./packages
+#   2. Copy ./packages folder to offline machine
+#   3. On offline machine: pip install --no-index --find-links=./packages -r requirements.txt
+# =============================================================================
+
+# =============================================================================
+# CORE DEPENDENCIES (Required for model training and inference)
+# =============================================================================
 
 # PyTorch - Deep learning framework
-# Install with CUDA support (recommended):
+# For CUDA support (recommended), install separately:
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-# Or CPU only:
+# For CPU only:
 #   pip install torch torchvision torchaudio
 torch>=2.0.0
 
 # Tiktoken - OpenAI's tokenizer for GPT-2 BPE encoding
+# Used for text tokenization in training and inference
 tiktoken>=0.5.0
 
-# NumPy - Array operations for embeddings, data loading, shards
+# NumPy - Numerical operations
+# Used for embeddings, data loading, memory-mapped shards
 numpy>=1.21.0
 
-# ============================================================================
-# Web Application (Optional - for GUI)
-# ============================================================================
-# Install with: pip install -r requirements.txt
-# Or: pip install mypt[webapp]
+# =============================================================================
+# WEB APPLICATION DEPENDENCIES (Required for GUI)
+# =============================================================================
 
-# FastAPI - Modern web framework
+# FastAPI - Modern async web framework
 fastapi>=0.104.0
 
-# Uvicorn - ASGI server
+# Pydantic - Data validation (FastAPI dependency, explicit for offline install)
+pydantic>=2.0.0
+
+# Starlette - ASGI framework (FastAPI dependency, includes StaticFiles, Routing)
+starlette>=0.27.0
+
+# Uvicorn - ASGI server to run FastAPI
 uvicorn>=0.24.0
 
-# Jinja2 - Template engine
+# Jinja2 - Template engine for HTML rendering
 jinja2>=3.1.0
 
-# File uploads
+# MarkupSafe - Jinja2 dependency for safe string handling
+MarkupSafe>=2.1.0
+
+# Python-multipart - Required for form data and file uploads
 python-multipart>=0.0.6
 
-# WebSockets for real-time updates
+# WebSockets - Real-time communication for training logs
 websockets>=12.0
 
-# Authentication
-passlib[bcrypt]>=1.7.4  # Password hashing with bcrypt
-python-jose[cryptography]>=3.3.0  # JWT tokens (optional, has fallback)
+# AnyIO - Async compatibility layer (uvicorn/starlette dependency)
+anyio>=3.7.0
 
-# ============================================================================
-# Optional: Development dependencies (for testing, linting, etc.)
-# ============================================================================
-# Uncomment to install:
-# pytest>=7.0.0
-# black>=23.0.0
-# isort>=5.12.0
-# flake8>=6.0.0
-# mypy>=1.0.0
+# Sniffio - Async library detection (anyio dependency)
+sniffio>=1.3.0
 
+# Click - CLI toolkit (uvicorn dependency)
+click>=8.0.0
+
+# H11 - HTTP/1.1 protocol library (uvicorn dependency)
+h11>=0.14.0
+
+# HTTPTools - Fast HTTP parsing (optional uvicorn speedup)
+httptools>=0.6.0
+
+# =============================================================================
+# AUTHENTICATION DEPENDENCIES
+# =============================================================================
+
+# Passlib - Password hashing library with bcrypt support
+passlib>=1.7.4
+
+# Bcrypt - Password hashing backend (passlib dependency)
+bcrypt>=4.0.0
+
+# Python-Jose - JWT token handling
+python-jose>=3.3.0
+
+# Cryptography - Cryptographic primitives (python-jose dependency)
+cryptography>=41.0.0
+
+# Cffi - C Foreign Function Interface (cryptography dependency)
+cffi>=1.15.0
+
+# Pycparser - C parser (cffi dependency)
+pycparser>=2.21
+
+# =============================================================================
+# TYPING EXTENSIONS (Required for Python 3.9 compatibility)
+# =============================================================================
+
+# Typing extensions for newer type hints on older Python
+typing_extensions>=4.0.0
+
+# Annotated-types - Type annotation utilities (pydantic dependency)
+annotated-types>=0.4.0
+
+# =============================================================================
+# OPTIONAL: Performance Enhancement
+# =============================================================================
+
+# Triton - GPU compiler for torch.compile() optimization
+# Note: May not work on Windows, skip if installation fails
+# triton>=2.0.0
+
+# =============================================================================
+# OPTIONAL: Development dependencies (uncomment if needed)
+# =============================================================================
+
+# pytest>=7.0.0      # Testing framework
+# black>=23.0.0      # Code formatter
+# isort>=5.12.0      # Import sorter
+# flake8>=6.0.0      # Linter
+# mypy>=1.0.0        # Type checker
