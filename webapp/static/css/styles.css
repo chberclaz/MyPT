@@ -99,7 +99,9 @@ a:hover {
 .app-container {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden; /* Prevent body scroll - only internal areas scroll */
 }
 
 .app-header {
@@ -112,6 +114,10 @@ a:hover {
     position: sticky;
     top: 0;
     z-index: 100;
+    /* Fixed header height for layout calculations */
+    height: 60px;
+    min-height: 60px;
+    flex-shrink: 0;
 }
 
 .app-logo {
@@ -156,6 +162,8 @@ a:hover {
     flex: 1;
     display: flex;
     overflow: hidden;
+    /* Ensure main area fills remaining viewport height */
+    height: calc(100vh - 60px); /* 60px = header height */
 }
 
 /* ============================================================================
@@ -167,7 +175,12 @@ a:hover {
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
+    /* FIXED: Sidebar stays in place, doesn't scroll with content */
+    position: sticky;
+    top: 0;
+    height: 100%;
     overflow-y: auto;
+    flex-shrink: 0; /* Prevent sidebar from shrinking */
 }
 
 .sidebar-section {
@@ -192,6 +205,9 @@ a:hover {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* Ensure chat container fills available space */
+    min-width: 0; /* Prevent flex item overflow */
+    height: 100%;
 }
 
 .chat-messages {
@@ -201,6 +217,8 @@ a:hover {
     display: flex;
     flex-direction: column;
     gap: var(--space-md);
+    /* Ensure messages area is the only scrollable part */
+    min-height: 0; /* Important for flex scroll containers */
 }
 
 .message {
@@ -524,11 +542,29 @@ a:hover {
     color: var(--accent-primary);
 }
 
-.status-dot {
+/* Status badge default state */
+.status-badge {
+    background: rgba(136, 178, 208, 0.15);
+    color: var(--text-muted);
+}
+
+/* Header status dot styling */
+.status-badge .status-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: currentColor;
+    background: var(--text-muted);
+    transition: all var(--transition-fast);
+}
+
+.status-badge .status-dot.active {
+    background: var(--accent-success);
+    box-shadow: 0 0 6px var(--accent-success);
+}
+
+.status-badge .status-dot.warning {
+    background: var(--accent-warning);
+    box-shadow: 0 0 6px var(--accent-warning);
 }
 
 /* ============================================================================
@@ -680,6 +716,131 @@ a:hover {
     width: 16px;
     height: 16px;
     color: var(--accent-primary);
+}
+
+/* Index Status Panel */
+.index-status {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+
+.status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-xs) 0;
+    font-size: 0.8125rem;
+}
+
+.status-row:not(:last-child) {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.status-label {
+    color: var(--text-muted);
+}
+
+.status-value {
+    color: var(--text-primary);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.status-dot.active {
+    background: var(--accent-success);
+    box-shadow: 0 0 6px var(--accent-success);
+}
+
+.status-dot.warning {
+    background: var(--accent-warning);
+}
+
+.status-dot.error {
+    background: var(--accent-error);
+}
+
+/* Mini icon button for expand/collapse */
+.btn-icon-mini {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+}
+
+.btn-icon-mini:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.btn-icon-mini svg {
+    transition: transform var(--transition-fast);
+}
+
+.btn-icon-mini.expanded svg {
+    transform: rotate(180deg);
+}
+
+/* Collapsible file list */
+.file-list {
+    overflow-y: auto;
+    max-height: 0;
+    opacity: 0;
+    transition: all var(--transition-normal);
+}
+
+.file-list.expanded {
+    max-height: 300px;
+    opacity: 1;
+    margin-top: var(--space-sm);
+}
+
+.file-list.collapsed {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    /* NOT clickable - just informational */
+    cursor: default;
+}
+
+.file-item svg {
+    width: 12px;
+    height: 12px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+.file-item .file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* ============================================================================

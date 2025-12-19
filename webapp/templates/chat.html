@@ -5,27 +5,30 @@
 {% block content %}
 <!-- Sidebar -->
 <div class="sidebar">
-    <!-- Workspace Section -->
+    <!-- Workspace Index Status -->
     <div class="sidebar-section">
-        <div class="sidebar-title">Workspace</div>
+        <div class="sidebar-title">Index Status</div>
         
-        <!-- Workspace Stats -->
-        <div class="workspace-stats">
-            <div class="workspace-stat">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <path d="M14 2v6h6"/>
-                </svg>
-                <span id="docs-count">0 docs</span>
+        <!-- Status Indicator -->
+        <div class="index-status" id="index-status">
+            <div class="status-row">
+                <span class="status-label">Status</span>
+                <span class="status-value" id="index-status-badge">
+                    <span class="status-dot" id="status-dot"></span>
+                    <span id="index-status-text">Checking...</span>
+                </span>
             </div>
-            <div class="workspace-stat">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="7" height="7"/>
-                    <rect x="14" y="3" width="7" height="7"/>
-                    <rect x="14" y="14" width="7" height="7"/>
-                    <rect x="3" y="14" width="7" height="7"/>
-                </svg>
-                <span id="chunks-count">0 chunks</span>
+            <div class="status-row">
+                <span class="status-label">Documents</span>
+                <span class="status-value" id="docs-count">—</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Chunks</span>
+                <span class="status-value" id="chunks-count">—</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Embedding</span>
+                <span class="status-value" id="embedding-dim">256-dim</span>
             </div>
         </div>
         
@@ -37,18 +40,23 @@
                     <path d="M1 20v-6h6"/>
                     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                 </svg>
-                Rebuild
+                Rebuild Index
             </button>
         </div>
     </div>
     
-    <!-- Documents List -->
-    <div class="sidebar-section" style="flex: 1; overflow-y: auto;">
-        <div class="sidebar-title">Documents</div>
-        <div id="documents-list" class="file-tree">
-            <div class="text-muted text-sm" style="padding: 0.5rem;">
-                Loading documents...
-            </div>
+    <!-- Indexed Files (Collapsible) -->
+    <div class="sidebar-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+        <div class="sidebar-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>Indexed Files</span>
+            <button id="toggle-files-btn" class="btn-icon-mini" title="Show/hide file list">
+                <svg id="toggle-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+            </button>
+        </div>
+        <div id="documents-list" class="file-list collapsed">
+            <div class="text-muted text-sm">No files indexed</div>
         </div>
     </div>
     

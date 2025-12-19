@@ -11,6 +11,7 @@ Features:
     2) Take tokens from each source up to target, write .bin shards
 - Supports GPT-2 BPE or char-level Tokenizer
 - Optional TSV splitting for parallel corpora
+- Optional REPEATING of small sources to meet weight targets (--repeat)
 
 Usage example:
 
@@ -30,6 +31,7 @@ python scripts/prepare_weighted_dataset.py \
   --tokens_per_shard 10000000 \
   --val_fraction 0.05 \
   --split_tsv \
+  --repeat \
   --out_dir data/base_phase1_weighted
 """
 
@@ -298,10 +300,15 @@ def compute_target_tokens(
     token_counts: Dict[str, int],
     weights: Dict[str, float],
     total_tokens_target: int,
-) -> Dict[str, int]:
+    allow_repeat: bool = False,
+) -> Tuple[Dict[str, int], Dict[str, int]]:
     """
     Given available tokens per source, weights and a global target, compute
     how many tokens we will actually take from each source.
+    
+    Returns:
+        (final_targets, repeat_counts) - target tokens per source and how many
+        times to repeat each source (1 = no repeat, 2 = repeat once, etc.)
     """
     print("\n" + "=" * 70)
     print("Computing target tokens per source")
@@ -310,61 +317,107 @@ def compute_target_tokens(
     names = list(token_counts.keys())
 
     # Ideal allocation based on weights
-    ideal = {name: weights[name] * total_tokens_target for name in names}
+    ideal = {name: int(round(weights[name] * total_tokens_target)) for name in names}
 
-    # Clip by availability
-    clipped = {}
-    for name in names:
-        avail = token_counts[name]
-        tgt = ideal[name]
-        clipped[name] = min(avail, int(round(tgt)))
-        print(
-            f"[TARGET] {name}: ideal={int(tgt):,} tokens, "
-            f"available={avail:,}, clipped={clipped[name]:,}"
-        )
-
-    sum_clipped = sum(clipped.values())
-    if sum_clipped == 0:
-        raise ValueError("All sources have zero tokens after clipping. Check inputs.")
-
-    if sum_clipped < total_tokens_target:
-        print(
-            f"[WARN] Cannot reach requested total_tokens={total_tokens_target:,}. "
-            f"Only {sum_clipped:,} tokens available across all sources."
-        )
-        # Just use what we have
-        final_targets = clipped
-    else:
-        # Re-normalize clipped counts down to exactly total_tokens_target (approximately)
-        scale = total_tokens_target / sum_clipped
+    if allow_repeat:
+        # With repeat enabled, we can meet ideal targets by repeating small sources
+        print("[REPEAT MODE] Small sources will be repeated to meet weight targets.")
+        
         final_targets = {}
-        running_sum = 0
-        print(f"[INFO] Scaling clipped counts by {scale:.6f} to match total_tokens_target.")
-
-        # Distribute with rounding; last source gets the remainder
-        for i, name in enumerate(names):
-            if i < len(names) - 1:
-                v = int(round(clipped[name] * scale))
-                v = min(v, clipped[name])
-                final_targets[name] = v
-                running_sum += v
+        repeat_counts = {}
+        
+        for name in names:
+            avail = token_counts[name]
+            tgt = ideal[name]
+            
+            if avail <= 0:
+                final_targets[name] = 0
+                repeat_counts[name] = 0
+                print(f"[TARGET] {name}: SKIPPED (no data)")
+                continue
+            
+            if avail >= tgt:
+                # Enough data, no repeat needed
+                final_targets[name] = tgt
+                repeat_counts[name] = 1
+                print(
+                    f"[TARGET] {name}: target={tgt:,} tokens, "
+                    f"available={avail:,}, repeat=1x"
+                )
             else:
-                # last source: ensure exact total
-                v = total_tokens_target - running_sum
-                v = min(v, clipped[name])
-                final_targets[name] = v
-                running_sum += v
+                # Need to repeat - calculate how many times
+                repeats_needed = (tgt + avail - 1) // avail  # ceiling division
+                final_targets[name] = tgt
+                repeat_counts[name] = repeats_needed
+                print(
+                    f"[TARGET] {name}: target={tgt:,} tokens, "
+                    f"available={avail:,}, repeat={repeats_needed}x "
+                    f"(upscaled from {avail:,} → ~{avail * repeats_needed:,})"
+                )
+        
+        print(f"\n[INFO] Final target token sum: {sum(final_targets.values()):,}")
+        
+    else:
+        # Original behavior: clip by availability
+        clipped = {}
+        for name in names:
+            avail = token_counts[name]
+            tgt = ideal[name]
+            clipped[name] = min(avail, tgt)
+            print(
+                f"[TARGET] {name}: ideal={tgt:,} tokens, "
+                f"available={avail:,}, clipped={clipped[name]:,}"
+            )
 
-        print(f"[INFO] Final target token sum: {running_sum:,}")
+        sum_clipped = sum(clipped.values())
+        if sum_clipped == 0:
+            raise ValueError("All sources have zero tokens after clipping. Check inputs.")
+
+        if sum_clipped < total_tokens_target:
+            print(
+                f"[WARN] Cannot reach requested total_tokens={total_tokens_target:,}. "
+                f"Only {sum_clipped:,} tokens available across all sources."
+            )
+            print(
+                f"[HINT] Use --repeat to automatically repeat small sources to meet targets."
+            )
+            # Just use what we have
+            final_targets = clipped
+        else:
+            # Re-normalize clipped counts down to exactly total_tokens_target (approximately)
+            scale = total_tokens_target / sum_clipped
+            final_targets = {}
+            running_sum = 0
+            print(f"[INFO] Scaling clipped counts by {scale:.6f} to match total_tokens_target.")
+
+            # Distribute with rounding; last source gets the remainder
+            for i, name in enumerate(names):
+                if i < len(names) - 1:
+                    v = int(round(clipped[name] * scale))
+                    v = min(v, clipped[name])
+                    final_targets[name] = v
+                    running_sum += v
+                else:
+                    # last source: ensure exact total
+                    v = total_tokens_target - running_sum
+                    v = min(v, clipped[name])
+                    final_targets[name] = v
+                    running_sum += v
+
+            print(f"[INFO] Final target token sum: {running_sum:,}")
+        
+        # No repeating
+        repeat_counts = {name: 1 for name in names}
 
     print("\nFinal per-source targets:")
     for name in names:
+        repeat_info = f", repeat={repeat_counts[name]}x" if repeat_counts[name] > 1 else ""
         print(
             f"  - {name}: target={final_targets[name]:,} / available={token_counts[name]:,} "
-            f"(weight ~{weights[name]:.4f})"
+            f"(weight ~{weights[name]:.4f}{repeat_info})"
         )
 
-    return final_targets
+    return final_targets, repeat_counts
 
 
 def pass2_write_shards(
@@ -375,6 +428,7 @@ def pass2_write_shards(
     filter_lines: bool,
     split_tsv: bool,
     targets: Dict[str, int],
+    repeat_counts: Dict[str, int],
     out_dir: str,
     tokens_per_shard: int,
     val_fraction: float,
@@ -382,6 +436,8 @@ def pass2_write_shards(
     """
     Second pass: take up to target tokens per source, write into .bin shards,
     then split shards into train/val.
+    
+    Supports repeating sources multiple times if repeat_counts[name] > 1.
     """
     print("\n" + "=" * 70)
     print("PASS 2: Sampling tokens and writing shards")
@@ -398,6 +454,39 @@ def pass2_write_shards(
     total_tokens_written = 0
     all_shard_paths: List[str] = []
 
+    def flush_shard():
+        """Write current shard buffer to disk."""
+        nonlocal shard_tokens, shard_idx, total_tokens_written
+        if not shard_tokens:
+            return
+        arr = np.array(shard_tokens, dtype=np.uint32)
+        shard_path = os.path.join(out_dir, f"shard_{shard_idx:05d}.bin")
+        arr.tofile(shard_path)
+        all_shard_paths.append(shard_path)
+
+        total_tokens_written += len(shard_tokens)
+        size_mb = arr.nbytes / (1024 ** 2)
+        print(
+            f"[SHARD] {shard_idx:05d}: {len(shard_tokens):,} tokens "
+            f"({size_mb:.1f} MB) | Total written: {total_tokens_written:,}"
+        )
+
+        shard_tokens = []
+        shard_idx += 1
+
+    def add_tokens(ids: List[int]):
+        """Add tokens to the current shard, flushing when full."""
+        nonlocal shard_tokens
+        pos = 0
+        while pos < len(ids):
+            space_left = tokens_per_shard - len(shard_tokens)
+            take = min(space_left, len(ids) - pos)
+            shard_tokens.extend(ids[pos : pos + take])
+            pos += take
+
+            if len(shard_tokens) >= tokens_per_shard:
+                flush_shard()
+
     # We'll process sources in a fixed order; for more mixing you can shuffle source order
     for name, source in sources.items():
         remaining = targets.get(name, 0)
@@ -405,57 +494,43 @@ def pass2_write_shards(
             print(f"[PASS2] Skipping source '{name}' (target 0 tokens).")
             continue
 
-        print(f"[PASS2] Processing source '{name}' with target {remaining:,} tokens...")
+        max_repeats = repeat_counts.get(name, 1)
+        repeat_info = f" (max {max_repeats}x repeats)" if max_repeats > 1 else ""
+        print(f"[PASS2] Processing source '{name}' with target {remaining:,} tokens{repeat_info}...")
 
-        for line in stream_lines_for_source(
-            source,
-            normalize_text=normalize_text,
-            filter_lines=filter_lines,
-            split_tsv=split_tsv,
-        ):
-            if remaining <= 0:
-                break
+        current_repeat = 0
+        while remaining > 0 and current_repeat < max_repeats:
+            current_repeat += 1
+            if max_repeats > 1:
+                print(f"[PASS2] '{name}' - repeat cycle {current_repeat}/{max_repeats}...")
+            
+            for line in stream_lines_for_source(
+                source,
+                normalize_text=normalize_text,
+                filter_lines=filter_lines,
+                split_tsv=split_tsv,
+            ):
+                if remaining <= 0:
+                    break
 
-            ids = tokenizer.encode(line + "\n")
-            if len(ids) <= remaining:
-                to_take = ids
-            else:
-                to_take = ids[:remaining]
+                ids = tokenizer.encode(line + "\n")
+                if len(ids) <= remaining:
+                    to_take = ids
+                else:
+                    to_take = ids[:remaining]
 
-            remaining -= len(to_take)
+                remaining -= len(to_take)
+                add_tokens(to_take)
 
-            # fill shards
-            pos = 0
-            while pos < len(to_take):
-                space_left = tokens_per_shard - len(shard_tokens)
-                take = min(space_left, len(to_take) - pos)
-                shard_tokens.extend(to_take[pos : pos + take])
-                pos += take
-
-                if len(shard_tokens) >= tokens_per_shard:
-                    arr = np.array(shard_tokens, dtype=np.uint32)
-                    shard_path = os.path.join(out_dir, f"shard_{shard_idx:05d}.bin")
-                    arr.tofile(shard_path)
-                    all_shard_paths.append(shard_path)
-
-                    total_tokens_written += len(shard_tokens)
-                    size_mb = arr.nbytes / (1024 ** 2)
-                    print(
-                        f"[SHARD] {shard_idx:05d}: {len(shard_tokens):,} tokens "
-                        f"({size_mb:.1f} MB) | Total written: {total_tokens_written:,}"
-                    )
-
-                    shard_tokens = []
-                    shard_idx += 1
-
-            if remaining <= 0:
-                print(f"[PASS2] Reached target for '{name}'.")
-                break
+                if remaining <= 0:
+                    print(f"[PASS2] Reached target for '{name}' after {current_repeat} cycle(s).")
+                    break
 
         if remaining > 0:
             print(
                 f"[WARN] Source '{name}' ended with {remaining:,} tokens still "
-                f"desired. You may not have enough data or strong filtering removed many lines."
+                f"desired after {current_repeat} cycle(s). "
+                f"You may not have enough data or strong filtering removed many lines."
             )
 
     # flush final shard
@@ -505,6 +580,7 @@ def pass2_write_shards(
         "val_fraction": val_fraction,
         "sources": {name: [f for f in src.files] for name, src in sources.items()},
         "targets": targets,
+        "repeat_counts": repeat_counts,
     }
     meta_path = os.path.join(out_dir, "dataset_metadata.json")
     with open(meta_path, "w", encoding="utf-8") as f:
@@ -585,6 +661,17 @@ def main():
         action="store_true",
         help="If set, split TSV lines (with '\\t') into separate segments.",
     )
+    parser.add_argument(
+        "--repeat",
+        action="store_true",
+        help="Repeat small sources to meet their weight targets (upscaling).",
+    )
+    parser.add_argument(
+        "--max_repeat",
+        type=int,
+        default=100,
+        help="Maximum times a source can be repeated (default: 100, prevents infinite loops).",
+    )
 
     args = parser.parse_args()
 
@@ -607,6 +694,7 @@ def main():
     print(f"Normalize text: {normalize_text}")
     print(f"Filter lines: {filter_lines}")
     print(f"Split TSV lines: {args.split_tsv}")
+    print(f"Repeat small sources: {args.repeat}" + (f" (max {args.max_repeat}x)" if args.repeat else ""))
     print(f"Output directory: {args.out_dir}")
     print("=" * 70)
 
@@ -630,11 +718,19 @@ def main():
     )
 
     # Compute targets per source
-    targets = compute_target_tokens(
+    targets, repeat_counts = compute_target_tokens(
         token_counts=token_counts,
         weights=weights,
         total_tokens_target=args.total_tokens,
+        allow_repeat=args.repeat,
     )
+    
+    # Cap repeat counts by max_repeat
+    if args.repeat:
+        for name in repeat_counts:
+            if repeat_counts[name] > args.max_repeat:
+                print(f"[WARN] Capping {name} repeats from {repeat_counts[name]} to {args.max_repeat}")
+                repeat_counts[name] = args.max_repeat
 
     # Pass 2: write shards
     pass2_write_shards(
@@ -645,6 +741,7 @@ def main():
         filter_lines=filter_lines,
         split_tsv=args.split_tsv,
         targets=targets,
+        repeat_counts=repeat_counts,
         out_dir=args.out_dir,
         tokens_per_shard=args.tokens_per_shard,
         val_fraction=args.val_fraction,

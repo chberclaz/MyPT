@@ -78,6 +78,49 @@ async function initChatPage() {
     
     // Render initial state
     renderChatUI();
+    
+    // Update system status in header
+    updateSystemStatus();
+}
+
+function updateSystemStatus() {
+    console.log('[DEBUG] updateSystemStatus() called');
+    
+    const statusDot = $('#system-status-dot');
+    const statusText = $('#system-status-text');
+    const statusBadge = $('#system-status-badge');
+    
+    console.log('[DEBUG] Header elements found:', {
+        statusDot: !!statusDot,
+        statusText: !!statusText,
+        statusBadge: !!statusBadge
+    });
+    
+    const hasModels = AppState.chat.models.length > 0;
+    const hasIndex = (AppState.chat.indexStatus.chunks || 0) > 0;
+    
+    console.log('[DEBUG] Status check:', { hasModels, hasIndex, models: AppState.chat.models.length, chunks: AppState.chat.indexStatus.chunks });
+    
+    if (statusText && statusDot) {
+        if (hasModels && hasIndex) {
+            console.log('[DEBUG] Setting status to Ready');
+            statusText.textContent = 'Ready';
+            statusDot.classList.add('active');
+            if (statusBadge) statusBadge.setAttribute('data-tooltip', 'Models loaded, index ready');
+        } else if (hasModels) {
+            console.log('[DEBUG] Setting status to No Index');
+            statusText.textContent = 'No Index';
+            statusDot.classList.add('warning');
+            if (statusBadge) statusBadge.setAttribute('data-tooltip', 'Models loaded, no index');
+        } else {
+            console.log('[DEBUG] Setting status to No Models');
+            statusText.textContent = 'No Models';
+            statusDot.classList.remove('active', 'warning');
+            if (statusBadge) statusBadge.setAttribute('data-tooltip', 'No models available');
+        }
+    } else {
+        console.log('[DEBUG] Header status elements NOT FOUND!');
+    }
 }
 
 async function loadModels() {
@@ -95,14 +138,20 @@ async function loadModels() {
 }
 
 async function loadWorkspaceInfo() {
+    console.log('[DEBUG] loadWorkspaceInfo() called');
     try {
         const response = await fetch('/api/workspace/info');
         const data = await response.json();
+        console.log('[DEBUG] Workspace API response:', data);
+        
         AppState.chat.documents = data.documents || [];
         AppState.chat.indexStatus = {
             chunks: data.num_chunks || 0,
+            hasIndex: data.has_index || false,
             lastUpdated: data.last_updated
         };
+        console.log('[DEBUG] AppState.chat.indexStatus:', AppState.chat.indexStatus);
+        
         renderWorkspaceInfo();
     } catch (error) {
         console.error('Failed to load workspace info:', error);
@@ -250,6 +299,7 @@ async function rebuildIndex() {
         
         if (data.success) {
             await loadWorkspaceInfo();
+            updateSystemStatus();  // Update header status
             AppState.chat.messages.push({
                 role: 'system',
                 content: `Index rebuilt: ${data.num_chunks} chunks indexed`,
@@ -298,33 +348,91 @@ function renderModelSelector() {
 }
 
 function renderWorkspaceInfo() {
+    console.log('[DEBUG] renderWorkspaceInfo() called');
+    
     const docsCount = $('#docs-count');
     const chunksCount = $('#chunks-count');
     const docsList = $('#documents-list');
+    const statusText = $('#index-status-text');
+    const statusDot = $('#status-dot');
+    const toggleBtn = $('#toggle-files-btn');
     
+    console.log('[DEBUG] Elements found:', {
+        docsCount: !!docsCount,
+        chunksCount: !!chunksCount,
+        statusText: !!statusText,
+        statusDot: !!statusDot
+    });
+    
+    const numDocs = AppState.chat.documents.length;
+    const numChunks = AppState.chat.indexStatus.chunks || 0;
+    const hasIndex = numChunks > 0;
+    
+    console.log('[DEBUG] Values:', { numDocs, numChunks, hasIndex });
+    
+    // Update status display
     if (docsCount) {
-        docsCount.textContent = `${AppState.chat.documents.length} docs`;
+        docsCount.textContent = numDocs.toString();
     }
     
     if (chunksCount) {
-        chunksCount.textContent = `${AppState.chat.indexStatus.chunks} chunks`;
+        chunksCount.textContent = numChunks.toString();
     }
     
+    // Update status indicator
+    if (statusText) {
+        if (hasIndex) {
+            statusText.textContent = 'Ready';
+        } else if (numDocs > 0) {
+            statusText.textContent = 'Not indexed';
+        } else {
+            statusText.textContent = 'Empty';
+        }
+    }
+    
+    if (statusDot) {
+        statusDot.classList.remove('active', 'warning', 'error');
+        if (hasIndex) {
+            statusDot.classList.add('active');
+        } else if (numDocs > 0) {
+            statusDot.classList.add('warning');
+        }
+    }
+    
+    // Setup toggle button for file list
+    if (toggleBtn && !toggleBtn._hasListener) {
+        toggleBtn._hasListener = true;
+        toggleBtn.addEventListener('click', () => {
+            const list = $('#documents-list');
+            const isExpanded = list.classList.contains('expanded');
+            
+            if (isExpanded) {
+                list.classList.remove('expanded');
+                list.classList.add('collapsed');
+                toggleBtn.classList.remove('expanded');
+            } else {
+                list.classList.remove('collapsed');
+                list.classList.add('expanded');
+                toggleBtn.classList.add('expanded');
+            }
+        });
+    }
+    
+    // Update file list (informational, not clickable)
     if (docsList) {
-        if (AppState.chat.documents.length === 0) {
+        if (numDocs === 0) {
             docsList.innerHTML = `
-                <div class="text-muted text-sm" style="padding: 0.5rem;">
-                    No documents indexed.<br>
-                    Add files to workspace/docs/
+                <div class="text-muted text-sm">
+                    No files in workspace/docs/
                 </div>`;
         } else {
             docsList.innerHTML = AppState.chat.documents.map(doc => `
-                <div class="file-tree-item file">
+                <div class="file-item">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                         <path d="M14 2v6h6"/>
                     </svg>
-                    <span>${escapeHtml(doc.title)}</span>
+                    <span class="file-name">${escapeHtml(doc.title || doc.path || 'Unknown')}</span>
                 </div>
             `).join('');
         }
