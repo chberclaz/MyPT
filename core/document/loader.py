@@ -2,18 +2,56 @@
 Document loader for various file formats.
 
 Supports:
-- Plain text (.txt)
-- Markdown (.md)
-- Future: PDF, DOCX, etc.
+- Plain text (.txt, .text)
+- Markdown (.md, .markdown)
+- PDF (.pdf) - requires PyMuPDF: pip install PyMuPDF
+- Word (.docx) - requires python-docx: pip install python-docx
 
 Extensible via DocumentLoader.register_handler() for custom formats.
 """
 
 import os
+import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Callable, Optional, Iterator
 from datetime import datetime
+
+logger = logging.getLogger("mypt.document")
+
+# =============================================================================
+# Optional dependency checks
+# =============================================================================
+
+# PyMuPDF for PDF support
+PYMUPDF_AVAILABLE = False
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    fitz = None
+
+# python-docx for DOCX support
+DOCX_AVAILABLE = False
+try:
+    from docx import Document as DocxDocument
+    from docx.opc.exceptions import PackageNotFoundError
+    DOCX_AVAILABLE = True
+except ImportError:
+    DocxDocument = None
+    PackageNotFoundError = Exception
+
+
+def get_supported_formats() -> Dict[str, bool]:
+    """Return dict of formats and their availability."""
+    return {
+        '.txt': True,
+        '.text': True,
+        '.md': True,
+        '.markdown': True,
+        '.pdf': PYMUPDF_AVAILABLE,
+        '.docx': DOCX_AVAILABLE,
+    }
 
 
 @dataclass
@@ -51,15 +89,25 @@ class DocumentLoader:
     """
     Load documents from files with format-specific handling.
     
+    Supported formats:
+        - .txt, .text: Plain text files
+        - .md, .markdown: Markdown files
+        - .pdf: PDF files (requires PyMuPDF)
+        - .docx: Word documents (requires python-docx)
+    
     Usage:
         loader = DocumentLoader()
         docs = loader.load_directory("workspace/docs")
         
         for doc in docs:
             print(f"{doc.filename}: {doc.num_chars} chars")
+    
+    Check available formats:
+        from core.document.loader import get_supported_formats
+        print(get_supported_formats())
     """
     
-    # Default supported extensions
+    # Default supported extensions (text-based, always available)
     SUPPORTED_EXTENSIONS = {'.txt', '.md', '.text', '.markdown'}
     
     def __init__(self):
@@ -69,6 +117,18 @@ class DocumentLoader:
             '.md': self._load_markdown,
             '.markdown': self._load_markdown,
         }
+        
+        # Register PDF handler if PyMuPDF is available
+        if PYMUPDF_AVAILABLE:
+            self._handlers['.pdf'] = self._load_pdf
+            self.SUPPORTED_EXTENSIONS = self.SUPPORTED_EXTENSIONS | {'.pdf'}
+            logger.debug("PDF support enabled (PyMuPDF)")
+        
+        # Register DOCX handler if python-docx is available
+        if DOCX_AVAILABLE:
+            self._handlers['.docx'] = self._load_docx
+            self.SUPPORTED_EXTENSIONS = self.SUPPORTED_EXTENSIONS | {'.docx'}
+            logger.debug("DOCX support enabled (python-docx)")
     
     def register_handler(self, extension: str, handler: FormatHandler) -> None:
         """
@@ -89,6 +149,89 @@ class DocumentLoader:
         """Load markdown file (currently same as text, could strip formatting)."""
         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
             return f.read()
+    
+    def _load_pdf(self, filepath: str) -> str:
+        """
+        Load PDF file using PyMuPDF.
+        
+        Extracts text from all pages, preserving paragraph structure.
+        Handles multi-column layouts and embedded fonts.
+        """
+        if not PYMUPDF_AVAILABLE:
+            raise ImportError("PyMuPDF not installed. Install with: pip install PyMuPDF")
+        
+        try:
+            doc = fitz.open(filepath)
+            text_parts = []
+            
+            for page_num, page in enumerate(doc, 1):
+                # Extract text with layout preservation
+                page_text = page.get_text("text")
+                if page_text.strip():
+                    text_parts.append(page_text)
+            
+            doc.close()
+            
+            # Join pages with double newline
+            full_text = "\n\n".join(text_parts)
+            
+            # Clean up excessive whitespace while preserving paragraphs
+            lines = []
+            for line in full_text.split('\n'):
+                stripped = line.strip()
+                if stripped:
+                    lines.append(stripped)
+                elif lines and lines[-1] != '':
+                    lines.append('')  # Preserve paragraph breaks
+            
+            return '\n'.join(lines)
+            
+        except Exception as e:
+            logger.error(f"Failed to load PDF {filepath}: {e}")
+            raise
+    
+    def _load_docx(self, filepath: str) -> str:
+        """
+        Load DOCX file using python-docx.
+        
+        Extracts text from paragraphs and tables.
+        Preserves document structure with paragraph breaks.
+        """
+        if not DOCX_AVAILABLE:
+            raise ImportError("python-docx not installed. Install with: pip install python-docx")
+        
+        try:
+            doc = DocxDocument(filepath)
+            text_parts = []
+            
+            # Extract paragraphs
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    text_parts.append(text)
+            
+            # Extract tables
+            for table in doc.tables:
+                table_text = []
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        cell_text = cell.text.strip()
+                        if cell_text:
+                            row_text.append(cell_text)
+                    if row_text:
+                        table_text.append(" | ".join(row_text))
+                if table_text:
+                    text_parts.append("\n".join(table_text))
+            
+            return "\n\n".join(text_parts)
+            
+        except PackageNotFoundError:
+            logger.error(f"Invalid or corrupted DOCX file: {filepath}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to load DOCX {filepath}: {e}")
+            raise
     
     def _get_file_metadata(self, filepath: str) -> Dict:
         """Extract file metadata."""

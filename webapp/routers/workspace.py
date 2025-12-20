@@ -10,7 +10,7 @@ Endpoints:
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
@@ -20,9 +20,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from webapp.logging_config import DebugLogger, is_debug_mode
 from webapp.auth import require_user, require_admin, User
+from core.document.loader import get_supported_formats
 
 router = APIRouter()
 log = DebugLogger("workspace")
+
+
+def get_supported_extensions() -> Set[str]:
+    """Get set of supported file extensions based on available libraries."""
+    return {ext for ext, available in get_supported_formats().items() if available}
 
 
 class RebuildIndexRequest(BaseModel):
@@ -55,11 +61,12 @@ async def get_workspace_info(user: User = Depends(require_user)):
     
     log.workspace("scan", workspace=str(workspace_dir))
     
-    # Count documents
+    # Count documents - use dynamic extension list based on available libraries
+    supported_exts = get_supported_extensions()
     documents = []
     if docs_dir.exists():
         for f in docs_dir.glob("**/*"):
-            if f.is_file() and f.suffix in (".txt", ".md", ".rst"):
+            if f.is_file() and f.suffix.lower() in supported_exts:
                 documents.append({
                     "doc_id": str(hash(str(f)))[-8:],
                     "title": f.stem,
@@ -272,10 +279,11 @@ async def list_documents(user: User = Depends(require_user)):
     log.request("GET", "/documents", user=user.username)
     docs_dir = get_docs_dir()
     
+    supported_exts = get_supported_extensions()
     documents = []
     if docs_dir.exists():
         for f in docs_dir.glob("**/*"):
-            if f.is_file() and f.suffix in (".txt", ".md", ".rst"):
+            if f.is_file() and f.suffix.lower() in supported_exts:
                 documents.append({
                     "doc_id": str(hash(str(f)))[-8:],
                     "title": f.stem,
