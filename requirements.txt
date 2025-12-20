@@ -103,6 +103,23 @@ typing_extensions>=4.0.0
 annotated-types>=0.4.0
 
 # =============================================================================
+# DOCUMENT FORMAT SUPPORT (Recommended for workspace/RAG functionality)
+# =============================================================================
+
+# PyMuPDF - PDF text extraction (highly recommended)
+# Cross-platform: Windows, Linux, macOS
+# pip install PyMuPDF
+PyMuPDF>=1.23.0
+
+# python-docx - Word document text extraction
+# Pure Python, no system dependencies
+# pip install python-docx
+python-docx>=1.1.0
+
+# lxml - XML processing (python-docx dependency)
+lxml>=4.9.0
+
+# =============================================================================
 # OPTIONAL: Performance Enhancement
 # =============================================================================
 
