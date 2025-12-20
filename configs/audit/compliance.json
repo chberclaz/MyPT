@@ -1,0 +1,44 @@
+{
+  "$schema": "https://myPT.local/schemas/compliance.json",
+  "description": "MyPT Audit & Compliance Configuration",
+  "version": "1.0",
+  
+  "audit": {
+    "enabled": true,
+    "directory": "logs/audit",
+    "retention_days": 365,
+    "categories": {
+      "AUTH": {
+        "enabled": true,
+        "description": "Authentication events: login, logout, failed login, password changes"
+      },
+      "CHAT": {
+        "enabled": true,
+        "description": "Chat/inference events: user prompts, model responses, generation params"
+      },
+      "RAG": {
+        "enabled": true,
+        "description": "RAG pipeline events: queries, retrieval, context selection"
+      },
+      "AGENT": {
+        "enabled": true,
+        "description": "Agent events: tool calls, tool results, reasoning steps"
+      },
+      "TRAINING": {
+        "enabled": true,
+        "description": "Training events: start, checkpoint, evaluation, completion"
+      },
+      "ADMIN": {
+        "enabled": true,
+        "description": "Admin events: user management, config changes, system actions"
+      }
+    }
+  },
+  
+  "logging": {
+    "enabled": true,
+    "directory": "logs/app",
+    "retention_days": 30
+  }
+}
+

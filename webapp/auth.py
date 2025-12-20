@@ -29,6 +29,13 @@ from dataclasses import dataclass, asdict
 from fastapi import Request, HTTPException, status, Depends
 from fastapi.responses import RedirectResponse
 
+# Import audit logging
+try:
+    from core.compliance import audit
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+
 # Use passlib for secure password hashing
 try:
     from passlib.context import CryptContext
@@ -200,17 +207,31 @@ def get_user(username: str) -> Optional[UserInDB]:
     return None
 
 
-def authenticate_user(username: str, password: str) -> Optional[User]:
+def authenticate_user(username: str, password: str, ip: str = None) -> Optional[User]:
     """Authenticate a user with username and password."""
     user = get_user(username)
     if not user:
+        # Audit: failed login (unknown user)
+        if AUDIT_AVAILABLE:
+            audit.auth("failed_login", user=username, ip=ip or "unknown",
+                      status="failed", details="User not found")
         return None
     if not pwd_context.verify(password, user.hashed_password):
+        # Audit: failed login (wrong password)
+        if AUDIT_AVAILABLE:
+            audit.auth("failed_login", user=username, ip=ip or "unknown",
+                      status="failed", details="Invalid password")
         return None
+    
+    # Audit: successful login
+    if AUDIT_AVAILABLE:
+        audit.auth("login", user=user.username, ip=ip or "unknown",
+                  role=user.role, status="success", details="Login successful")
+    
     return User(username=user.username, role=user.role)
 
 
-def create_user(username: str, password: str, role: str = "user") -> bool:
+def create_user(username: str, password: str, role: str = "user", created_by: str = None) -> bool:
     """Create a new user."""
     users = load_users()
     if username in users:
@@ -221,10 +242,17 @@ def create_user(username: str, password: str, role: str = "user") -> bool:
         "role": role
     }
     save_users(users)
+    
+    # Audit: user created
+    if AUDIT_AVAILABLE:
+        audit.admin("user_create", user=created_by or "system",
+                   target_user=username, target_role=role,
+                   details=f"Created user '{username}' with role '{role}'")
+    
     return True
 
 
-def change_password(username: str, new_password: str) -> bool:
+def change_password(username: str, new_password: str, changed_by: str = None) -> bool:
     """Change a user's password."""
     users = load_users()
     if username not in users:
@@ -232,6 +260,13 @@ def change_password(username: str, new_password: str) -> bool:
     
     users[username]["hashed_password"] = pwd_context.hash(new_password)
     save_users(users)
+    
+    # Audit: password changed
+    if AUDIT_AVAILABLE:
+        audit.auth("password_change", user=changed_by or username,
+                  target_user=username, status="success",
+                  details=f"Password changed for user '{username}'")
+    
     return True
 
 
@@ -300,9 +335,33 @@ def create_login_response(user: User, redirect_url: str = "/") -> RedirectRespon
     return response
 
 
-def create_logout_response(redirect_url: str = "/login") -> RedirectResponse:
+def create_logout_response(redirect_url: str = "/login", user: User = None, ip: str = None) -> RedirectResponse:
     """Create a response that logs out the user."""
+    # Audit: logout
+    if AUDIT_AVAILABLE and user:
+        audit.auth("logout", user=user.username, ip=ip or "unknown",
+                  status="success", details="User logged out")
+    
     response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
     response.delete_cookie(key=COOKIE_NAME)
     return response
+
+
+def delete_user(username: str, deleted_by: str = None) -> bool:
+    """Delete a user."""
+    users = load_users()
+    if username not in users:
+        return False
+    
+    role = users[username].get('role', 'user')
+    del users[username]
+    save_users(users)
+    
+    # Audit: user deleted
+    if AUDIT_AVAILABLE:
+        audit.admin("user_delete", user=deleted_by or "system",
+                   target_user=username, target_role=role,
+                   details=f"Deleted user '{username}'")
+    
+    return True
 

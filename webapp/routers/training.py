@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, Request
 from pydantic import BaseModel
 
 # Add project root to path
@@ -26,6 +26,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from webapp.logging_config import DebugLogger
 from webapp.auth import require_admin, User
 
+# Import audit logging
+try:
+    from core.compliance import audit
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+
 router = APIRouter()
 log = DebugLogger("training")
 
@@ -33,6 +40,7 @@ log = DebugLogger("training")
 _training_state = {
     "is_training": False,
     "should_stop": False,
+    "started_by": None,  # User who started training
     "progress": {
         "step": 0,
         "maxSteps": 0,
@@ -148,6 +156,15 @@ def run_training_thread(request: TrainingRequest):
         with _state_lock:
             _training_state["is_training"] = True
             _training_state["should_stop"] = False
+            started_by = _training_state.get("started_by", "unknown")
+        
+        # Audit: Training started
+        if AUDIT_AVAILABLE:
+            audit.training("start", user=started_by, 
+                          mode=request.mode, model_size=request.modelSize,
+                          output_name=request.outputName, max_iters=request.maxIters,
+                          dataset=request.datasetDir or "default",
+                          details=f"Training started: {request.mode} mode, {request.modelSize} model")
         
         add_log("info", f"Loading configuration for {request.mode}...")
         
@@ -378,15 +395,43 @@ def run_training_thread(request: TrainingRequest):
                             "learning_rate": learning_rate
                         }
                     )
+                    # Audit: Checkpoint saved
+                    if AUDIT_AVAILABLE:
+                        audit.training("checkpoint", user=started_by,
+                                      step=step, train_loss=train_loss, val_loss=val_loss,
+                                      output_name=request.outputName,
+                                      details=f"Checkpoint saved at step {step}")
                 except Exception as e:
                     add_log("warning", f"Checkpoint save failed: {e}")
         
         # Training complete
         add_log("success", f"Training complete! Model saved to: {checkpoint_dir}")
+        
+        # Audit: Training completed
+        if AUDIT_AVAILABLE:
+            final_step = _training_state["progress"]["step"]
+            final_train_loss = _training_state["progress"]["trainLoss"]
+            final_val_loss = _training_state["progress"]["valLoss"]
+            audit.training("complete", user=started_by,
+                          mode=request.mode, output_name=request.outputName,
+                          final_step=final_step, train_loss=final_train_loss, val_loss=final_val_loss,
+                          details=f"Training completed successfully: {request.outputName}")
+        
         queue_completion(True)
         
     except Exception as e:
         add_log("error", f"Training error: {str(e)}")
+        
+        # Audit: Training failed
+        if AUDIT_AVAILABLE:
+            with _state_lock:
+                started_by = _training_state.get("started_by", "unknown")
+            audit.training("error", user=started_by,
+                          mode=request.mode, output_name=request.outputName,
+                          error=str(e)[:200],
+                          level=audit.AuditLevel.ERROR,
+                          details=f"Training failed: {str(e)[:200]}")
+        
         queue_completion(False, str(e))
     finally:
         with _state_lock:
@@ -405,7 +450,7 @@ async def get_status(user: User = Depends(require_admin)):
 
 
 @router.post("/start")
-async def start_training(request: TrainingRequest, user: User = Depends(require_admin)):
+async def start_training(train_request: TrainingRequest, user: User = Depends(require_admin)):
     """Start training - admin only."""
     log.info(f"Training started by {user.username}")
     with _state_lock:
@@ -415,20 +460,21 @@ async def start_training(request: TrainingRequest, user: User = Depends(require_
         # Reset state
         _training_state["logs"] = []
         _training_state["pending_messages"] = []
+        _training_state["started_by"] = user.username
         _training_state["progress"] = {
             "step": 0,
-            "maxSteps": request.maxIters,
+            "maxSteps": train_request.maxIters,
             "trainLoss": None,
             "valLoss": None,
             "eta": None
         }
     
     # Validate
-    if not request.outputName:
+    if not train_request.outputName:
         raise HTTPException(status_code=400, detail="Output model name is required")
     
     # Start training in background thread
-    thread = threading.Thread(target=run_training_thread, args=(request,), daemon=True)
+    thread = threading.Thread(target=run_training_thread, args=(train_request,), daemon=True)
     thread.start()
     
     return {"success": True, "message": "Training started"}
@@ -438,8 +484,17 @@ async def start_training(request: TrainingRequest, user: User = Depends(require_
 async def stop_training(user: User = Depends(require_admin)):
     """Stop training - admin only."""
     log.info(f"Training stopped by {user.username}")
+    
     with _state_lock:
         _training_state["should_stop"] = True
+        current_step = _training_state["progress"]["step"]
+    
+    # Audit: Training stopped
+    if AUDIT_AVAILABLE:
+        audit.training("stop", user=user.username,
+                      step=current_step,
+                      details=f"Training stopped by user at step {current_step}")
+    
     return {"success": True, "message": "Stop signal sent"}
 
 

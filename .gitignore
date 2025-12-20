@@ -67,6 +67,9 @@ dmypy.json
 
 # Logs
 *.log
+logs/
+logs/audit/
+logs/app/
 
 # Temporary files
 *.tmp

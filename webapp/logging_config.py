@@ -1,12 +1,14 @@
 """
 MyPT Web Application - Logging Configuration
 
-Provides centralized logging with debug mode support.
+Provides centralized logging with debug mode support and daily log file rotation.
 """
 
 import logging
 import sys
-from datetime import datetime
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 # ANSI color codes for terminal output
@@ -55,6 +57,92 @@ class ColoredFormatter(logging.Formatter):
         return f"{Colors.DIM}{time_str}{Colors.RESET} {color}{symbol} {level}{Colors.RESET} [{Colors.BLUE}{module}{Colors.RESET}] {msg}"
 
 
+class PlainFormatter(logging.Formatter):
+    """Plain text formatter for file logging (no ANSI colors)."""
+    
+    def format(self, record):
+        # ISO timestamp with milliseconds
+        now = datetime.now(timezone.utc)
+        time_str = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+        
+        # Module name (shortened)
+        module = record.name.split(".")[-1][:12].ljust(12)
+        
+        # Level name
+        level = record.levelname[:5].ljust(5)
+        
+        # Format message
+        msg = record.getMessage()
+        
+        return f"{time_str} | {level} | {module} | {msg}"
+
+
+class DailyRotatingFileHandler(logging.Handler):
+    """
+    File handler that rotates daily, creating a new file for each day.
+    
+    Files are named: app_YYYY-MM-DD.log
+    """
+    
+    def __init__(self, log_dir: str = "logs/app", prefix: str = "app_"):
+        super().__init__()
+        self.log_dir = Path(log_dir)
+        self.prefix = prefix
+        self._current_date: Optional[str] = None
+        self._file_handle = None
+        
+        # Resolve relative paths
+        if not self.log_dir.is_absolute():
+            # Get project root (webapp/logging_config.py -> project root)
+            project_root = Path(__file__).parent.parent
+            self.log_dir = project_root / self.log_dir
+    
+    def _get_log_file(self) -> Path:
+        """Get today's log file path."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return self.log_dir / f"{self.prefix}{today}.log"
+    
+    def _ensure_file_open(self) -> None:
+        """Ensure the log file is open and current."""
+        current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        # Check if we need to rotate
+        if current_date != self._current_date or self._file_handle is None:
+            # Close old file
+            if self._file_handle:
+                try:
+                    self._file_handle.close()
+                except Exception:
+                    pass
+            
+            # Ensure directory exists
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Open new file
+            self._current_date = current_date
+            self._file_handle = open(self._get_log_file(), 'a', encoding='utf-8')
+    
+    def emit(self, record):
+        """Write log record to file."""
+        try:
+            self._ensure_file_open()
+            msg = self.format(record)
+            self._file_handle.write(msg + "\n")
+            self._file_handle.flush()
+        except Exception:
+            self.handleError(record)
+    
+    def close(self):
+        """Close the file handler."""
+        if self._file_handle:
+            try:
+                self._file_handle.close()
+            except Exception:
+                pass
+            self._file_handle = None
+        super().close()
+
+
 # Global debug flag
 _debug_mode = False
 
@@ -76,8 +164,15 @@ def is_debug_mode() -> bool:
     return _debug_mode
 
 
-def setup_logging(debug: bool = False):
-    """Setup logging configuration for the webapp."""
+def setup_logging(debug: bool = False, log_to_file: bool = True, log_dir: str = "logs/app"):
+    """
+    Setup logging configuration for the webapp.
+    
+    Args:
+        debug: Enable debug mode (more verbose output)
+        log_to_file: Write logs to daily rotating files
+        log_dir: Directory for log files (relative to project root)
+    """
     global _debug_mode
     _debug_mode = debug
     
@@ -93,6 +188,24 @@ def setup_logging(debug: bool = False):
     console_handler.setFormatter(ColoredFormatter())
     console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
     logger.addHandler(console_handler)
+    
+    # File handler with daily rotation (optional)
+    if log_to_file:
+        try:
+            # Load config for log directory
+            try:
+                from core.compliance.config import get_config
+                config = get_config()
+                log_dir = config.logging.directory
+            except ImportError:
+                pass  # Use default
+            
+            file_handler = DailyRotatingFileHandler(log_dir=log_dir, prefix="app_")
+            file_handler.setFormatter(PlainFormatter())
+            file_handler.setLevel(logging.DEBUG)  # Log everything to file
+            logger.addHandler(file_handler)
+        except Exception as e:
+            print(f"[LOGGING WARNING] Failed to setup file logging: {e}")
     
     # Prevent propagation to root logger
     logger.propagate = False

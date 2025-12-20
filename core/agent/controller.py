@@ -36,6 +36,13 @@ from .parsing import (
     TOOLCALL_CLOSE,
 )
 
+# Import audit logging (optional)
+try:
+    from core.compliance import audit
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+
 
 # Get tokens from special_tokens.py
 SYSTEM_OPEN = SPECIAL_TOKEN_STRINGS["myPT_system_open"]
@@ -435,10 +442,28 @@ class AgentController:
                     # Execute tool
                     try:
                         result = self.tools.execute(toolcall.name, toolcall.arguments)
+                        
+                        # Audit: Tool call success
+                        if AUDIT_AVAILABLE:
+                            audit.agent("tool_execute",
+                                       tool=toolcall.name,
+                                       status="success",
+                                       step=step + 1,
+                                       details=json.dumps(toolcall.arguments)[:150])
                     except Exception as e:
                         result = {"error": str(e)}
                         if verbose:
                             print(f"    [TOOL ERROR] {e}")
+                        
+                        # Audit: Tool call failed
+                        if AUDIT_AVAILABLE:
+                            audit.agent("tool_error",
+                                       tool=toolcall.name,
+                                       status="failed",
+                                       step=step + 1,
+                                       error=str(e)[:100],
+                                       level=audit.AuditLevel.ERROR,
+                                       details=f"Tool '{toolcall.name}' failed: {str(e)[:100]}")
                     
                     # Log full tool call and result
                     _debug_tool_call(toolcall.name, toolcall.arguments, result, verbose)
@@ -480,6 +505,14 @@ class AgentController:
                 _debug_end_section("FINAL ANSWER", True)
                 
                 print(f"\n  [Agent completed in {step + 1} step(s), {len(tool_calls)} tool call(s)]")
+            
+            # Audit: Agent loop completed
+            if AUDIT_AVAILABLE:
+                audit.agent("loop_complete",
+                           steps=step + 1,
+                           tool_calls=len(tool_calls),
+                           answer_length=len(generated),
+                           details=f"Agent completed in {step + 1} steps with {len(tool_calls)} tool calls")
             
             return {
                 "role": "assistant",
