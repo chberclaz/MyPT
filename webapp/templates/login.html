@@ -4,10 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Login - MyPT</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>"
-    />
+    <link rel="icon" href="/static/icon/mypt-cyclops-dark.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/css/styles.css" />
     <style>
       .login-container {
@@ -123,14 +120,15 @@
         font-size: 0.8rem;
       }
 
-      .robot-ascii {
-        font-family: monospace;
-        font-size: 0.7rem;
-        line-height: 1.2;
-        color: var(--nord8);
-        white-space: pre;
-        text-align: center;
+      .login-icon {
         margin-bottom: 1rem;
+        display: flex;
+        justify-content: center;
+      }
+
+      .login-icon img {
+        width: 80px;
+        height: 80px;
       }
     </style>
   </head>
@@ -138,7 +136,9 @@
     <div class="login-container">
       <div class="login-box">
         <div class="login-header">
-          <div class="robot-ascii">o o | | .-----. | (o) | | - | '-----'</div>
+          <div class="login-icon">
+            <img src="/static/icon/mypt-cyclops-dark.svg" alt="MyPT">
+          </div>
           <h1 class="login-title">MyPT</h1>
           <p class="login-subtitle">
             Offline GPT Training & Agentic RAG Pipeline
