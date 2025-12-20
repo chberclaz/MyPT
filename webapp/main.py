@@ -120,6 +120,16 @@ async def login_page(request: Request, next: str = "/", error: str = None):
     })
 
 
+def get_client_ip(request: Request) -> str:
+    """Extract client IP from request, handling proxies."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
 @app.post("/login")
 async def login_submit(
     request: Request,
@@ -128,7 +138,8 @@ async def login_submit(
     next: str = Form("/")
 ):
     """Handle login form submission."""
-    user = authenticate_user(username, password)
+    client_ip = get_client_ip(request)
+    user = authenticate_user(username, password, ip=client_ip)
     
     if not user:
         log.warning(f"Failed login attempt for user: {username}")
@@ -146,9 +157,10 @@ async def login_submit(
 async def logout(request: Request):
     """Log out the current user."""
     user = await get_current_user(request)
+    client_ip = get_client_ip(request)
     if user:
         log.info(f"User logged out: {user.username}")
-    return create_logout_response()
+    return create_logout_response(user=user, ip=client_ip)
 
 
 # ============================================================================

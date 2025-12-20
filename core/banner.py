@@ -108,7 +108,7 @@ def banner_generate():
 
 def banner_webapp():
     """Print webapp banner."""
-    print_banner("MyPT Web Application", "Offline GPT Training & RAG Pipeline")
+    print_banner("MyPT Web Application", "Offline GPT Training & Agentic RAG Pipeline")
 
 
 def banner_workspace():

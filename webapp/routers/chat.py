@@ -14,7 +14,7 @@ import time
 import json
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 
 # Add project root to path
@@ -23,6 +23,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from webapp.logging_config import DebugLogger, is_debug_mode
 from webapp.auth import require_user, User
+
+# Import audit logging
+try:
+    from core.compliance import audit
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
 
 router = APIRouter()
 log = DebugLogger("chat")
@@ -191,17 +198,44 @@ async def get_history(session_id: str = "default", user: User = Depends(require_
     return {"messages": history}
 
 
+def get_client_ip(request: Request) -> str:
+    """Extract client IP from request, handling proxies."""
+    # Check X-Forwarded-For header (for proxied requests)
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    # Fall back to direct client
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
 @router.post("/send")
-async def send_message(request: SendMessageRequest, session_id: str = "default", user: User = Depends(require_user)):
+async def send_message(
+    msg_request: SendMessageRequest, 
+    request: Request,
+    session_id: str = "default", 
+    user: User = Depends(require_user)
+):
     """Send a message and get a response - requires authentication."""
     log.section("NEW CHAT REQUEST")
-    log.request("POST", "/send", session=session_id, model=request.model, verbose=request.verbose)
+    log.request("POST", "/send", session=session_id, model=msg_request.model, verbose=msg_request.verbose)
+    
+    # Get client IP for audit
+    client_ip = get_client_ip(request)
+    
+    # Audit: User prompt received
+    if AUDIT_AVAILABLE:
+        audit.chat("prompt", user=user.username, ip=client_ip,
+                  session=session_id, model=msg_request.model or "auto",
+                  tokens_in=len(msg_request.message.split()),  # Rough word count
+                  details=msg_request.message[:200] + ("..." if len(msg_request.message) > 200 else ""))
     
     # Log the full user message
     if is_debug_mode():
         log.section("USER INPUT")
-        print(f"  Message: \"{request.message}\"")
-        print(f"  Length:  {len(request.message)} chars")
+        print(f"  Message: \"{msg_request.message}\"")
+        print(f"  Length:  {len(msg_request.message)} chars")
         log.section("END USER INPUT")
     
     start_time = time.time()
@@ -214,7 +248,7 @@ async def send_message(request: SendMessageRequest, session_id: str = "default",
     session = _chat_sessions[session_id]
     
     # Check if we have a model
-    if not request.model:
+    if not msg_request.model:
         available = list_available_models()
         if not available:
             log.warning("No models available")
@@ -223,17 +257,17 @@ async def send_message(request: SendMessageRequest, session_id: str = "default",
                 tool_calls=[],
                 steps=0
             )
-        request.model = available[0]
-        log.info(f"Auto-selected model: {request.model}")
+        msg_request.model = available[0]
+        log.info(f"Auto-selected model: {msg_request.model}")
     
     try:
         # Load model
-        model = get_or_load_model(request.model)
+        model = get_or_load_model(msg_request.model)
         
         # Log model info
         if is_debug_mode():
             log.section("MODEL INFO")
-            print(f"  Name:       {request.model}")
+            print(f"  Name:       {msg_request.model}")
             print(f"  Layers:     {model.config.n_layer}")
             print(f"  Heads:      {model.config.n_head}")
             print(f"  Embedding:  {model.config.n_embd}")
@@ -287,7 +321,7 @@ async def send_message(request: SendMessageRequest, session_id: str = "default",
                 for msg in session["messages"]
                 if msg["role"] in ("user", "assistant")
             ]
-            agent_history.append({"role": "user", "content": request.message})
+            agent_history.append({"role": "user", "content": msg_request.message})
             
             # Log the full history being sent
             log_agent_history(agent_history)
@@ -340,6 +374,21 @@ async def send_message(request: SendMessageRequest, session_id: str = "default",
             
             elapsed = time.time() - start_time
             log.response(200, time=f"{elapsed:.2f}s", steps=steps, tool_calls=len(tool_calls))
+            
+            # Audit: Response generated
+            if AUDIT_AVAILABLE:
+                audit.chat("response", user=user.username, ip=client_ip,
+                          session=session_id, model=msg_request.model,
+                          tokens_out=len(content.split()),  # Rough word count
+                          latency_ms=int(elapsed * 1000), steps=steps,
+                          tool_calls=len(tool_calls),
+                          details=content[:200] + ("..." if len(content) > 200 else ""))
+                
+                # Audit: Each tool call
+                for tc in tool_calls:
+                    audit.agent("tool_call", user=user.username, session=session_id,
+                               tool=tc.get("name", "unknown"),
+                               details=json.dumps(tc.get("arguments", {}))[:200])
             
             return SendMessageResponse(
                 content=content,

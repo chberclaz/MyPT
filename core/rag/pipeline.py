@@ -28,6 +28,13 @@ from .tags import (
     ASSISTANT_CLOSE,
 )
 
+# Import audit logging (optional - doesn't fail if not available)
+try:
+    from core.compliance import audit
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+
 
 class RAGPipeline:
     """
@@ -70,7 +77,20 @@ class RAGPipeline:
             List of chunk dicts with text, score, source
         """
         k = top_k or self.default_top_k
-        return self.retriever.retrieve_with_threshold(query, top_k=k, min_score=min_score)
+        chunks = self.retriever.retrieve_with_threshold(query, top_k=k, min_score=min_score)
+        
+        # Audit: RAG retrieval
+        if AUDIT_AVAILABLE:
+            avg_score = sum(c.get("score", 0) for c in chunks) / len(chunks) if chunks else 0
+            audit.rag("retrieve", 
+                     query_length=len(query),
+                     chunks_retrieved=len(chunks),
+                     top_k=k,
+                     min_score=min_score,
+                     avg_score=f"{avg_score:.3f}",
+                     details=query[:100] + ("..." if len(query) > 100 else ""))
+        
+        return chunks
     
     def build_prompt(
         self,
@@ -166,6 +186,15 @@ class RAGPipeline:
             answer = answer.split(ASSISTANT_CLOSE)[0]
         
         answer = answer.strip()
+        
+        # Audit: RAG answer generation
+        if AUDIT_AVAILABLE:
+            audit.rag("answer",
+                     context_chunks=len(chunks),
+                     answer_length=len(answer),
+                     max_new_tokens=max_new_tokens,
+                     temperature=temperature,
+                     details=answer[:100] + ("..." if len(answer) > 100 else ""))
         
         if return_context:
             return answer, chunks

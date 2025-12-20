@@ -74,8 +74,15 @@ Examples:
     # Import auth module (after path setup)
     from webapp.auth import (
         create_user, change_password, load_users, save_users,
-        get_user, USERS_FILE
+        get_user, delete_user, USERS_FILE
     )
+    
+    # Import audit logging
+    try:
+        from core.compliance import audit
+        AUDIT_AVAILABLE = True
+    except ImportError:
+        AUDIT_AVAILABLE = False
     
     print(f"  Users file: {USERS_FILE}")
     print()
@@ -116,7 +123,8 @@ Examples:
             print("  Error: --password required for add action")
             sys.exit(1)
         
-        if create_user(args.username, args.password, args.role):
+        # create_user has audit logging built-in
+        if create_user(args.username, args.password, args.role, created_by="CLI"):
             print(f"  ✓ Created user: {args.username}")
             print(f"    Role: {args.role}")
         else:
@@ -142,9 +150,12 @@ Examples:
                 print("  Cancelled.")
                 return
         
-        del users[args.username]
-        save_users(users)
-        print(f"  ✓ Deleted user: {args.username}")
+        # Use delete_user which has audit logging built-in
+        if delete_user(args.username, deleted_by="CLI"):
+            print(f"  ✓ Deleted user: {args.username}")
+        else:
+            print(f"  ✗ Failed to delete user: {args.username}")
+            sys.exit(1)
     
     elif args.action == "passwd":
         if not args.username:
@@ -154,7 +165,8 @@ Examples:
             print("  Error: --password required for passwd action")
             sys.exit(1)
         
-        if change_password(args.username, args.password):
+        # change_password has audit logging built-in
+        if change_password(args.username, args.password, changed_by="CLI"):
             print(f"  ✓ Password changed for: {args.username}")
         else:
             print(f"  ✗ User not found: {args.username}")
