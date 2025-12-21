@@ -1,0 +1,113 @@
+# =============================================================================
+# MyPT Docker Compose - Main Configuration
+# =============================================================================
+# Complete offline AI platform with training, inference, and RAG capabilities.
+#
+# Usage:
+#   # Start webapp (CPU mode - for testing without GPU)
+#   docker-compose up
+#
+#   # Start with GPU support (recommended)
+#   docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+#   # Run training job with GPU
+#   docker-compose -f docker-compose.yml -f docker-compose.gpu.yml run --rm mypt train \
+#       --model_name my_model --config_file configs/pretrain/small.json
+#
+#   # Build image
+#   docker-compose build
+#
+# =============================================================================
+
+services:
+  mypt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mypt:latest
+    container_name: mypt
+    
+    # Port mapping for webapp
+    ports:
+      - "${MYPT_PORT:-8000}:8000"
+    
+    # Environment variables
+    environment:
+      - MYPT_HOST=0.0.0.0
+      - MYPT_PORT=8000
+      - MYPT_DEBUG=${MYPT_DEBUG:-false}
+      - MYPT_SECRET_KEY=${MYPT_SECRET_KEY:-}
+      # CUDA visibility (set to empty for CPU-only)
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
+    
+    # Volume mounts for data persistence
+    volumes:
+      # Model checkpoints (trained models)
+      - mypt-checkpoints:/app/checkpoints
+      # Workspace (documents and RAG index)
+      - mypt-workspace:/app/workspace
+      # Training data
+      - mypt-data:/app/data
+      # Logs (audit and application)
+      - mypt-logs:/app/logs
+      # Model configurations (customer-specific training configs)
+      - mypt-configs:/app/configs
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Resource limits (optional, adjust based on your hardware)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 16G
+    #     reservations:
+    #       memory: 4G
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+# =============================================================================
+# Named Volumes
+# =============================================================================
+# Using named volumes for data persistence across container restarts.
+# Data is stored in Docker's volume directory (e.g., /var/lib/docker/volumes/)
+#
+# To use bind mounts instead (for easier access to files), modify the volumes
+# section above to use paths like:
+#   - ./checkpoints:/app/checkpoints
+#   - ./workspace:/app/workspace
+# =============================================================================
+
+volumes:
+  mypt-checkpoints:
+    name: mypt-checkpoints
+  mypt-workspace:
+    name: mypt-workspace
+  mypt-data:
+    name: mypt-data
+  mypt-logs:
+    name: mypt-logs
+  mypt-configs:
+    name: mypt-configs
+
+# =============================================================================
+# Networks (optional, for multi-container setups)
+# =============================================================================
+# networks:
+#   mypt-network:
+#     name: mypt-network
+#     driver: bridge
+

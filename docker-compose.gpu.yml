@@ -1,0 +1,50 @@
+# =============================================================================
+# MyPT Docker Compose - GPU Override
+# =============================================================================
+# Enables NVIDIA GPU support for training and inference.
+#
+# Prerequisites:
+#   - NVIDIA GPU with CUDA support
+#   - NVIDIA Container Toolkit installed
+#     (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+#
+# Usage:
+#   # Start webapp with GPU
+#   docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+#   # Run training with GPU
+#   docker-compose -f docker-compose.yml -f docker-compose.gpu.yml run --rm mypt train \
+#       --model_name my_model --config_file configs/pretrain/150M.json
+#
+#   # Use specific GPU(s)
+#   CUDA_VISIBLE_DEVICES=0 docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+#   # Use multiple GPUs
+#   CUDA_VISIBLE_DEVICES=0,1 docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# =============================================================================
+
+services:
+  mypt:
+    # Enable NVIDIA runtime
+    runtime: nvidia
+    
+    # Alternative syntax for newer Docker versions (Docker Compose v2.x)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # Use all available GPUs, or specify a number like 1
+              capabilities: [gpu]
+    
+    # GPU-specific environment variables
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # Ensure CUDA is available
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
+    
+    # Shared memory size (important for PyTorch DataLoader with num_workers > 0)
+    shm_size: '2gb'
+
