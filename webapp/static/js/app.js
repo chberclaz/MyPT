@@ -31,7 +31,8 @@ const AppState = {
             maxIters: 5000,
             evalInterval: 50,
             learningRate: '3e-4',
-            batchSize: 'auto'
+            batchSize: 'auto',
+            warmupIters: '0'
         }
     }
 };
@@ -570,7 +571,7 @@ function setupTrainingEventListeners() {
     
     // Config inputs
     const configInputs = ['modelSize', 'baseModel', 'datasetDir', 'outputName', 
-                          'maxIters', 'evalInterval', 'learningRate', 'batchSize'];
+                          'maxIters', 'evalInterval', 'learningRate', 'batchSize', 'warmupIters'];
     configInputs.forEach(name => {
         const input = $(`#config-${name}`);
         if (input) {

@@ -587,7 +587,7 @@ class GPT(nn.Module):
     
     def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
             eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None,
-            save_dtype='bf16', final_save_dtype='fp16'):
+            save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0):
         """
         Main training loop - the model trains itself!
         
@@ -604,6 +604,11 @@ class GPT(nn.Module):
                        Options: 'fp32', 'bf16', 'fp16'. Use 'bf16' for A100/modern GPUs.
             final_save_dtype: Dtype for final deployment checkpoint (default: 'fp16').
                              Use 'fp16' for older GPUs (2060, etc). Set to None to skip.
+            warmup_iters: Learning rate warmup iterations. Can be:
+                         - int: Absolute number of warmup steps (e.g., 1000)
+                         - float (0-1): Fraction of max_iters (e.g., 0.05 for 5%)
+                         Warmup uses linear scaling from 0 to target learning rate.
+                         Recommended: 5-10% of max_iters for large models (750M+).
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -622,24 +627,51 @@ class GPT(nn.Module):
         # Determine save dtype for eval checkpoints: explicit param > config > None (model dtype)
         effective_save_dtype = save_dtype if save_dtype is not None else self.config.save_dtype
         
+        # Get target learning rate
+        target_lr = learning_rate if learning_rate is not None else optimizer.param_groups[0]['lr']
+        
+        # Calculate warmup iterations
+        if isinstance(warmup_iters, float) and 0 < warmup_iters < 1:
+            # Fraction of max_iters
+            warmup_steps = int(warmup_iters * max_iters)
+        else:
+            warmup_steps = int(warmup_iters)
+        
+        if warmup_steps > 0:
+            print(f"Learning rate warmup: {warmup_steps} steps ({warmup_steps/max_iters*100:.1f}% of training)")
+            print(f"  LR will ramp from 0 → {target_lr:.2e} over first {warmup_steps} iterations")
+        
         # Prepare training configuration for saving
         training_config = {
             "max_iters": max_iters,
             "eval_interval": eval_interval,
             "eval_iters": eval_iters,
-            "learning_rate": learning_rate if learning_rate is not None else optimizer.param_groups[0]['lr'],
+            "learning_rate": target_lr,
             "start_step": start_step,
             "save_dtype": effective_save_dtype,
+            "warmup_iters": warmup_steps,
         }
         
+        def get_lr(step):
+            """Calculate learning rate with linear warmup."""
+            if step < warmup_steps:
+                # Linear warmup: scale from 0 to target_lr
+                return target_lr * (step + 1) / warmup_steps
+            return target_lr
+        
         for iter in range(start_step, max_iters):
+            # Update learning rate (warmup or constant)
+            current_lr = get_lr(iter)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = current_lr
             # Evaluation and checkpointing
             if iter % eval_interval == 0:
                 ct = datetime.datetime.now()
                 print(f"{iter} : {ct}")
                 
                 losses = self.estimate_loss(data_loader, eval_iters)
-                print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+                lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
+                print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}{lr_info}")
                 
                 # Save eval checkpoint (fp32 by default, includes optimizer for resuming)
                 if checkpoint_dir:

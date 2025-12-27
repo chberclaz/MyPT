@@ -45,6 +45,10 @@ def parse_args():
                         help="Number of iterations for evaluation")
     parser.add_argument("--learning_rate", type=float, default=3e-4,
                         help="Learning rate for optimizer")
+    parser.add_argument("--warmup_iters", type=float, default=0,
+                        help="Learning rate warmup. Int for absolute steps (e.g., 1000) or "
+                             "float 0-1 for fraction of max_iters (e.g., 0.05 for 5%%). "
+                             "Recommended: 0.05-0.10 for large models (750M+)")
     
     # Model architecture (ignored if --config_file is specified)
     parser.add_argument("--batch_size", type=int, default=32,
@@ -75,6 +79,9 @@ def main():
     args = parse_args()
     
     # Load config from file or use CLI arguments
+    # Training hyperparameters from config file (can be overridden by CLI)
+    config_training = {}
+    
     if args.config_file:
         print(f"Loading configuration from: {args.config_file}")
         import json
@@ -89,6 +96,12 @@ def main():
         # Extract description if present
         config_name = config_dict.pop("name", None)
         config_desc = config_dict.pop("description", None)
+        
+        # Extract training hyperparameters (not part of GPTConfig)
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters"]
+        for key in training_keys:
+            if key in config_dict:
+                config_training[key] = config_dict.pop(key)
         
         # Create config from file
         # Set device if not in config
@@ -120,12 +133,36 @@ def main():
             save_dtype=args.save_dtype,
         )
     
+    # Resolve training hyperparameters: CLI overrides config file
+    # Use argparse defaults to detect if user explicitly set a value
+    parser_defaults = {'learning_rate': 3e-4, 'max_iters': 1000, 'eval_interval': 50, 
+                       'eval_iters': 200, 'warmup_iters': 0}
+    
+    def get_effective_value(arg_name, arg_value, config_training, defaults):
+        """Get effective value: CLI override > config file > default"""
+        if arg_value != defaults.get(arg_name):
+            # User explicitly set this via CLI
+            return arg_value
+        elif arg_name in config_training:
+            # Use config file value
+            return config_training[arg_name]
+        else:
+            # Use CLI/default value
+            return arg_value
+    
+    effective_learning_rate = get_effective_value('learning_rate', args.learning_rate, config_training, parser_defaults)
+    effective_max_iters = get_effective_value('max_iters', args.max_iters, config_training, parser_defaults)
+    effective_eval_interval = get_effective_value('eval_interval', args.eval_interval, config_training, parser_defaults)
+    effective_eval_iters = get_effective_value('eval_iters', args.eval_iters, config_training, parser_defaults)
+    effective_warmup_iters = get_effective_value('warmup_iters', args.warmup_iters, config_training, parser_defaults)
+    
     print(f"========== Training Configuration ==========")
     print(f"Model name: {args.model_name}")
     print(f"Input file: {args.input_file}")
     print(f"Tokenization: {args.tokenization}")
-    print(f"Max iterations: {args.max_iters}")
-    print(f"Learning rate: {args.learning_rate}")
+    print(f"Max iterations: {effective_max_iters}")
+    print(f"Learning rate: {effective_learning_rate}")
+    print(f"Warmup iterations: {effective_warmup_iters}")
     if args.init_from_model:
         print(f"Initializing from: {args.init_from_model}")
     print()
@@ -179,7 +216,7 @@ def main():
         config=config,
         tokenization=args.tokenization,
         input_text=text,
-        learning_rate=args.learning_rate,
+        learning_rate=effective_learning_rate,
         init_from_model=args.init_from_model,
         dataset_tokenizer_state=dataset_tokenizer_state
     )
@@ -230,12 +267,12 @@ def main():
     # Analyze dataset coverage
     if total_tokens:
         coverage = calculate_dataset_coverage(
-            max_iters=args.max_iters,
+            max_iters=effective_max_iters,
             batch_size=model.config.batch_size,
             block_size=model.config.block_size,
             total_tokens=total_tokens
         )
-        print_coverage_analysis(coverage, args.max_iters)
+        print_coverage_analysis(coverage, effective_max_iters)
         
         # Ask user to confirm if coverage is very low
         if coverage['coverage_ratio'] < 1.0:
@@ -248,21 +285,27 @@ def main():
     
     # Train the model (model trains itself!)
     print("========== Starting Training ==========")
-    print(f"Training from step {start_step} to {args.max_iters}")
+    print(f"Training from step {start_step} to {effective_max_iters}")
     print(f"Checkpoints: {ckpt_manager.checkpoint_dir}")
     print(f"Format: JSON-based (model.pt + config.json + tokenizer.json + ...)")
-    print(f"Evaluation every {args.eval_interval} steps")
+    print(f"Evaluation every {effective_eval_interval} steps")
+    if effective_warmup_iters > 0:
+        if isinstance(effective_warmup_iters, float) and effective_warmup_iters < 1:
+            print(f"LR warmup: {effective_warmup_iters*100:.0f}% of training ({int(effective_warmup_iters * effective_max_iters)} steps)")
+        else:
+            print(f"LR warmup: {int(effective_warmup_iters)} steps")
     print()
     
     model.fit(
         data_loader=data_loader,
         optimizer=optimizer,
-        max_iters=args.max_iters,
-        eval_interval=args.eval_interval,
-        eval_iters=args.eval_iters,
+        max_iters=effective_max_iters,
+        eval_interval=effective_eval_interval,
+        eval_iters=effective_eval_iters,
         checkpoint_dir=ckpt_manager.checkpoint_dir,
         start_step=start_step,
-        learning_rate=args.learning_rate
+        learning_rate=effective_learning_rate,
+        warmup_iters=effective_warmup_iters
     )
     
     print("\n========== Training Complete ==========")
