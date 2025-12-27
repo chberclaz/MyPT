@@ -304,6 +304,18 @@ def main():
     with open(meta_path, 'w') as f:
         json.dump(updated_meta, f, indent=2)
     
+    # Ensure tokenizer_state.json exists (for train.py compatibility)
+    tokenizer_state_path = os.path.join(args.dataset_dir, "tokenizer_state.json")
+    if not os.path.exists(tokenizer_state_path):
+        tokenizer_state = {
+            "token_kind": args.tokenization,
+            "chars": None if args.tokenization == "gpt2" else tokenizer.chars,
+            "base_vocab_size": 50257 if args.tokenization == "gpt2" else len(tokenizer.chars),
+        }
+        with open(tokenizer_state_path, 'w') as f:
+            json.dump(tokenizer_state, f, indent=2)
+        print(f"  Created tokenizer_state.json ({args.tokenization})")
+    
     print()
     print("=" * 60)
     print("  APPEND COMPLETE")

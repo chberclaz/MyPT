@@ -586,6 +586,16 @@ def pass2_write_shards(
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
+    # Save tokenizer state for train.py compatibility
+    tokenizer_state = {
+        "token_kind": tokenization,
+        "chars": tokenizer.chars if tokenization == "char" else None,
+        "base_vocab_size": 50257 if tokenization == "gpt2" else len(tokenizer.chars),
+    }
+    tokenizer_state_path = os.path.join(out_dir, "tokenizer_state.json")
+    with open(tokenizer_state_path, "w", encoding="utf-8") as f:
+        json.dump(tokenizer_state, f, indent=2)
+
     print(f"\n[SUMMARY] Total tokens written: {total_tokens_written:,}")
     print(f"[SUMMARY] Total shards: {num_shards}")
     print(f"[SUMMARY] Train shards: {len(train_shards)} in {train_dir}")

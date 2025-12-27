@@ -53,6 +53,10 @@ def parse_args():
                         help="Gradient clipping max norm (default: 1.0). Set to 0 to disable.")
     parser.add_argument("--weight_decay", type=float, default=0.1,
                         help="Weight decay for AdamW optimizer (default: 0.1)")
+    parser.add_argument("--use_amp", type=bool, default=True,
+                        help="Enable automatic mixed precision (default: True)")
+    parser.add_argument("--amp_dtype", type=str, default="bf16", choices=["bf16", "fp16"],
+                        help="AMP dtype: bf16 for A100/H100, fp16 for older GPUs (default: bf16)")
     
     # Model architecture (ignored if --config_file is specified)
     parser.add_argument("--batch_size", type=int, default=32,
@@ -102,7 +106,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
@@ -140,7 +144,8 @@ def main():
     # Resolve training hyperparameters: CLI overrides config file
     # Use argparse defaults to detect if user explicitly set a value
     parser_defaults = {'learning_rate': 3e-4, 'max_iters': 1000, 'eval_interval': 50, 
-                       'eval_iters': 200, 'warmup_iters': 0, 'grad_clip': 1.0, 'weight_decay': 0.1}
+                       'eval_iters': 200, 'warmup_iters': 0, 'grad_clip': 1.0, 'weight_decay': 0.1,
+                       'use_amp': True, 'amp_dtype': 'bf16'}
     
     def get_effective_value(arg_name, arg_value, config_training, defaults):
         """Get effective value: CLI override > config file > default"""
@@ -161,6 +166,8 @@ def main():
     effective_warmup_iters = get_effective_value('warmup_iters', args.warmup_iters, config_training, parser_defaults)
     effective_grad_clip = get_effective_value('grad_clip', args.grad_clip, config_training, parser_defaults)
     effective_weight_decay = get_effective_value('weight_decay', args.weight_decay, config_training, parser_defaults)
+    effective_use_amp = get_effective_value('use_amp', args.use_amp, config_training, parser_defaults)
+    effective_amp_dtype = get_effective_value('amp_dtype', args.amp_dtype, config_training, parser_defaults)
     
     print(f"========== Training Configuration ==========")
     print(f"Model name: {args.model_name}")
@@ -171,6 +178,7 @@ def main():
     print(f"Weight decay: {effective_weight_decay}")
     print(f"Gradient clip: {effective_grad_clip}")
     print(f"Warmup: {effective_warmup_iters}")
+    print(f"Mixed precision: {effective_amp_dtype.upper() if effective_use_amp else 'disabled'}")
     if args.init_from_model:
         print(f"Initializing from: {args.init_from_model}")
     print()
@@ -315,7 +323,9 @@ def main():
         start_step=start_step,
         learning_rate=effective_learning_rate,
         warmup_iters=effective_warmup_iters,
-        grad_clip=effective_grad_clip
+        grad_clip=effective_grad_clip,
+        use_amp=effective_use_amp,
+        amp_dtype=effective_amp_dtype
     )
     
     print("\n========== Training Complete ==========")
