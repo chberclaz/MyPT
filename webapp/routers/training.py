@@ -67,6 +67,7 @@ class TrainingRequest(BaseModel):
     evalInterval: int = 50
     learningRate: str = "3e-4"
     batchSize: str = "auto"
+    warmupIters: str = "0"  # Supports int (1000) or fraction (0.05 for 5%)
 
 
 def get_config_file(mode: str, model_size: str) -> str:
@@ -177,6 +178,12 @@ def run_training_thread(request: TrainingRequest):
             learning_rate = float(request.learningRate)
         except ValueError:
             learning_rate = 3e-4
+        
+        # Parse warmup iterations (supports int or fraction)
+        try:
+            warmup_iters = float(request.warmupIters)
+        except ValueError:
+            warmup_iters = 0
         
         # Import training modules
         try:
@@ -321,6 +328,22 @@ def run_training_thread(request: TrainingRequest):
         
         if start_step > 0:
             add_log("info", f"Resuming from step {start_step}, {remaining_steps} steps remaining")
+        
+        # Calculate warmup steps
+        if isinstance(warmup_iters, float) and 0 < warmup_iters < 1:
+            warmup_steps = int(warmup_iters * total_steps)
+        else:
+            warmup_steps = int(warmup_iters)
+        
+        if warmup_steps > 0:
+            add_log("info", f"LR warmup: {warmup_steps} steps ({warmup_steps/total_steps*100:.1f}%)")
+        
+        def get_lr(step):
+            """Calculate learning rate with linear warmup."""
+            if step < warmup_steps:
+                return learning_rate * (step + 1) / warmup_steps
+            return learning_rate
+        
         add_log("success", "Starting training loop...")
         
         # Training loop
@@ -332,6 +355,11 @@ def run_training_thread(request: TrainingRequest):
                 if _training_state["should_stop"]:
                     add_log("warning", "Training stopped by user")
                     break
+            
+            # Update learning rate (warmup)
+            current_lr = get_lr(step)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = current_lr
             
             # Training step
             try:

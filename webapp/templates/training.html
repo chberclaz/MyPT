@@ -117,6 +117,17 @@
                         >
                     </div>
                     <div class="form-group">
+                        <label class="form-label">Warmup (prevents catastrophic forgetting)</label>
+                        <input 
+                            type="text" 
+                            id="config-warmupIters"
+                            class="form-input" 
+                            value="0"
+                            placeholder="0.05 for 5% or 1000 for steps"
+                        >
+                        <small style="color: var(--text-muted);">0 = off, 0.05 = 5% of steps, 1000 = 1000 steps</small>
+                    </div>
+                    <div class="form-group">
                         <label class="form-label">Batch Size</label>
                         <input 
                             type="text" 
