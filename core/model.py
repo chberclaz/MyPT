@@ -534,18 +534,45 @@ class GPT(nn.Module):
         return model, tokenizer_state, step, optim_state
     
     # ===== TRAINING METHODS =====
-    def configure_optimizer(self, learning_rate=3e-4, optimizer_state=None):
+    def configure_optimizer(self, learning_rate=3e-4, weight_decay=0.1, optimizer_state=None):
         """
-        Setup optimizer for this model.
+        Setup optimizer for this model with proper weight decay.
+        
+        Uses the "no decay" convention: don't apply weight decay to biases, 
+        LayerNorm weights, or embedding weights.
         
         Args:
             learning_rate: Learning rate for AdamW optimizer
+            weight_decay: Weight decay (L2 regularization) for non-embedding weights
             optimizer_state: Optional state dict to restore optimizer state
         
         Returns:
             Configured optimizer
         """
-        optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate)
+        # Separate parameters into decay and no-decay groups
+        decay_params = []
+        no_decay_params = []
+        
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            # Don't decay: biases, LayerNorm, embeddings
+            if param.dim() == 1 or 'embedding' in name.lower() or 'ln' in name.lower():
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+        
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': no_decay_params, 'weight_decay': 0.0},
+        ]
+        
+        num_decay = sum(p.numel() for p in decay_params)
+        num_no_decay = sum(p.numel() for p in no_decay_params)
+        print(f"Optimizer: {num_decay:,} params with weight_decay={weight_decay}, "
+              f"{num_no_decay:,} params without decay")
+        
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95))
         if optimizer_state is not None:
             optimizer.load_state_dict(optimizer_state)
         return optimizer
@@ -587,7 +614,7 @@ class GPT(nn.Module):
     
     def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
             eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None,
-            save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0):
+            save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0):
         """
         Main training loop - the model trains itself!
         
@@ -609,6 +636,8 @@ class GPT(nn.Module):
                          - float (0-1): Fraction of max_iters (e.g., 0.05 for 5%)
                          Warmup uses linear scaling from 0 to target learning rate.
                          Recommended: 5-10% of max_iters for large models (750M+).
+            grad_clip: Maximum gradient norm for clipping (default: 1.0).
+                      Prevents gradient explosions. Set to 0 to disable.
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -650,6 +679,7 @@ class GPT(nn.Module):
             "start_step": start_step,
             "save_dtype": effective_save_dtype,
             "warmup_iters": warmup_steps,
+            "grad_clip": grad_clip,
         }
         
         def get_lr(step):
@@ -696,6 +726,9 @@ class GPT(nn.Module):
             
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            # Gradient clipping to prevent explosions
+            if grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
             optimizer.step()
         
         # Final evaluation

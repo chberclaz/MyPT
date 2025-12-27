@@ -49,6 +49,10 @@ def parse_args():
                         help="Learning rate warmup. Int for absolute steps (e.g., 1000) or "
                              "float 0-1 for fraction of max_iters (e.g., 0.05 for 5%%). "
                              "Recommended: 0.05-0.10 for large models (750M+)")
+    parser.add_argument("--grad_clip", type=float, default=1.0,
+                        help="Gradient clipping max norm (default: 1.0). Set to 0 to disable.")
+    parser.add_argument("--weight_decay", type=float, default=0.1,
+                        help="Weight decay for AdamW optimizer (default: 0.1)")
     
     # Model architecture (ignored if --config_file is specified)
     parser.add_argument("--batch_size", type=int, default=32,
@@ -98,7 +102,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
@@ -136,7 +140,7 @@ def main():
     # Resolve training hyperparameters: CLI overrides config file
     # Use argparse defaults to detect if user explicitly set a value
     parser_defaults = {'learning_rate': 3e-4, 'max_iters': 1000, 'eval_interval': 50, 
-                       'eval_iters': 200, 'warmup_iters': 0}
+                       'eval_iters': 200, 'warmup_iters': 0, 'grad_clip': 1.0, 'weight_decay': 0.1}
     
     def get_effective_value(arg_name, arg_value, config_training, defaults):
         """Get effective value: CLI override > config file > default"""
@@ -155,6 +159,8 @@ def main():
     effective_eval_interval = get_effective_value('eval_interval', args.eval_interval, config_training, parser_defaults)
     effective_eval_iters = get_effective_value('eval_iters', args.eval_iters, config_training, parser_defaults)
     effective_warmup_iters = get_effective_value('warmup_iters', args.warmup_iters, config_training, parser_defaults)
+    effective_grad_clip = get_effective_value('grad_clip', args.grad_clip, config_training, parser_defaults)
+    effective_weight_decay = get_effective_value('weight_decay', args.weight_decay, config_training, parser_defaults)
     
     print(f"========== Training Configuration ==========")
     print(f"Model name: {args.model_name}")
@@ -162,7 +168,9 @@ def main():
     print(f"Tokenization: {args.tokenization}")
     print(f"Max iterations: {effective_max_iters}")
     print(f"Learning rate: {effective_learning_rate}")
-    print(f"Warmup iterations: {effective_warmup_iters}")
+    print(f"Weight decay: {effective_weight_decay}")
+    print(f"Gradient clip: {effective_grad_clip}")
+    print(f"Warmup: {effective_warmup_iters}")
     if args.init_from_model:
         print(f"Initializing from: {args.init_from_model}")
     print()
@@ -218,6 +226,7 @@ def main():
         input_text=text,
         learning_rate=effective_learning_rate,
         init_from_model=args.init_from_model,
+        weight_decay=effective_weight_decay,
         dataset_tokenizer_state=dataset_tokenizer_state
     )
     
@@ -305,7 +314,8 @@ def main():
         checkpoint_dir=ckpt_manager.checkpoint_dir,
         start_step=start_step,
         learning_rate=effective_learning_rate,
-        warmup_iters=effective_warmup_iters
+        warmup_iters=effective_warmup_iters,
+        grad_clip=effective_grad_clip
     )
     
     print("\n========== Training Complete ==========")

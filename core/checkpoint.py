@@ -38,7 +38,7 @@ class CheckpointManager:
     
     def initialize_for_training(self, config, tokenization, input_text, 
                                 learning_rate, init_from_model=None,
-                                dataset_tokenizer_state=None):
+                                dataset_tokenizer_state=None, weight_decay=0.1):
         """
         Initialize model for training. Handles 3 cases:
         1. Resume from this model's checkpoint
@@ -54,6 +54,7 @@ class CheckpointManager:
             learning_rate: Learning rate for optimizer
             init_from_model: Optional model name to initialize from
             dataset_tokenizer_state: Optional tokenizer state from dataset directory (sharded mode)
+            weight_decay: Weight decay for AdamW optimizer (default: 0.1)
         
         Returns: (model, optimizer, start_step)
         """
@@ -63,7 +64,7 @@ class CheckpointManager:
         if self.exists_new_format():
             print(f"Found checkpoint in new format at {self.checkpoint_dir}, resuming training.")
             model, _, start_step, optim_state = GPT.load(self.checkpoint_dir, map_location=device)
-            optimizer = model.configure_optimizer(learning_rate, optim_state)
+            optimizer = model.configure_optimizer(learning_rate, weight_decay, optim_state)
             return model, optimizer, start_step or 0
         
         elif self.exists_legacy_format("latest.pt"):
@@ -71,7 +72,7 @@ class CheckpointManager:
             print("Note: Will save in new JSON format on next checkpoint.")
             legacy_path = self.get_path("latest.pt")
             model, _, start_step, optim_state = GPT.load_legacy(legacy_path, map_location=device)
-            optimizer = model.configure_optimizer(learning_rate, optim_state)
+            optimizer = model.configure_optimizer(learning_rate, weight_decay, optim_state)
             return model, optimizer, start_step or 0
         
         # Case 2: INIT FROM ANOTHER MODEL (Fine-tuning)
@@ -121,7 +122,7 @@ class CheckpointManager:
             print(f"  dropout: {model.config.dropout}")
             print(f"  batch_size: {model.config.batch_size}")
             
-            optimizer = model.configure_optimizer(learning_rate)
+            optimizer = model.configure_optimizer(learning_rate, weight_decay)
             return model, optimizer, 0  # start from step 0 for new training
         
         # Case 3: FRESH MODEL
@@ -151,7 +152,7 @@ class CheckpointManager:
                 config.vocab_size = 50304
             
             model = GPT(config, tokenizer=tokenizer).to(device)
-            optimizer = model.configure_optimizer(learning_rate)
+            optimizer = model.configure_optimizer(learning_rate, weight_decay)
             return model, optimizer, 0
     
     def _validate_tokenization(self, base_tok_state, requested_tokenization, 
