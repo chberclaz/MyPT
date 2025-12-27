@@ -8,5 +8,9 @@
   "n_head": 4,
   "n_layer": 4,
   "dropout": 0.1,
-  "bias": false
+  "bias": false,
+  "warmup_iters": 0.05,
+  "learning_rate": 3e-4,
+  "max_iters": 1000,
+  "eval_interval": 200
 }

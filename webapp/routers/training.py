@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, Request
 from pydantic import BaseModel
+import torch
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -307,11 +308,12 @@ def run_training_thread(request: TrainingRequest):
                 return
         
         # Setup optimizer (restore state if resuming)
-        optimizer = model.configure_optimizer(learning_rate=learning_rate, optimizer_state=optimizer_state)
+        weight_decay = 0.1  # Standard weight decay for training stability
+        optimizer = model.configure_optimizer(learning_rate=learning_rate, weight_decay=weight_decay, optimizer_state=optimizer_state)
         if optimizer_state:
             add_log("info", f"Optimizer restored from checkpoint (lr={learning_rate})")
         else:
-            add_log("info", f"Optimizer configured (lr={learning_rate})")
+            add_log("info", f"Optimizer configured (lr={learning_rate}, wd={weight_decay})")
         
         # Checkpoint directory
         checkpoint_dir = PROJECT_ROOT / "checkpoints" / request.outputName
@@ -373,6 +375,8 @@ def run_training_thread(request: TrainingRequest):
                 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                # Gradient clipping for training stability
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
             except Exception as e:
                 add_log("error", f"Training step failed: {e}")
