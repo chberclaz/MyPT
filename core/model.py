@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
 from dataclasses import asdict
+from contextlib import nullcontext
 import os
 import json
 
@@ -614,7 +615,8 @@ class GPT(nn.Module):
     
     def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
             eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None,
-            save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0):
+            save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0,
+            use_amp=True, amp_dtype='bf16'):
         """
         Main training loop - the model trains itself!
         
@@ -638,6 +640,9 @@ class GPT(nn.Module):
                          Recommended: 5-10% of max_iters for large models (750M+).
             grad_clip: Maximum gradient norm for clipping (default: 1.0).
                       Prevents gradient explosions. Set to 0 to disable.
+            use_amp: Enable automatic mixed precision training (default: True).
+                    Significantly reduces memory usage and speeds up training on modern GPUs.
+            amp_dtype: Dtype for AMP ('bf16' for A100/H100, 'fp16' for older GPUs).
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -669,6 +674,26 @@ class GPT(nn.Module):
         if warmup_steps > 0:
             print(f"Learning rate warmup: {warmup_steps} steps ({warmup_steps/max_iters*100:.1f}% of training)")
             print(f"  LR will ramp from 0 → {target_lr:.2e} over first {warmup_steps} iterations")
+        
+        # Setup automatic mixed precision (AMP)
+        device_type = 'cuda' if 'cuda' in str(self.config.device) else 'cpu'
+        if use_amp and device_type == 'cuda':
+            amp_dtype_torch = torch.bfloat16 if amp_dtype == 'bf16' else torch.float16
+            # Check if bf16 is supported
+            if amp_dtype == 'bf16' and not torch.cuda.is_bf16_supported():
+                print(f"[WARN] bf16 not supported on this GPU, falling back to fp16")
+                amp_dtype_torch = torch.float16
+                amp_dtype = 'fp16'
+            
+            ctx = torch.amp.autocast(device_type=device_type, dtype=amp_dtype_torch)
+            # GradScaler only needed for fp16, not bf16
+            scaler = torch.cuda.amp.GradScaler(enabled=(amp_dtype == 'fp16'))
+            print(f"Mixed precision training: {amp_dtype.upper()} enabled")
+        else:
+            ctx = nullcontext()
+            scaler = None
+            if use_amp:
+                print("Mixed precision disabled (CPU training)")
         
         # Prepare training configuration for saving
         training_config = {
@@ -713,23 +738,34 @@ class GPT(nn.Module):
                         save_dtype=effective_save_dtype
                     )
             
-            # Training step
+            # Training step with optional AMP
             batch = data_loader.get_batch('train')
             
             # Handle both (X, Y) and (X, Y, loss_mask) formats
-            if isinstance(batch, (tuple, list)) and len(batch) == 3:
-                xb, yb, loss_mask = batch
-                _, loss = self(xb, yb, loss_mask=loss_mask)
-            else:
-                xb, yb = batch
-                _, loss = self(xb, yb)
+            with ctx:
+                if isinstance(batch, (tuple, list)) and len(batch) == 3:
+                    xb, yb, loss_mask = batch
+                    _, loss = self(xb, yb, loss_mask=loss_mask)
+                else:
+                    xb, yb = batch
+                    _, loss = self(xb, yb)
             
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            # Gradient clipping to prevent explosions
-            if grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
-            optimizer.step()
+            
+            if scaler is not None:
+                # FP16 path with GradScaler
+                scaler.scale(loss).backward()
+                if grad_clip > 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # BF16 or FP32 path (no scaler needed)
+                loss.backward()
+                if grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
+                optimizer.step()
         
         # Final evaluation
         final_losses = self.estimate_loss(data_loader, eval_iters)

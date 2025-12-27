@@ -11,6 +11,6 @@
   "bias": false,
   "warmup_iters": 0.05,
   "learning_rate": 3e-4,
-  "max_iters": 1000,
+  "max_iters": 10000,
   "eval_interval": 200
 }
