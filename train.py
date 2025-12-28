@@ -306,6 +306,10 @@ def main():
     print(f"Checkpoints: {ckpt_manager.checkpoint_dir}")
     print(f"Format: JSON-based (model.pt + config.json + tokenizer.json + ...)")
     print(f"Evaluation every {effective_eval_interval} steps")
+
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    
     if effective_warmup_iters > 0:
         if isinstance(effective_warmup_iters, float) and effective_warmup_iters < 1:
             print(f"LR warmup: {effective_warmup_iters*100:.0f}% of training ({int(effective_warmup_iters * effective_max_iters)} steps)")

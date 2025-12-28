@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import torch.utils.checkpoint as cp
 from dataclasses import dataclass
 from dataclasses import asdict
 from contextlib import nullcontext
@@ -93,7 +94,6 @@ class Head(nn.Module):
         self.key= nn.Linear(config.n_embd, self.head_size, config.bias)
         self.query= nn.Linear(config.n_embd, self.head_size, config.bias)
         self.value= nn.Linear(config.n_embd, self.head_size, config.bias)
-        self.register_buffer('tril', torch.tril(torch.ones(config.block_size, config.block_size)))
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -144,20 +144,29 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 class Block(nn.Module):
-# Transformer BLock: communication followed by computation
-
     def __init__(self, config):
-        # n-embd: embedding dimension, n_head: number of heads we'd like
         super().__init__()
         self.sa = MultiHeadAttention(config)
-        self.fwd= FeedForward(config)
+        self.fwd = FeedForward(config)
         self.ln1 = nn.LayerNorm(config.n_embd)
         self.ln2 = nn.LayerNorm(config.n_embd)
+        self.use_checkpoint = True   # toggle
 
-    def forward(self,x):
+    def forward(self, x):
+        if self.training and self.use_checkpoint:
+            def sa_fn(inp):
+                return self.sa(self.ln1(inp))
+            def ff_fn(inp):
+                return self.fwd(self.ln2(inp))
+
+            x = x + cp.checkpoint(sa_fn, x, use_reentrant=False)
+            x = x + cp.checkpoint(ff_fn, x, use_reentrant=False)
+            return x
+
         x = x + self.sa(self.ln1(x))
         x = x + self.fwd(self.ln2(x))
         return x
+
 
 
 # super simpel Bigram Model
@@ -755,10 +764,10 @@ class GPT(nn.Module):
                 gpu_mem("after_gc_and_empty_cache")
 
             # Training step with optional AMP
+            optimizer.zero_grad(set_to_none=True)
             batch = data_loader.get_batch('train')
             
-            optimizer.zero_grad(set_to_none=True)
-            gpu_mem("after_zero_grad")
+            #gpu_mem("after_zero_grad")
             # Handle both (X, Y) and (X, Y, loss_mask) formats
             with ctx:
                 if isinstance(batch, (tuple, list)) and len(batch) == 3:
@@ -770,7 +779,7 @@ class GPT(nn.Module):
                     # debug once
                     if iter == start_step:
                         print("Inside autocast dtype:", self.lm_head.weight.dtype)
-            gpu_mem("after_forward")
+            #gpu_mem("after_forward")
             
             if scaler is not None:
                 # FP16 path with GradScaler
