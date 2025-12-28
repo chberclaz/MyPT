@@ -12,10 +12,13 @@ import os
 import sys
 import time
 import json
+import torch
+from core import load_model
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
+
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -30,6 +33,9 @@ try:
     AUDIT_AVAILABLE = True
 except ImportError:
     AUDIT_AVAILABLE = False
+
+print("CHAT.PY LOADED FROM:", __file__)
+print("SYS.PATH[0..5]:", sys.path[:6])
 
 router = APIRouter()
 log = DebugLogger("chat")
@@ -83,31 +89,46 @@ def get_or_load_model(model_name: str):
     start = time.time()
     
     try:
-        import torch
-        from core import load_model
+        import inspect
+        #print("get_or_load_model() source:\n", inspect.getsource(get_or_load_model))
+
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+        torch.backends.cuda.enable_math_sdp(True)   # keep True as fallback
+        torch.backends.cudnn.benchmark = True
+
         model = load_model(model_name)
-        
+
+        # Force sane inference dtype BEFORE compile (2060 => fp16)
+        model.to_inference("cuda")
+
         load_elapsed = time.time() - start
         log.model("loaded", model_name, time=f"{load_elapsed:.2f}s", device=str(model.config.device))
-        
-        # Compile model for faster inference (PyTorch 2.0+)
-        # Only compile if torch.compile is available and we're on CUDA
-        if hasattr(torch, 'compile') and model.config.device == 'cuda':
-            # Suppress dynamo errors so compilation failure doesn't crash generation
-            import torch._dynamo
-            torch._dynamo.config.suppress_errors = True
-            
-            try:
-                log.info(f"Compiling model for faster inference...")
-                compile_start = time.time()
-                # Use 'default' mode which is more compatible than 'reduce-overhead'
-                # 'reduce-overhead' requires Triton which may not be installed
-                model.compile_for_inference(mode="default")
-                compile_elapsed = time.time() - compile_start
-                log.info(f"Model compiled in {compile_elapsed:.2f}s (first generation will trigger JIT)")
-            except Exception as e:
-                log.warning(f"torch.compile() skipped: {str(e)[:100]}")
-                log.info("Using uncompiled model (still fast with other optimizations)")
+
+        # ---------------- torch.compile (ONLY if Triton exists) ----------------
+        try:
+            import triton  # noqa: F401
+            has_triton = True
+        except Exception:
+            has_triton = False
+
+        if hasattr(torch, "compile") and model.config.device == "cuda":
+            if not has_triton:
+                log.warning("torch.compile skipped: Triton not available (aot_eager makes it slower).")
+            else:
+                import torch._dynamo as dynamo
+                dynamo.config.suppress_errors = True
+
+                try:
+                    log.info("Compiling model for faster inference (inductor)...")
+                    compile_start = time.time()
+                    model.compile_for_inference(mode="default")  # uses inductor under the hood
+                    log.info(f"Compiled in {time.time() - compile_start:.2f}s")
+                except Exception as e:
+                    log.warning(f"torch.compile() skipped: {str(e)[:200]}")
+                    log.info("Using uncompiled model")
+        # -----------------------------------------------------------------------
+
         
         _loaded_models[model_name] = model
         return model
@@ -263,7 +284,7 @@ async def send_message(
     try:
         # Load model
         model = get_or_load_model(msg_request.model)
-        
+
         # Log model info
         if is_debug_mode():
             log.section("MODEL INFO")
