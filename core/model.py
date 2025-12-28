@@ -39,6 +39,7 @@ class GPTConfig:
     n_layer: int = 6
     dropout: float = 0.2
     bias: bool = False        # True: GPT-2 style, False: a bit better/faster
+    use_checkpoint: bool = False
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # SFT / loss-masking behavior
@@ -86,48 +87,41 @@ class GPTConfig:
             config_dict = json.load(f)
         return cls.from_dict(config_dict)
 
-class Head(nn.Module):
-    # one Head of self-attention
+class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.head_size= config.n_embd // config.n_head
-        self.key= nn.Linear(config.n_embd, self.head_size, config.bias)
-        self.query= nn.Linear(config.n_embd, self.head_size, config.bias)
-        self.value= nn.Linear(config.n_embd, self.head_size, config.bias)
+        assert config.n_embd % config.n_head == 0
+        self.n_head = config.n_head
+        self.head_size = config.n_embd // config.n_head
+        self.dropout_p = config.dropout
+
+        # one projection for qkv
+        self.qkv = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        B,T,C = x.shape
-        k= self.key(x)   #(B,T,16)
-        q= self.query(x) #(B,T,16)
-        v = self.value(x) # --> here is what im interested in, here is what i have and if you find me interesting, this is what i will communicate with you
- 
-        #compute attention scores ("affinities")
-        # q,k,v are (B,T,hs)
-        q = q.unsqueeze(1)  # (B,1,T,hs)
-        k = k.unsqueeze(1)
-        v = v.unsqueeze(1)
+        B, T, C = x.shape  # C = n_embd
 
-        out = F.scaled_dot_product_attention(
+        qkv = self.qkv(x)  # (B,T,3C)
+        q, k, v = qkv.split(C, dim=-1)
+
+        # (B,T,C) -> (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, self.head_size).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_size).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_size).transpose(1, 2)
+
+        y = F.scaled_dot_product_attention(
             q, k, v,
             attn_mask=None,
-            dropout_p=self.dropout.p if self.training else 0.0,
-            is_causal=True
-        )  # (B,1,T,hs)
+            dropout_p=self.dropout_p if self.training else 0.0,
+            is_causal=True,
+        )  # (B, nh, T, hs)
 
-        return out.squeeze(1)  # (B,T,hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C)  # back to (B,T,C)
+        y = self.dropout(self.proj(y))
+        return y
 
-class MultiHeadAttention(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.heads = nn.ModuleList([Head(config) for _ in range(config.n_head)])
-        self.proj = nn.Linear(config.n_embd, config.n_embd)
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        out=torch.cat([h(x) for h in self.heads], dim=-1) # concatenate over the chanel dimension
-        out=self.dropout(self.proj(out))
-        return out
     
 class FeedForward(nn.Module):
 
@@ -135,7 +129,7 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(config.n_embd, 4*config.n_embd),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(4*config.n_embd, config.n_embd),
             nn.Dropout(config.dropout),
         )
@@ -146,11 +140,11 @@ class FeedForward(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.sa = MultiHeadAttention(config)
+        self.sa = CausalSelfAttention(config)
         self.fwd = FeedForward(config)
         self.ln1 = nn.LayerNorm(config.n_embd)
         self.ln2 = nn.LayerNorm(config.n_embd)
-        self.use_checkpoint = True   # toggle
+        self.use_checkpoint = config.use_checkpoint   # toggle
 
     def forward(self, x):
         if self.training and self.use_checkpoint:
@@ -608,8 +602,8 @@ class GPT(nn.Module):
         self.train()
         return out
     
-    def fit(self, data_loader, optimizer, max_iters, eval_interval=50, 
-            eval_iters=200, checkpoint_dir=None, start_step=0, learning_rate=None,
+    def fit(self, data_loader, optimizer, max_iters, eval_interval=20, 
+            eval_iters=50, checkpoint_dir=None, start_step=0, learning_rate=None,
             save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0,
             use_amp=True, amp_dtype='bf16'):
         """
@@ -738,7 +732,7 @@ class GPT(nn.Module):
                 print(f"{iter} : {ct}")
                 _mem("before_estimate")
                 gpu_mem("before_estimate")
-                losses = self.estimate_loss(data_loader, eval_iters)
+                losses = self.estimate_loss(data_loader, eval_iters, splits=['val'])
                 _mem("after_estimate_before_save")
                 gpu_mem("after_estimate_before_save")
                 lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""

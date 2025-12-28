@@ -237,6 +237,9 @@ def main():
         weight_decay=effective_weight_decay,
         dataset_tokenizer_state=dataset_tokenizer_state
     )
+    model = model.to(config.device)
+    model = model.to(dtype=torch.bfloat16)
+    print("Model param dtype:", next(model.parameters()).dtype)
     
     print(f"\n========== Model Configuration ==========")
     print(f"Architecture: {model.config.n_layer} layers × {model.config.n_head} heads")
@@ -309,7 +312,8 @@ def main():
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    
+    torch.set_float32_matmul_precision("high")
+
     if effective_warmup_iters > 0:
         if isinstance(effective_warmup_iters, float) and effective_warmup_iters < 1:
             print(f"LR warmup: {effective_warmup_iters*100:.0f}% of training ({int(effective_warmup_iters * effective_max_iters)} steps)")
