@@ -237,6 +237,77 @@ class GPT(nn.Module):
                 loss = F.cross_entropy(logits, targets)
 
         return logits, loss
+
+    def _cpu_state_dict(self, dtype: torch.dtype | None = None) -> dict:
+        """Return a CPU state_dict snapshot. Optionally cast floating tensors."""
+        sd = self.state_dict()
+        out = {}
+        for k, v in sd.items():
+            if torch.is_floating_point(v):
+                vv = v.detach()
+                if dtype is not None:
+                    vv = vv.to(dtype)
+                out[k] = vv.cpu()
+            else:
+                out[k] = v.detach().cpu()
+        return out
+
+    def save_checkpoint_bundle(self, checkpoint_dir: str, step: int | None = None,
+                            optimizer_state: dict | None = None,
+                            training_config: dict | None = None,
+                            save_dtype: str | None = None):
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        # 1) CPU snapshot of weights (and optional cast) — no VRAM spike
+        target_dtype = _resolve_dtype(save_dtype) if save_dtype is not None else None
+        payload = {
+            "state_dict": self._cpu_state_dict(dtype=target_dtype),
+            "checkpoint_dtype": save_dtype,
+            "model_dtype": str(next(self.parameters()).dtype).replace("torch.", ""),
+        }
+        torch.save(payload, os.path.join(checkpoint_dir, "model.pt"))
+
+        # 2) config
+        self.config.save_json(os.path.join(checkpoint_dir, "config.json"))
+
+        # 3) tokenizer
+        if hasattr(self, "tokenizer") and self.tokenizer is not None:
+            tok_path = os.path.join(checkpoint_dir, "tokenizer.json")
+            with open(tok_path, "w") as f:
+                json.dump(self.tokenizer.get_state(), f, indent=2)
+
+        # 4) training_state.json
+        training_state_path = os.path.join(checkpoint_dir, "training_state.json")
+        training_state = {}
+        if step is not None:
+            training_state["step"] = step
+        if training_config is not None:
+            training_state["training_config"] = training_config
+        training_state["model_dtype_at_save"] = payload["model_dtype"]
+        if save_dtype is not None:
+            training_state["checkpoint_dtype"] = save_dtype
+
+        # 5) optimizer — convert to CPU *before* saving
+        if optimizer_state is not None:
+            def _to_cpu(obj):
+                if torch.is_tensor(obj):
+                    return obj.detach().cpu()
+                if isinstance(obj, dict):
+                    return {k: _to_cpu(v) for k, v in obj.items()}
+                if isinstance(obj, (list, tuple)):
+                    return type(obj)(_to_cpu(v) for v in obj)
+                return obj
+
+            opt_cpu = _to_cpu(optimizer_state)
+            opt_path = os.path.join(checkpoint_dir, "optimizer.pt")
+            torch.save(opt_cpu, opt_path)
+            training_state["optimizer_file"] = "optimizer.pt"
+
+        with open(training_state_path, "w") as f:
+            json.dump(training_state, f, indent=2)
+
+        print(f"Saved checkpoint bundle to {checkpoint_dir}")
+
     
     def save(self, checkpoint_dir: str, save_dtype: str | None = None):
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -266,92 +337,6 @@ class GPT(nn.Module):
         torch.save(checkpoint_payload, model_path)
         print(f"Saved model weights to {model_path} (model dtype={current_dtype}, "
             f"checkpoint dtype={save_dtype or current_dtype})")
-
-    
-    def save_checkpoint_bundle(self, checkpoint_dir: str, step: int | None = None,
-                               optimizer_state: dict | None = None,
-                               training_config: dict | None = None,
-                               save_dtype: str | None = None):
-        """
-        Save complete checkpoint bundle: model weights + config + tokenizer + training state.
-
-        File structure:
-            checkpoint_dir/
-                ├── model.pt              (model weights only; may be cast to save_dtype)
-                ├── config.json           (architecture config)
-                ├── tokenizer.json        (tokenizer state)
-                └── training_state.json   (step, optimizer, training hyperparameters, dtype info)
-
-        Args:
-            checkpoint_dir: Directory to save all files
-            step: Current training step (optional)
-            optimizer_state: Optimizer state dict (optional, for resuming)
-            training_config: Training hyperparameters dict (optional, e.g. max_iters, learning_rate, etc.)
-            save_dtype: Optional target dtype for checkpoint weights
-                        ('float32'/'fp32', 'bfloat16'/'bf16', 'float16'/'fp16').
-                        If None, weights are saved in their current dtype.
-        """
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
-        current_dtype = str(next(self.parameters()).dtype).replace("torch.", "")
-
-        # 1. Save model weights (possibly cast to save_dtype)
-        self.save(checkpoint_dir, save_dtype=save_dtype)
-
-        # 2. Save config
-        config_path = os.path.join(checkpoint_dir, "config.json")
-        self.config.save_json(config_path)
-
-        # 3. Save tokenizer state
-        if hasattr(self, "tokenizer") and self.tokenizer is not None:
-            tokenizer_path = os.path.join(checkpoint_dir, "tokenizer.json")
-            try:
-                tokenizer_state = self.tokenizer.get_state()
-                with open(tokenizer_path, 'w') as f:
-                    json.dump(tokenizer_state, f, indent=2)
-                print(f"Saved tokenizer to {tokenizer_path}")
-            except Exception as e:
-                print(f"Warning: Could not save tokenizer: {e}")
-
-        # 4. Save training state (optional but recommended)
-        if step is not None or optimizer_state is not None or training_config is not None:
-            training_state_path = os.path.join(checkpoint_dir, "training_state.json")
-            training_state: dict = {}
-
-            # Save current step
-            if step is not None:
-                training_state["step"] = step
-
-            # Save training hyperparameters (for resuming with same config)
-            if training_config is not None:
-                training_state["training_config"] = training_config
-
-            # Record dtype info
-            training_state["model_dtype_at_save"] = current_dtype
-            if save_dtype is not None:
-                training_state["checkpoint_dtype"] = save_dtype
-
-            # Optimizer state is saved separately as .pt (it's large and contains tensors)
-            if optimizer_state is not None:
-                optimizer_path = os.path.join(checkpoint_dir, "optimizer.pt")
-
-                def _to_cpu(obj):
-                    if torch.is_tensor(obj):
-                        return obj.detach().to("cpu")
-                    if isinstance(obj, dict):
-                        return {k: _to_cpu(v) for k, v in obj.items()}
-                    if isinstance(obj, (list, tuple)):
-                        return type(obj)(_to_cpu(v) for v in obj)
-                    return obj
-
-                torch.save(_to_cpu(optimizer_state), optimizer_path)
-
-                training_state["optimizer_file"] = "optimizer.pt"
-                print(f"Saved optimizer state to {optimizer_path}")
-
-            with open(training_state_path, 'w') as f:
-                json.dump(training_state, f, indent=2)
-            print(f"Saved training state to {training_state_path}")
 
 
     @classmethod
@@ -711,6 +696,13 @@ class GPT(nn.Module):
                 # Linear warmup: scale from 0 to target_lr
                 return target_lr * (step + 1) / warmup_steps
             return target_lr
+
+        def _mem(tag):
+            if torch.cuda.is_available():
+                alloc = torch.cuda.memory_allocated() / 1024**3
+                resv  = torch.cuda.memory_reserved() / 1024**3
+                peak  = torch.cuda.max_memory_allocated() / 1024**3
+                print(f"[GPU {tag}] alloc={alloc:.2f}GB reserved={resv:.2f}GB peak={peak:.2f}GB")
         
         for iter in range(start_step, max_iters):
             # Update learning rate (warmup or constant)
@@ -721,12 +713,15 @@ class GPT(nn.Module):
             if iter % eval_interval == 0:
                 ct = datetime.datetime.now()
                 print(f"{iter} : {ct}")
-                
+                _mem("before_estimate")
                 losses = self.estimate_loss(data_loader, eval_iters)
+                _mem("after_estimate_before_save")
                 lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
+
                 print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}{lr_info}")
                 
                 # Save eval checkpoint (fp32 by default, includes optimizer for resuming)
+
                 if checkpoint_dir:
                     self.save_checkpoint_bundle(
                         checkpoint_dir, 
@@ -735,7 +730,8 @@ class GPT(nn.Module):
                         training_config=training_config,
                         save_dtype=effective_save_dtype
                     )
-            
+                _mem("after_save")
+
             # Training step with optional AMP
             batch = data_loader.get_batch('train')
             
