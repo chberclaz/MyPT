@@ -703,6 +703,17 @@ class GPT(nn.Module):
                 resv  = torch.cuda.memory_reserved() / 1024**3
                 peak  = torch.cuda.max_memory_allocated() / 1024**3
                 print(f"[GPU {tag}] alloc={alloc:.2f}GB reserved={resv:.2f}GB peak={peak:.2f}GB")
+
+        def gpu_mem(tag: str):
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                alloc = torch.cuda.memory_allocated() / 1024**3
+                resv  = torch.cuda.memory_reserved() / 1024**3
+                free, total = torch.cuda.mem_get_info()
+                free_gb = free / 1024**3
+                total_gb = total / 1024**3
+                print(f"[GPU {tag}] alloc={alloc:.2f}GB reserved={resv:.2f}GB free={free_gb:.2f}GB total={total_gb:.2f}GB")
+
         
         for iter in range(start_step, max_iters):
             # Update learning rate (warmup or constant)
@@ -714,8 +725,10 @@ class GPT(nn.Module):
                 ct = datetime.datetime.now()
                 print(f"{iter} : {ct}")
                 _mem("before_estimate")
+                gpu_mem("before_estimate")
                 losses = self.estimate_loss(data_loader, eval_iters)
                 _mem("after_estimate_before_save")
+                gpu_mem("after_estimate_before_save")
                 lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
 
                 print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}{lr_info}")
@@ -731,10 +744,17 @@ class GPT(nn.Module):
                         save_dtype=effective_save_dtype
                     )
                 _mem("after_save")
+                gpu_mem("after_save")
+
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                gpu_mem("after_gc_and_empty_cache")
 
             # Training step with optional AMP
             batch = data_loader.get_batch('train')
             
+            optimizer.zero_grad(set_to_none=True)
             # Handle both (X, Y) and (X, Y, loss_mask) formats
             with ctx:
                 if isinstance(batch, (tuple, list)) and len(batch) == 3:
@@ -744,7 +764,6 @@ class GPT(nn.Module):
                     xb, yb = batch
                     _, loss = self(xb, yb)
             
-            optimizer.zero_grad(set_to_none=True)
             
             if scaler is not None:
                 # FP16 path with GradScaler
