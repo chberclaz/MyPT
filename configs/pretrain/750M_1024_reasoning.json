@@ -1,7 +1,7 @@
 {
   "name": "GPT-750M-1024-Reasoning",
   "description": "750M optimized for reasoning: deeper (32 layers) + narrower (1280 embd). Better multi-step logic, tool-calling decisions.",
-  "batch_size": 6,
+  "batch_size": 12,
   "block_size": 1024,
   "vocab_size": 50304,
   "n_embd": 1280,
@@ -11,7 +11,7 @@
   "bias": false,
 
   "learning_rate": 1.5e-4,
-  "max_iters": 615000,
+  "max_iters": 315000,
   "eval_interval": 3000,
   "warmup_iters": 0.05,
   "use_amp": true,
