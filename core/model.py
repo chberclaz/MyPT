@@ -1,4 +1,5 @@
 import torch
+import torch._dynamo        
 import torch.nn as nn
 from torch.nn import functional as F
 import torch.utils.checkpoint as cp
@@ -95,13 +96,31 @@ class CausalSelfAttention(nn.Module):
         self.head_size = config.n_embd // config.n_head
         self.dropout_p = config.dropout
 
-        # one projection for qkv
         self.qkv = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         self.proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, x):
-        B, T, C = x.shape  # C = n_embd
+    def forward(
+        self,
+        x,
+        past_kv=None,
+        use_cache: bool = False,
+        kv_cache=None,
+        cache_pos: int = 0,
+    ):
+        """
+        Supports two cache modes:
+
+        (A) Old mode (cat-based):
+            past_kv = (pk, pv) where pk/pv are (B, nh, T_past, hs)
+            -> returns present = (k_cat, v_cat) if use_cache
+
+        (B) Fast mode (preallocated):
+            kv_cache = (k_cache, v_cache) where k_cache/v_cache are (B, nh, block_size, hs)
+            cache_pos = int start position to write current tokens
+            -> writes into cache in-place, returns present=("kv_cache", new_cache_pos)
+        """
+        B, T, C = x.shape
 
         qkv = self.qkv(x)  # (B,T,3C)
         q, k, v = qkv.split(C, dim=-1)
@@ -111,16 +130,76 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, self.head_size).transpose(1, 2)
         v = v.view(B, T, self.n_head, self.head_size).transpose(1, 2)
 
+        # ----------------------------
+        # FAST PATH: preallocated KV cache (no cat)
+        # ----------------------------
+        if kv_cache is not None:
+            if not use_cache:
+                raise ValueError("kv_cache provided but use_cache=False. Set use_cache=True.")
+
+            k_cache, v_cache = kv_cache  # (B, nh, block_size, hs)
+            end_pos = cache_pos + T
+            if end_pos > k_cache.size(2):
+                raise ValueError(
+                    f"KV cache overflow: need end_pos={end_pos}, but cache has size={k_cache.size(2)}. "
+                    f"Increase block_size or trim prompt."
+                )
+
+            # Write new keys/values into cache
+            k_cache[:, :, cache_pos:end_pos, :] = k
+            v_cache[:, :, cache_pos:end_pos, :] = v
+
+            # Use cache up to end_pos
+            k_used = k_cache[:, :, :end_pos, :]
+            v_used = v_cache[:, :, :end_pos, :]
+
+            # IMPORTANT:
+            # With KV-cache decode, q is only the "new" token(s) and k_used contains only <= current time.
+            # Using is_causal=True when q_len != k_len can mis-mask and break quality.
+            # So: causal for prefill (cache_pos==0 and T>1), non-causal for incremental decode.
+            use_causal = (cache_pos == 0 and T > 1)
+
+            y = F.scaled_dot_product_attention(
+                q, k_used, v_used,
+                attn_mask=None,
+                dropout_p=self.dropout_p if self.training else 0.0,
+                is_causal=use_causal,
+            )  # (B, nh, T, hs)
+
+
+            y = y.transpose(1, 2).contiguous().view(B, T, C)
+            y = self.dropout(self.proj(y))
+
+            present = (kv_cache, end_pos)  # (cache_tensors, new_cache_pos)
+            return y, present
+
+        # ----------------------------
+        # OLD PATH: cat-based cache (kept for compatibility)
+        # ----------------------------
+        if past_kv is not None:
+            pk, pv = past_kv
+            k = torch.cat([pk, k], dim=2)
+            v = torch.cat([pv, v], dim=2)
+
+        # Same issue: during decode with cache, q_len is often 1 while k_len is past+1.
+        # Causal masking can misbehave in that rectangular case, so disable it when past exists.
+        use_causal = (past_kv is None)
+
         y = F.scaled_dot_product_attention(
             q, k, v,
             attn_mask=None,
             dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=True,
-        )  # (B, nh, T, hs)
+            is_causal=use_causal,
+        )
 
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # back to (B,T,C)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.dropout(self.proj(y))
-        return y
+
+        present = (k, v) if use_cache else None
+        return y, present
+
+
 
     
 class FeedForward(nn.Module):
@@ -144,22 +223,42 @@ class Block(nn.Module):
         self.fwd = FeedForward(config)
         self.ln1 = nn.LayerNorm(config.n_embd)
         self.ln2 = nn.LayerNorm(config.n_embd)
-        self.use_checkpoint = config.use_checkpoint   # toggle
+        self.use_checkpoint = config.use_checkpoint  # toggle
 
-    def forward(self, x):
-        if self.training and self.use_checkpoint:
+    def forward(
+        self,
+        x,
+        past_kv=None,
+        use_cache: bool = False,
+        kv_cache=None,
+        cache_pos: int = 0,
+    ):
+        # Training checkpoint path (no cache)
+        if self.training and self.use_checkpoint and (past_kv is None) and (not use_cache) and (kv_cache is None):
             def sa_fn(inp):
-                return self.sa(self.ln1(inp))
+                y, _ = self.sa(self.ln1(inp), past_kv=None, use_cache=False)
+                return y
+
             def ff_fn(inp):
                 return self.fwd(self.ln2(inp))
 
             x = x + cp.checkpoint(sa_fn, x, use_reentrant=False)
             x = x + cp.checkpoint(ff_fn, x, use_reentrant=False)
-            return x
+            return x, None
 
-        x = x + self.sa(self.ln1(x))
+        # Normal path (supports both cache modes)
+        attn_out, present = self.sa(
+            self.ln1(x),
+            past_kv=past_kv,
+            use_cache=use_cache,
+            kv_cache=kv_cache,
+            cache_pos=cache_pos,
+        )
+        x = x + attn_out
         x = x + self.fwd(self.ln2(x))
-        return x
+        return x, present
+
+
 
 
 
@@ -183,66 +282,101 @@ class GPT(nn.Module):
 
         self.token_embedding_table = nn.Embedding(self.config.vocab_size, self.config.n_embd)
         self.position_embedding_table= nn.Embedding(self.config.block_size, self.config.n_embd)
-        self.blocks= nn.Sequential(*[Block(self.config) for _ in range(self.config.n_layer)])
+        self.blocks = nn.ModuleList([Block(self.config) for _ in range(self.config.n_layer)])
         self.ln_f= nn.LayerNorm(self.config.n_embd) # final Layer norm
         self.lm_head = nn.Linear(self.config.n_embd,self.config.vocab_size)
 
-    def forward(self, idx, targets=None, loss_mask=None):
+    def forward(
+        self,
+        idx,
+        targets=None,
+        loss_mask=None,
+        past_kv=None,
+        use_cache: bool = False,
+        kv_cache=None,
+        cache_pos: int = 0,
+    ):
         """
-        Forward pass with optional loss masking for SFT (supervised fine-tuning).
-        
-        Args:
-            idx: Input token indices (B, T)
-            targets: Target token indices (B, T), optional
-            loss_mask: Binary mask for loss computation (B, T), optional
-                       1 = compute loss, 0 = ignore position
-                       Used for assistant-only training in chat/RAG scenarios
-        
-        Returns:
-            logits: Predicted logits (B, T, vocab_size) or (B*T, vocab_size) if targets provided
-            loss: Scalar loss (None if targets=None)
+        Cache modes:
+
+        (A) past_kv (old cat-based):
+            past_kv: list length n_layer, each element (k,v) or None
+            returns present_kv: list length n_layer of (k,v) if use_cache
+
+        (B) kv_cache (fast preallocated):
+            kv_cache: list length n_layer, each element (k_cache, v_cache)
+                     where caches are (B, nh, block_size, hs)
+            cache_pos: int position to write current tokens
+            returns present_kv: (kv_cache, new_cache_pos)
         """
         B, T = idx.shape
-        # idx and targets are both (B,T) tensor of integers
-        tok_emb = self.token_embedding_table(idx) # (B,T,C) --> batch by time by chanel (chanel = vocab_size)
-        #pos_emb= self.position_embedding_table(torch.arange(T,device=self.config.device)) # (T,C) 
-        pos = torch.arange(T, device=idx.device)
-        pos_emb = self.position_embedding_table(pos)
-        x = tok_emb + pos_emb # (B,T,C) --> not only token identity but also position at which they accur
-        x = self.blocks(x)
-        x = self.ln_f(x)
-        logits= self.lm_head(x) #(B,T,Vocab_size)
+        device = idx.device
 
-        if targets is None:
-            loss= None
+        tok_emb = self.token_embedding_table(idx)  # (B,T,C)
+
+        # Position handling:
+        # - fast cache mode uses cache_pos
+        # - cat cache mode uses past_len inferred from past_kv
+        # - no cache uses 0..T-1
+        if kv_cache is not None and use_cache:
+            pos_start = cache_pos
         else:
-            # reshape array from 3d to 2d to conform cross_entropy function
-            B, T, C = logits.shape
-            logits = logits.view(B*T, C)
-            targets = targets.view(B*T)
-            
-            if loss_mask is not None:
-                # Apply loss masking (for SFT with assistant-only loss)
-                # loss_mask expected shape (B, T), values 0 or 1 (or floats)
-                loss_mask = loss_mask.view(B * T).to(logits.device)
-                
-                # Compute per-token loss without reduction
-                per_token_loss = F.cross_entropy(
-                    logits, targets, reduction='none'
-                )
-                
-                # Apply mask and normalize only by masked positions
-                denom = loss_mask.sum()
-                if denom.item() > 0:
-                    loss = (per_token_loss * loss_mask).sum() / denom
-                else:
-                    # Fallback if mask is all zeros (shouldn't happen in practice)
-                    loss = per_token_loss.mean()
-            else:
-                # Standard loss computation (all positions)
-                loss = F.cross_entropy(logits, targets)
+            pos_start = 0
+            if past_kv is not None and len(past_kv) > 0 and past_kv[0] is not None:
+                pos_start = past_kv[0][0].size(2)
 
-        return logits, loss
+        pos = torch.arange(pos_start, pos_start + T, device=device)
+        pos_emb = self.position_embedding_table(pos)  # (T,C)
+
+        x = tok_emb + pos_emb
+
+        # Run blocks
+        if use_cache:
+            if kv_cache is not None:
+                # FAST MODE: preallocated caches; same cache_pos for all layers
+                for i, block in enumerate(self.blocks):
+                    x, _ = block(
+                        x,
+                        past_kv=None,
+                        use_cache=True,
+                        kv_cache=kv_cache[i],
+                        cache_pos=cache_pos,
+                    )
+                present_kv = (kv_cache, cache_pos + T)
+
+            else:
+                # OLD MODE: cat-based caches
+                present_kv = []
+                for i, block in enumerate(self.blocks):
+                    layer_past = None if past_kv is None else past_kv[i]
+                    x, pkv = block(x, past_kv=layer_past, use_cache=True, kv_cache=None, cache_pos=0)
+                    present_kv.append(pkv)
+        else:
+            # No cache
+            for block in self.blocks:
+                x, _ = block(x, past_kv=None, use_cache=False, kv_cache=None, cache_pos=0)
+            present_kv = None
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)  # (B,T,V)
+
+        loss = None
+        if targets is not None:
+            Bt, Tt, Ct = logits.shape
+            logits2 = logits.view(Bt * Tt, Ct)
+            targets2 = targets.view(Bt * Tt)
+
+            if loss_mask is not None:
+                loss_mask2 = loss_mask.view(Bt * Tt).to(logits2.device)
+                per_token_loss = F.cross_entropy(logits2, targets2, reduction='none')
+                denom = loss_mask2.sum().clamp_min(1.0)
+                loss = (per_token_loss * loss_mask2).sum() / denom
+            else:
+                loss = F.cross_entropy(logits2, targets2)
+
+        return logits, loss, present_kv
+
+
 
     def _cpu_state_dict(self, dtype: torch.dtype | None = None) -> dict:
         """Return a CPU state_dict snapshot. Optionally cast floating tensors."""
@@ -420,17 +554,18 @@ class GPT(nn.Module):
             device = config.device
             is_cuda = device.startswith('cuda') if isinstance(device, str) else (device.type == 'cuda')
             
-            if checkpoint_dtype in ('bf16', 'bfloat16') and is_cuda:
-                # Check if GPU supports bf16 (Ampere+ = compute capability 8.0+)
-                if torch.cuda.is_available():
-                    capability = torch.cuda.get_device_capability()
-                    if capability[0] < 8:
-                        print(f"⚠️  Checkpoint is bf16 but GPU (compute {capability[0]}.{capability[1]}) "
-                              f"doesn't have native bf16 support.")
-                        print(f"   Auto-converting to fp32 for compatibility.")
-                        effective_dtype = 'fp32'
-                    else:
-                        print(f"✓ Loading bf16 checkpoint on bf16-capable GPU (compute {capability[0]}.{capability[1]})")
+        if checkpoint_dtype in ('bf16', 'bfloat16') and is_cuda:
+            if torch.cuda.is_available():
+                capability = torch.cuda.get_device_capability()
+                if capability[0] < 8:
+                    print(f"⚠️  Checkpoint is bf16 but GPU (compute {capability[0]}.{capability[1]}) "
+                        f"doesn't have native bf16 support.")
+                    print("   Auto-converting to fp16 for faster CUDA inference.")
+                    effective_dtype = 'fp16'
+                else:
+                    print(f"✓ Loading bf16 checkpoint on bf16-capable GPU (compute {capability[0]}.{capability[1]})")
+                    effective_dtype = 'bf16'
+
             
             elif checkpoint_dtype in ('fp16', 'float16'):
                 print(f"✓ Loading fp16 checkpoint")
@@ -829,168 +964,197 @@ class GPT(nn.Module):
         return final_losses
     
     # ===== GENERATION METHODS =====
+    def to_inference(self, device: str | None = None):
+        """
+        Make inference dtype sane.
+        - CUDA consumer GPUs (e.g. RTX 2060): fp16
+        - CPU: fp32
+        """
+        if device is None:
+            device = self.config.device
+
+        self.eval()
+        self.config.device = device
+
+        if isinstance(device, str) and "cuda" in device:
+            self.to(device=device, dtype=torch.float16)
+        else:
+            self.to(device=device, dtype=torch.float32)
+        return self
+
     
     def compile_for_inference(self, mode: str = "default"):
         """
         Compile the model with torch.compile() for faster inference.
-        
-        Args:
-            mode: Compilation mode:
-                  - "default" (recommended, most compatible)
-                  - "reduce-overhead" (faster but requires Triton)
-                  - "max-autotune" (slower compile, potentially faster run)
-        
-        Returns:
-            self (for chaining)
-        
-        Note: 
-            - Requires PyTorch 2.0+
-            - First generation will be slower due to JIT compilation
-            - "reduce-overhead" and "max-autotune" require Triton (may not work on Windows)
+        Robust against accidental local 'torch' shadowing.
         """
-        if not hasattr(torch, 'compile'):
+        import torch as _torch
+
+        if not hasattr(_torch, "compile"):
             print("torch.compile() not available (requires PyTorch 2.0+)")
             return self
-        
+
         # Suppress dynamo errors to prevent crashes
         import torch._dynamo
         torch._dynamo.config.suppress_errors = True
-        
+
         print(f"Compiling model with mode='{mode}'...")
         try:
-            # Try requested mode first
-            self.forward = torch.compile(self.forward, mode=mode)
+            self.forward = torch.compile(self.forward, mode=mode)  # inductor default
             print("Model compiled successfully!")
-        except Exception as e:
-            error_msg = str(e)
-            if "triton" in error_msg.lower():
-                print(f"Note: Triton not available, using eager mode fallback")
-                print("  (Install triton for faster compilation: pip install triton)")
-            else:
-                print(f"Compilation warning: {error_msg[:100]}")
-            # Model will fall back to eager mode automatically due to suppress_errors
-        
+        except Exception:
+            print("Note: Triton not available, using eager mode fallback")
+            self.forward = torch.compile(self.forward, backend="aot_eager")
+
         return self
+
     
     @torch.inference_mode()
     def generate(self, prompt, max_new_tokens, temperature=0.8, top_k=50, top_p=0.95,
-                 repetition_penalty=1.1, stop_tokens=None):
+                repetition_penalty=1.1, stop_tokens=None, recent_penalty_window: int = 256):
         """
-        Generate text with advanced sampling controls.
-        
-        Args:
-            prompt: Input text to continue from
-            max_new_tokens: Maximum number of tokens to generate
-            temperature: Controls randomness (0.0=deterministic, 1.0=neutral, >1.0=more random)
-            top_k: Only sample from top K most likely tokens (0=disabled)
-            top_p: Nucleus sampling - keep tokens with cumulative prob <= top_p (1.0=disabled)
-            repetition_penalty: Penalize repeated tokens (1.0=disabled, >1.0=discourage repeats)
-            stop_tokens: Optional list of token IDs to stop generation on
-        
-        Returns:
-            Generated text string
-        
-        Sampling Strategy:
-            1. Apply temperature scaling to logits
-            2. Apply repetition penalty to already-seen tokens (VECTORIZED)
-            3. Apply top-k filtering (keep only top K tokens)
-            4. Apply top-p/nucleus filtering (only if needed after top-k)
-            5. Sample from the filtered distribution
-        
-        Performance Tips:
-            - Use top_k=20, top_p=1.0 for fastest generation
-            - Call model.compile_for_inference() once before generating (PyTorch 2.0+)
-            - Use fp16/bf16 model dtype for ~2x speedup
+        KV-cache generation (fast).
+        Fixes repetition penalty (no growing cat) using a bounded recent window.
         """
-        ctx_ids = self.encode(prompt)
         device = self.config.device
-        
-        # Pre-allocate output tensor with extra space to avoid repeated allocations
-        max_len = len(ctx_ids) + max_new_tokens
-        idx = torch.zeros(1, max_len, dtype=torch.long, device=device)
-        idx[0, :len(ctx_ids)] = torch.tensor(ctx_ids, dtype=torch.long, device=device)
-        cur_len = len(ctx_ids)
-        
-        # Track generated tokens as a GPU tensor for fast repetition penalty
-        if repetition_penalty != 1.0:
-            # Pre-allocate penalty tokens tensor
-            penalty_tokens = torch.tensor(ctx_ids, dtype=torch.long, device=device)
-        
-        # Handle stop tokens
+        device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+
+        # Autocast for inference: fp16 on consumer CUDA; otherwise no autocast
+        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16) if device_type == "cuda" else nullcontext()
+
+        ctx_ids = self.encode(prompt)
+        if len(ctx_ids) == 0:
+            ctx_ids = [0]
+
+        # Stop tokens handling
         if stop_tokens is None:
             stop_tokens = set()
         elif not isinstance(stop_tokens, set):
             stop_tokens = set(stop_tokens)
 
+        # We'll do KV-cache prefill on at most block_size tokens
+        if len(ctx_ids) > self.config.block_size:
+            ctx_ids = ctx_ids[-self.config.block_size:]
+
+        idx_prompt = torch.tensor([ctx_ids], dtype=torch.long, device=device)  # (1, L)
+
+        # --------- Preallocate KV caches (FAST) ----------
+        # caches: list length n_layer, each entry (k_cache, v_cache)
+        # shapes: (B=1, nh, block_size, hs)
+        nh = self.config.n_head
+        hs = self.config.n_embd // self.config.n_head
+        cache_dtype = next(self.parameters()).dtype  # match model dtype (fp16 on 2060)
+
+        kv_cache = []
+        for _ in range(self.config.n_layer):
+            k_cache = torch.empty((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
+            v_cache = torch.empty((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
+            kv_cache.append((k_cache, v_cache))
+        cache_pos = 0
+
+
+        # Ring buffer for repetition penalty (bounded)
+        use_rep = (repetition_penalty is not None) and (repetition_penalty != 1.0)
+        recent_n = max(0, int(recent_penalty_window))
+        if use_rep and recent_n > 0:
+            recent = torch.empty(recent_n, dtype=torch.long, device=device)
+            recent_len = 0
+            recent_pos = 0
+
+            # seed with prompt tokens (last recent_n)
+            seed = ctx_ids[-recent_n:] if len(ctx_ids) > recent_n else ctx_ids
+            for t in seed:
+                recent[recent_pos] = int(t)
+                recent_pos = (recent_pos + 1) % recent_n
+                recent_len = min(recent_len + 1, recent_n)
+
+        # Prefill (build cache)
+        with ctx:
+            logits, _, present = self(
+                idx_prompt,
+                past_kv=None,
+                use_cache=True,
+                kv_cache=kv_cache,
+                cache_pos=cache_pos,
+            )
+        kv_cache, cache_pos = present
+
+
+        # Start from last token's logits
+        logits = logits[:, -1, :]  # (1, vocab)
+
+        out_ids = list(ctx_ids)
+
         for _ in range(max_new_tokens):
-            # Crop to the last block_size tokens (sliding window)
-            start_pos = max(0, cur_len - self.config.block_size)
-            idx_cond = idx[:, start_pos:cur_len]
-            
-            # Get predictions
-            logits, _ = self(idx_cond)
-            
-            # Focus only on the last time step
-            logits = logits[:, -1, :]  # (B, vocab_size)
-            
-            # Apply temperature (in-place for speed)
-            if temperature != 1.0 and temperature > 0:
-                logits.div_(temperature)
-            
-            # Apply repetition penalty (VECTORIZED)
-            if repetition_penalty != 1.0:
-                # Gather logits for penalty tokens
-                penalty_logits = logits.index_select(1, penalty_tokens)
-                # Apply penalty: divide positive, multiply negative
+            # temperature
+            if temperature is not None and temperature > 0 and temperature != 1.0:
+                logits = logits.div(temperature)   # keeps it as a tensor op (fine)
+
+            # repetition penalty (bounded + unique)
+            if use_rep and recent_n > 0 and recent_len > 0:
+                recent_tokens = recent[:recent_len] if recent_len < recent_n else recent
+                uniq = torch.unique(recent_tokens)
+                penalty_logits = logits.index_select(1, uniq)
                 penalty_logits = torch.where(
                     penalty_logits > 0,
                     penalty_logits / repetition_penalty,
                     penalty_logits * repetition_penalty
                 )
-                # Scatter back
-                logits.scatter_(1, penalty_tokens.unsqueeze(0), penalty_logits)
-            
-            # Apply top-k filtering
-            if top_k > 0:
-                top_k_actual = min(top_k, logits.size(-1))
+                logits.scatter_(1, uniq.unsqueeze(0), penalty_logits)
+
+            # top-k
+            if top_k and top_k > 0:
+                top_k_actual = min(int(top_k), logits.size(-1))
                 v, _ = torch.topk(logits, top_k_actual)
-                logits[logits < v[:, [-1]]] = float('-inf')
-            
-            # Apply top-p (nucleus) filtering
-            # Optimization: skip if top_k already reduced to very few tokens
-            if top_p < 1.0 and (top_k == 0 or top_k > 10):
+                logits = logits.masked_fill(logits < v[:, [-1]], float("-inf"))
+
+            # top-p
+            if top_p is not None and top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-                
-                # Remove tokens with cumulative probability above the threshold
+                probs_sorted = F.softmax(sorted_logits, dim=-1)
+                cumulative_probs = torch.cumsum(probs_sorted, dim=-1)
+
                 sorted_indices_to_remove = cumulative_probs > top_p
-                # Keep first token above threshold
                 sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                 sorted_indices_to_remove[..., 0] = 0
-                
-                # Scatter sorted tensors to original indexing
-                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                logits[indices_to_remove] = float('-inf')
-            
-            # Convert to probabilities and sample
+
+                remove_mask = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                logits = logits.masked_fill(remove_mask, float("-inf"))
+
             probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
-            
-            # Store in pre-allocated tensor (no cat!)
-            idx[0, cur_len] = idx_next[0, 0]
-            cur_len += 1
-            
-            # Update penalty tokens tensor
-            if repetition_penalty != 1.0:
-                penalty_tokens = torch.cat([penalty_tokens, idx_next[0]])
-            
-            # Check for stop tokens
-            next_token = idx_next[0, 0].item()
+            idx_next = torch.multinomial(probs, num_samples=1)  # (1,1)
+
+
+
+            next_token = int(idx_next.item())
+
+            out_ids.append(next_token)
+
+            # update ring buffer
+            if use_rep and recent_n > 0:
+                recent[recent_pos] = next_token
+                recent_pos = (recent_pos + 1) % recent_n
+                recent_len = min(recent_len + 1, recent_n)
+
+            # stop
             if next_token in stop_tokens:
                 break
-        
-        # Decode only the generated portion
-        return self.decode(idx[0, :cur_len].tolist())
+
+            # KV step: feed ONLY the new token
+            with ctx:
+                logits_step, _, present = self(
+                    idx_next,
+                    past_kv=None,
+                    use_cache=True,
+                    kv_cache=kv_cache,
+                    cache_pos=cache_pos,
+                )
+            kv_cache, cache_pos = present
+            logits = logits_step[:, -1, :]
+
+
+        return self.decode(out_ids)
+
     
     @torch.inference_mode()
     def generate_simple(self, prompt, max_new_tokens):

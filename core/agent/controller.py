@@ -314,12 +314,12 @@ class AgentController:
         self, 
         history: List[Dict[str, Any]], 
         max_steps: int = 5,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 256,
         verbose: bool = False,
-        temperature: float = 0.7,
-        top_k: int = 50,
-        top_p: float = 0.9,
-        repetition_penalty: float = 1.1,
+        temperature: float = 0.3,
+        top_k: int = 40,
+        top_p: float = 1.0,
+        repetition_penalty: float = 1.05,
     ) -> Dict[str, Any]:
         """
         Run the agent loop until final answer or max_steps.
@@ -351,6 +351,7 @@ class AgentController:
             print(f"  Max new tokens: {max_new_tokens}")
             print(f"  History length: {len(history)} messages")
             print(f"  Block size:     {self.block_size}")
+            print(f"  Repetition pen: {repetition_penalty}")
             _debug_section("SYSTEM PROMPT", True)
             for i, line in enumerate(self.system_prompt.split('\n'), 1):
                 print(f"  {i:3d} | {line}")
@@ -390,14 +391,15 @@ class AgentController:
             try:
                 if verbose:
                     print(f"\n  [Generating with max_new_tokens={max_new_tokens}, "
-                          f"temp={temperature}, top_k={top_k}, top_p={top_p}...]")
+                          f"temp={temperature}, top_k={top_k}, top_p={top_p}, repetition penalty:{repetition_penalty}...]")
                 output = self.model.generate(
                     prompt, 
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     top_k=top_k,
                     top_p=top_p,
-                    repetition_penalty=repetition_penalty
+                    repetition_penalty=64,
+                    recent_penalty_window=max_new_tokens
                 )
             except Exception as e:
                 if verbose:
