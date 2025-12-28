@@ -103,16 +103,19 @@ class Head(nn.Module):
         v = self.value(x) # --> here is what im interested in, here is what i have and if you find me interesting, this is what i will communicate with you
  
         #compute attention scores ("affinities")
-        #wei = q @ k.transpose(-2,-1)* C**-0.5 # (B,T,C) @ (B,C,T) --> (B,T,T)
-        # use head_size for scaling, not full C
-        wei = q @ k.transpose(-2, -1) * (self.head_size ** -0.5)
+        # q,k,v are (B,T,hs)
+        q = q.unsqueeze(1)  # (B,1,T,hs)
+        k = k.unsqueeze(1)
+        v = v.unsqueeze(1)
 
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))   # elements can only look in the past --> decoder Block (B,T,T)
-        wei = F.softmax(wei, dim=-1) # (B,T,T)
-        wei = self.dropout(wei)
-        # perform the weighted aggregation of the values
-        out = wei @ v # (B,T,T) @ (B,T,C) --> (B,T,C) # --> Adding Values depending on how interesting the elements find each other (Q,K,V)
-        return out
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=None,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=True
+        )  # (B,1,T,hs)
+
+        return out.squeeze(1)  # (B,T,hs)
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, config):
@@ -755,6 +758,7 @@ class GPT(nn.Module):
             batch = data_loader.get_batch('train')
             
             optimizer.zero_grad(set_to_none=True)
+            gpu_mem("after_zero_grad")
             # Handle both (X, Y) and (X, Y, loss_mask) formats
             with ctx:
                 if isinstance(batch, (tuple, list)) and len(batch) == 3:
@@ -763,7 +767,10 @@ class GPT(nn.Module):
                 else:
                     xb, yb = batch
                     _, loss = self(xb, yb)
-            
+                    # debug once
+                    if iter == start_step:
+                        print("Inside autocast dtype:", self.lm_head.weight.dtype)
+            gpu_mem("after_forward")
             
             if scaler is not None:
                 # FP16 path with GradScaler

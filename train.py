@@ -312,7 +312,7 @@ def main():
         else:
             print(f"LR warmup: {int(effective_warmup_iters)} steps")
     print()
-    
+    print("Model param dtype:", next(model.parameters()).dtype)
     model.fit(
         data_loader=data_loader,
         optimizer=optimizer,
