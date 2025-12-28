@@ -44,7 +44,7 @@ __version__ = "0.2.0"
 __author__ = "MyPT Contributors"
 
 # Core model classes
-from .model import GPT, GPTConfig, Head, MultiHeadAttention, FeedForward, Block
+from .model import GPT, GPTConfig, CausalSelfAttention, FeedForward, Block
 
 # Tokenization
 from .tokenizer import Tokenizer
