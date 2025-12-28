@@ -6,7 +6,7 @@ from dataclasses import asdict
 from contextlib import nullcontext
 import os
 import json
-
+# some tests
 # Local imports are placed here to avoid circulars when tooling loads files out of order
 from .tokenizer import Tokenizer
 
@@ -345,7 +345,7 @@ def save(self, checkpoint_dir: str, save_dtype: str | None = None):
                     return obj
 
                 torch.save(_to_cpu(optimizer_state), optimizer_path)
-                
+
                 training_state["optimizer_file"] = "optimizer.pt"
                 print(f"Saved optimizer state to {optimizer_path}")
 
