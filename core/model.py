@@ -238,47 +238,34 @@ class GPT(nn.Module):
 
         return logits, loss
     
-    def save(self, checkpoint_dir: str, save_dtype: str | None = None):
-        """
-        Save model weights only (to model.pt).
-        Optionally cast floating-point tensors to a target dtype (e.g. 'float32', 'bfloat16').
+def save(self, checkpoint_dir: str, save_dtype: str | None = None):
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    model_path = os.path.join(checkpoint_dir, "model.pt")
 
-        Config, tokenizer, and training state are saved separately via save_checkpoint_bundle().
+    state_dict = self.state_dict()
+    current_dtype = str(next(self.parameters()).dtype).replace("torch.", "")
 
-        Args:
-            checkpoint_dir: Directory to save checkpoint (e.g., "checkpoints/dante")
-            save_dtype: Optional dtype string for checkpoint tensors
-                        ('float32', 'fp32', 'bfloat16', 'bf16', 'float16', 'fp16').
-                        If None, tensors are saved in their current dtype.
-        """
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        model_path = os.path.join(checkpoint_dir, "model.pt")
+    if save_dtype is not None:
+        target_dtype = _resolve_dtype(save_dtype)
+        cast_state_dict = {}
+        for k, v in state_dict.items():
+            if torch.is_floating_point(v):
+                # ✅ detach + move to CPU + cast on CPU (no VRAM duplication)
+                cast_state_dict[k] = v.detach().to(device="cpu", dtype=target_dtype)
+            else:
+                cast_state_dict[k] = v.detach().to(device="cpu")
+        checkpoint_payload = {
+            "state_dict": cast_state_dict,
+            "checkpoint_dtype": save_dtype,
+            "model_dtype": current_dtype,
+        }
+    else:
+        # also move to CPU to avoid GPU spikes during serialization
+        checkpoint_payload = {k: v.detach().to("cpu") for k, v in state_dict.items()}
 
-        state_dict = self.state_dict()
-        current_dtype = str(next(self.parameters()).dtype).replace("torch.", "")
-
-        checkpoint_payload: dict
-
-        if save_dtype is not None:
-            target_dtype = _resolve_dtype(save_dtype)
-            cast_state_dict = {}
-            for k, v in state_dict.items():
-                if torch.is_floating_point(v):
-                    cast_state_dict[k] = v.to(target_dtype)
-                else:
-                    cast_state_dict[k] = v
-            checkpoint_payload = {
-                "state_dict": cast_state_dict,
-                "checkpoint_dtype": save_dtype,
-                "model_dtype": current_dtype,
-            }
-        else:
-            # Backwards-compatible: still allow raw state_dict-only checkpoints
-            checkpoint_payload = state_dict
-
-        torch.save(checkpoint_payload, model_path)
-        print(f"Saved model weights to {model_path} (model dtype={current_dtype}, "
-              f"checkpoint dtype={save_dtype or current_dtype})")
+    torch.save(checkpoint_payload, model_path)
+    print(f"Saved model weights to {model_path} (model dtype={current_dtype}, "
+          f"checkpoint dtype={save_dtype or current_dtype})")
 
     
     def save_checkpoint_bundle(self, checkpoint_dir: str, step: int | None = None,
@@ -347,7 +334,18 @@ class GPT(nn.Module):
             # Optimizer state is saved separately as .pt (it's large and contains tensors)
             if optimizer_state is not None:
                 optimizer_path = os.path.join(checkpoint_dir, "optimizer.pt")
-                torch.save(optimizer_state, optimizer_path)
+
+                def _to_cpu(obj):
+                    if torch.is_tensor(obj):
+                        return obj.detach().to("cpu")
+                    if isinstance(obj, dict):
+                        return {k: _to_cpu(v) for k, v in obj.items()}
+                    if isinstance(obj, (list, tuple)):
+                        return type(obj)(_to_cpu(v) for v in obj)
+                    return obj
+
+                torch.save(_to_cpu(optimizer_state), optimizer_path)
+                
                 training_state["optimizer_file"] = "optimizer.pt"
                 print(f"Saved optimizer state to {optimizer_path}")
 
