@@ -737,7 +737,7 @@ class GPT(nn.Module):
                 gpu_mem("after_estimate_before_save")
                 lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
 
-                print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}{lr_info}")
+                print(f"step {iter}: Validation loss {losses['val']:.4f}{lr_info}")
                 
                 # Save eval checkpoint (fp32 by default, includes optimizer for resuming)
 
