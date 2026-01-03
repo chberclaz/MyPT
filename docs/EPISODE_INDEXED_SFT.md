@@ -41,15 +41,16 @@ dataset_dir/
 
 ### File Formats
 
-| File | Format | Description |
-|------|--------|-------------|
-| `tokens.bin` | `np.uint16` | Concatenated token IDs |
-| `mask.bin` | `np.uint8` | Loss mask (1 = compute loss, 0 = ignore) |
+| File           | Format            | Description                               |
+| -------------- | ----------------- | ----------------------------------------- |
+| `tokens.bin`   | `np.uint16`       | Concatenated token IDs                    |
+| `mask.bin`     | `np.uint8`        | Loss mask (1 = compute loss, 0 = ignore)  |
 | `episodes.idx` | `np.uint64` pairs | `(start_offset, length)` for each episode |
 
 ### Auto-Detection
 
 The loader automatically detects episode-indexed datasets by checking for:
+
 - `train/shard_*/episodes.idx` files, or
 - `train/episodes.idx` file
 
@@ -59,29 +60,29 @@ All parameters are configured via `GPTConfig` (in JSON config files):
 
 ```json
 {
-    "batch_size": 8,
-    "block_size": 512,
-    "use_loss_mask": true,
-    "batch_sampling_mode": "epoch",
-    "epoch_seed": 1337,
-    "epoch_shuffle": true,
-    "epoch_drop_last": true,
-    "pad_token_id": null,
-    "episode_min_tokens": 2
+  "batch_size": 8,
+  "block_size": 512,
+  "use_loss_mask": true,
+  "batch_sampling_mode": "epoch",
+  "epoch_seed": 1337,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+  "pad_token_id": null,
+  "episode_min_tokens": 2
 }
 ```
 
 ### Configuration Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `batch_sampling_mode` | str | `"epoch"` | `"epoch"` for deterministic coverage, `"random"` for uniform sampling |
-| `epoch_seed` | int | `1337` | **Base seed for reproducibility** - same seed = same training order |
-| `epoch_shuffle` | bool | `true` | Shuffle episode order each epoch |
-| `epoch_drop_last` | bool | `true` | Drop incomplete final batch |
-| `pad_token_id` | int\|null | `null` | Token ID for padding (null = use EOT token) |
-| `episode_min_tokens` | int | `2` | Minimum episode length (shorter episodes skipped) |
-| `use_loss_mask` | bool | `false` | Enable assistant-only loss masking |
+| Parameter             | Type      | Default   | Description                                                           |
+| --------------------- | --------- | --------- | --------------------------------------------------------------------- |
+| `batch_sampling_mode` | str       | `"epoch"` | `"epoch"` for deterministic coverage, `"random"` for uniform sampling |
+| `epoch_seed`          | int       | `1337`    | **Base seed for reproducibility** - same seed = same training order   |
+| `epoch_shuffle`       | bool      | `true`    | Shuffle episode order each epoch                                      |
+| `epoch_drop_last`     | bool      | `true`    | Drop incomplete final batch                                           |
+| `pad_token_id`        | int\|null | `null`    | Token ID for padding (null = use EOT token)                           |
+| `episode_min_tokens`  | int       | `2`       | Minimum episode length (shorter episodes skipped)                     |
+| `use_loss_mask`       | bool      | `false`   | Enable assistant-only loss masking                                    |
 
 ## Reproducibility
 
@@ -115,11 +116,11 @@ All training events are logged to `logs/audit/audit_*.log`:
 
 ### Events Logged
 
-| Event | Description | Key Fields |
-|-------|-------------|------------|
-| `dataset_load` | Dataset loaded | `epoch_seed`, `epoch_shuffle`, `num_episodes` |
-| `epoch_start` | Epoch begins | `seed`, `first_episode_ids` (first 10), `num_episodes` |
-| `epoch_complete` | Epoch ends | `seed_used`, `episodes_seen` |
+| Event            | Description    | Key Fields                                             |
+| ---------------- | -------------- | ------------------------------------------------------ |
+| `dataset_load`   | Dataset loaded | `epoch_seed`, `epoch_shuffle`, `num_episodes`          |
+| `epoch_start`    | Epoch begins   | `seed`, `first_episode_ids` (first 10), `num_episodes` |
+| `epoch_complete` | Epoch ends     | `seed_used`, `episodes_seen`                           |
 
 ### Example Audit Entries
 
@@ -163,9 +164,9 @@ Create a config file `configs/sft1/my_experiment.json`:
 
 ```json
 {
-    "inherits": "configs/sft1/150M.json",
-    "epoch_seed": 42,
-    "batch_sampling_mode": "epoch"
+  "inherits": "configs/sft1/150M.json",
+  "epoch_seed": 42,
+  "batch_sampling_mode": "epoch"
 }
 ```
 
@@ -231,4 +232,3 @@ Episodes are globally indexed across shards, maintaining deterministic sampling.
 - [Tool-call SFT](toolcall_sft.md) - Training tool-using agents
 - [Audit & Compliance](AUDIT_COMPLIANCE.md) - Audit logging details
 - [Configuration Presets](CONFIG_PRESETS.md) - Model configurations
-

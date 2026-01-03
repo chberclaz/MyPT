@@ -327,7 +327,7 @@ class AgentController:
         Args:
             history: Initial conversation history
             max_steps: Maximum tool execution steps
-            max_new_tokens: Max tokens per generation
+            max_new_tokens: Max tokens per generation (dynamically adjusted per prompt to prevent overflow)
             verbose: Print debug info (full prompts, tool calls, etc.)
             temperature: Sampling temperature (0.0=deterministic, 1.0=neutral)
             top_k: Only sample from top K tokens (0=disabled)
@@ -386,6 +386,23 @@ class AgentController:
                 
                 # Log the FULL prompt being sent to model
                 _debug_prompt(prompt, True, f"PROMPT TO MODEL (Step {step + 1})")
+            
+            # Dynamically adjust max_new_tokens based on actual prompt length
+            # to prevent KV cache overflow
+            if self.tokenizer:
+                try:
+                    prompt_token_count = len(self.tokenizer.encode(prompt))
+                    tokens_remaining = self.block_size - prompt_token_count
+                    # Reserve at least 1 token for generation
+                    max_safe_tokens = max(1, tokens_remaining - 1)
+                    
+                    if max_new_tokens > max_safe_tokens:
+                        if verbose:
+                            print(f"\n  [INFO] Reducing max_new_tokens from {max_new_tokens} to {max_safe_tokens} "
+                                  f"(prompt={prompt_token_count} tokens, block_size={self.block_size})")
+                        max_new_tokens = max_safe_tokens
+                except Exception:
+                    pass  # If tokenization fails, use original max_new_tokens
             
             # Generate
             try:

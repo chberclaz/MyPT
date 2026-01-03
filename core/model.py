@@ -738,10 +738,10 @@ class GPT(nn.Module):
                 # Handle both (X, Y) and (X, Y, loss_mask) formats
                 if isinstance(batch, (tuple, list)) and len(batch) == 3:
                     X, Y, loss_mask = batch
-                    _, loss = self(X, Y, loss_mask=loss_mask)
+                    _, loss, _ = self(X, Y, loss_mask=loss_mask)
                 else:
                     X, Y = batch
-                    _, loss = self(X, Y)
+                    _, loss, _ = self(X, Y)
                 
                 losses[k] = loss.item()
             out[split] = losses.mean()
@@ -912,10 +912,10 @@ class GPT(nn.Module):
             with ctx:
                 if isinstance(batch, (tuple, list)) and len(batch) == 3:
                     xb, yb, loss_mask = batch
-                    _, loss = self(xb, yb, loss_mask=loss_mask)
+                    _, loss, _ = self(xb, yb, loss_mask=loss_mask)
                 else:
                     xb, yb = batch
-                    _, loss = self(xb, yb)
+                    _, loss, _ = self(xb, yb)
                     # debug once
                     if iter == start_step:
                         print("Inside autocast dtype:", self.lm_head.weight.dtype)

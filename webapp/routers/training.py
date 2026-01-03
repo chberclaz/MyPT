@@ -384,10 +384,10 @@ def run_training_thread(request: TrainingRequest):
                 batch = data_loader.get_batch('train')
                 if isinstance(batch, (tuple, list)) and len(batch) == 3:
                     xb, yb, loss_mask = batch
-                    _, loss = model(xb, yb, loss_mask=loss_mask)
+                    _, loss, _ = model(xb, yb, loss_mask=loss_mask)
                 else:
                     xb, yb = batch
-                    _, loss = model(xb, yb)
+                    _, loss, _ = model(xb, yb)
                 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()

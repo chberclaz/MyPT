@@ -1,0 +1,43 @@
+{
+  "name": "GPT-750M-1024-Chat-SFT-Phase3a-Augmented",
+  "description": "Phase 3a with augmented dataset: 1200 episodes (560 original + 640 paraphrased). Optimal for reduced overfitting.",
+
+  "comment_architecture": "Keep same architecture as pretrained 750M reasoning model",
+  "batch_size": 10,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.12,
+  "bias": false,
+
+  "comment_training": "Optimized for augmented dataset (1200 episodes)",
+  "learning_rate": 5e-5,
+  "max_iters": 8000,
+  "eval_interval": 500,
+  "save_every": 1000,
+  "warmup_iters": 0.03,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+
+  "comment_sft": "Loss masking for assistant-only training",
+  "use_loss_mask": true,
+
+  "comment_episode_indexed": "Episode-indexed data loading (deterministic SFT)",
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 3302,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+
+  "comment_optimizer": "AdamW with moderate weight decay for SFT",
+  "weight_decay": 0.05,
+
+  "comment_strategy": "With 1200 episodes and batch_size=10, we get ~120 batches/epoch. At 8K iterations = ~66 epochs. Sweet spot for augmented data.",
+
+  "comment_dropout": "Reduced from 0.15 to 0.12 since augmented dataset has more diversity and less overfitting risk.",
+
+  "comment_note": "Use with augmented dataset: python train.py --model 750M_gold_2.22 --config configs/sft1/750M_1024_chat_sft_phase3a_augmented.json --dataset data/sft_conversation_goldset_augmented_prepared --output checkpoints/750M_phase3a_chat_sft_aug"
+}
