@@ -3,9 +3,13 @@
 # choco needs to be installed to install python
 # pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 import argparse
+import torch
+import torch.nn as nn
 from core import (
     GPTConfig, 
-    GPTDataLoader, 
+    GPTDataLoader,
+    GPTEpisodeDataLoader,
+    is_episode_indexed_dataset,
     CheckpointManager, 
     get_model_info,
     calculate_dataset_coverage,
@@ -239,6 +243,9 @@ def main():
     )
     model = model.to(config.device)
     model = model.to(dtype=torch.bfloat16)
+    for m in model.modules():
+        if isinstance(m, nn.LayerNorm):
+            m.float()
     print("Model param dtype:", next(model.parameters()).dtype)
     
     print(f"\n========== Model Configuration ==========")
@@ -256,13 +263,28 @@ def main():
     if args.dataset_dir:
         print(f"Dataset directory: {args.dataset_dir}")
         print(f"Using loss masking: {model.config.use_loss_mask}")
-        # Sharded mode: data_loader will memory-map shards on demand
-        data_loader = GPTDataLoader(
-            model.config, 
-            model.tokenizer, 
-            dataset_dir=args.dataset_dir,
-            use_loss_mask=model.config.use_loss_mask
-        )
+        
+        # Auto-detect dataset format: episode-indexed vs token-stream
+        if is_episode_indexed_dataset(args.dataset_dir):
+            # Episode-indexed format (SFT with episode boundaries)
+            print(f"Detected: Episode-indexed dataset (SFT mode)")
+            print(f"Sampling mode: {model.config.batch_sampling_mode}")
+            print(f"Epoch seed: {model.config.epoch_seed} (for reproducibility)")
+            # Config is the single source of truth for all episode loader parameters
+            data_loader = GPTEpisodeDataLoader(
+                model.config,
+                model.tokenizer,
+                dataset_dir=args.dataset_dir,
+            )
+        else:
+            # Token-stream format (pre-training or legacy sharded)
+            print(f"Detected: Token-stream dataset (sharded mode)")
+            data_loader = GPTDataLoader(
+                model.config, 
+                model.tokenizer, 
+                dataset_dir=args.dataset_dir,
+                use_loss_mask=model.config.use_loss_mask
+            )
         
         # Get total tokens from metadata
         import json
@@ -271,7 +293,10 @@ def main():
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
-            total_tokens = metadata.get('total_tokens', 0)
+            # Support both old and new metadata fields
+            total_tokens = metadata.get('num_train_tokens', metadata.get('total_tokens', 0))
+            if metadata.get('num_val_tokens'):
+                total_tokens += metadata.get('num_val_tokens', 0)
         else:
             total_tokens = None
     else:

@@ -6,12 +6,12 @@ MyPT's workspace and RAG system can index various document formats. This guide c
 
 ## Supported Formats
 
-| Format | Extensions | Library | Status |
-|--------|-----------|---------|--------|
-| Plain Text | `.txt`, `.text` | Built-in | ✅ Always available |
-| Markdown | `.md`, `.markdown` | Built-in | ✅ Always available |
-| PDF | `.pdf` | PyMuPDF | 📦 Requires installation |
-| Word | `.docx` | python-docx | 📦 Requires installation |
+| Format     | Extensions         | Library     | Status                   |
+| ---------- | ------------------ | ----------- | ------------------------ |
+| Plain Text | `.txt`, `.text`    | Built-in    | ✅ Always available      |
+| Markdown   | `.md`, `.markdown` | Built-in    | ✅ Always available      |
+| PDF        | `.pdf`             | PyMuPDF     | 📦 Requires installation |
+| Word       | `.docx`            | python-docx | 📦 Requires installation |
 
 ---
 
@@ -34,6 +34,7 @@ pip install PyMuPDF
 ```
 
 **Features:**
+
 - Fast text extraction from all PDF pages
 - Handles complex layouts (multi-column, tables)
 - Works with embedded fonts
@@ -51,6 +52,7 @@ pip install python-docx
 ```
 
 **Features:**
+
 - Extracts text from paragraphs
 - Extracts content from tables
 - Pure Python - no system dependencies
@@ -108,7 +110,7 @@ mkdir packages
 # Download PyMuPDF and dependencies
 pip download PyMuPDF -d ./packages
 
-# Download python-docx and dependencies  
+# Download python-docx and dependencies
 pip download python-docx -d ./packages
 ```
 
@@ -136,6 +138,7 @@ for ext, available in formats.items():
 ```
 
 **Expected output with all libraries installed:**
+
 ```
 ✅ .txt
 ✅ .text
@@ -212,22 +215,26 @@ pip install python-docx
 ### PDF Extraction Issues
 
 **Empty text from PDF:**
+
 - The PDF might be image-based (scanned document)
 - PyMuPDF extracts embedded text, not OCR
 - For scanned PDFs, consider OCR tools like `pytesseract`
 
 **Garbled text:**
+
 - PDF might use custom encoding
 - Try opening in a PDF reader to verify original text
 
 ### DOCX Extraction Issues
 
 **"Package not found" error:**
+
 - File might be corrupted
 - File might be `.doc` (old format) instead of `.docx`
 - python-docx only supports `.docx` (Office 2007+)
 
 **Missing content:**
+
 - Headers/footers are not extracted by default
 - Some complex elements (charts, SmartArt) are not text-extractable
 
@@ -236,11 +243,13 @@ pip install python-docx
 ## Performance Considerations
 
 ### PDF Files
+
 - Large PDFs (100+ pages) may take a few seconds to process
 - Text extraction is memory-efficient (streaming)
 - Typical speed: ~50-100 pages/second
 
 ### DOCX Files
+
 - Very fast extraction (pure Python)
 - Memory usage scales with document size
 - Typical speed: ~1000 paragraphs/second
@@ -281,7 +290,7 @@ class Document:
     filename: str      # Just the filename
     format: str        # Extension without dot (pdf, docx, txt)
     metadata: Dict     # size_bytes, modified_time, created_time
-    
+
     # Properties
     num_chars: int     # len(text)
     num_lines: int     # text.count('\n') + 1
@@ -294,4 +303,3 @@ class Document:
 - [WEBAPP_GUIDE.md](WEBAPP_GUIDE.md) - Web UI workspace usage
 - [workspace_api.md](workspace_api.md) - Workspace API reference
 - [spec_RAG.md](spec_RAG.md) - RAG pipeline specification
-

@@ -191,6 +191,7 @@ def run_training_thread(request: TrainingRequest):
             from core.model import GPT, GPTConfig
             from core.tokenizer import Tokenizer
             from core.data_loader import GPTDataLoader
+            from core.episode_data_loader import GPTEpisodeDataLoader, is_episode_indexed_dataset
         except ImportError as e:
             add_log("error", f"Failed to import core modules: {e}")
             queue_completion(False, str(e))
@@ -275,12 +276,27 @@ def run_training_thread(request: TrainingRequest):
             add_log("info", f"Loading dataset from {dataset_dir}")
             add_log("info", f"Using batch_size={active_config.batch_size}, block_size={active_config.block_size}")
             try:
-                data_loader = GPTDataLoader(
-                    active_config,  # Use model's config, not user-selected config!
-                    model.tokenizer,
-                    dataset_dir=dataset_dir,
-                    use_loss_mask=active_config.use_loss_mask
-                )
+                # Auto-detect dataset format: episode-indexed vs token-stream
+                if is_episode_indexed_dataset(dataset_dir):
+                    # Episode-indexed format (SFT with episode boundaries)
+                    add_log("info", "Detected: Episode-indexed dataset (SFT mode)")
+                    add_log("info", f"Sampling mode: {active_config.batch_sampling_mode}")
+                    add_log("info", f"Epoch seed: {active_config.epoch_seed} (for reproducibility)")
+                    # Config is the single source of truth for all episode loader parameters
+                    data_loader = GPTEpisodeDataLoader(
+                        active_config,
+                        model.tokenizer,
+                        dataset_dir=dataset_dir,
+                    )
+                else:
+                    # Token-stream format (pre-training or legacy sharded)
+                    add_log("info", "Detected: Token-stream dataset (sharded mode)")
+                    data_loader = GPTDataLoader(
+                        active_config,  # Use model's config, not user-selected config!
+                        model.tokenizer,
+                        dataset_dir=dataset_dir,
+                        use_loss_mask=active_config.use_loss_mask
+                    )
                 add_log("success", "Dataset loaded")
             except Exception as e:
                 add_log("error", f"Failed to load dataset: {e}")
