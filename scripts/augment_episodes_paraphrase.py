@@ -12,8 +12,8 @@ Strategy:
 
 Usage:
     python scripts/augment_episodes_paraphrase.py \
-        --input data/sft_conversation_goldset \
-        --output data/sft_conversation_goldset_augmented \
+        --input data/sft_conversation_goldset/mypt_phase3a_gold_en_verified.jsonl \
+        --output data/sft_conversation_goldset_augmented.jsonl \
         --model checkpoints/750M_gold_2.22 \
         --target_count 1200 \
         --lang_filter both \
@@ -426,9 +426,8 @@ def save_augmented_dataset(
 ):
     """
     Save augmented episodes.
-    Supports:
-    - JSONL file output (if path ends with .jsonl)
-    - Directory with individual JSON files
+    Default: JSONL file output (recommended for training pipelines)
+    Alternative: Directory with individual JSON files (if path has no extension)
     """
     path = Path(output_path)
     
@@ -438,7 +437,13 @@ def save_augmented_dataset(
             if episode.get('augmented'):
                 episode['needs_review'] = True
     
-    # Case 1: Save as JSONL file
+    # Default to JSONL if no extension specified
+    if not path.suffix:
+        output_path = output_path + '.jsonl'
+        path = Path(output_path)
+        print(f"Note: No extension provided, defaulting to JSONL: {output_path}")
+    
+    # Case 1: Save as JSONL file (default and recommended)
     if output_path.endswith('.jsonl'):
         path.parent.mkdir(parents=True, exist_ok=True)
         
@@ -455,9 +460,19 @@ def save_augmented_dataset(
         path.mkdir(parents=True, exist_ok=True)
         
         print(f"\nSaving as individual JSON files to: {output_path}")
-        for episode in episodes:
+        for i, episode in enumerate(episodes):
             episode_id = episode.get('id', f'unknown_{random.randint(1000, 9999)}')
-            output_file = path / f"{episode_id}.json"
+            # Sanitize filename: remove/replace invalid characters
+            safe_id = str(episode_id).replace('\n', '_').replace('\r', '_')
+            safe_id = safe_id.replace('/', '_').replace('\\', '_')
+            safe_id = safe_id.replace(':', '-').replace('*', '_')
+            safe_id = safe_id.replace('?', '_').replace('"', '_')
+            safe_id = safe_id.replace('<', '_').replace('>', '_')
+            safe_id = safe_id.replace('|', '_')
+            # Truncate if too long (Windows path limit)
+            if len(safe_id) > 100:
+                safe_id = safe_id[:100]
+            output_file = path / f"{safe_id}.json"
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(episode, f, indent=2, ensure_ascii=False)
         
@@ -487,8 +502,8 @@ def main():
     print_banner("MyPT Episode Augmentation", "Paraphrase-Based Dataset Expansion")
     
     parser = argparse.ArgumentParser(description="Paraphrase augmentation for conversation episodes")
-    parser.add_argument('--input', required=True, help='Input directory with gold episodes (JSON files)')
-    parser.add_argument('--output', required=True, help='Output directory for augmented dataset')
+    parser.add_argument('--input', required=True, help='Input JSONL file or directory with gold episodes')
+    parser.add_argument('--output', required=True, help='Output JSONL file (recommended) or directory')
     parser.add_argument('--model', help='Model checkpoint to use for paraphrasing (optional)')
     parser.add_argument('--target_count', type=int, default=1200, help='Target total episode count (default: 1200)')
     parser.add_argument('--lang_filter', choices=['en', 'de', 'both'], default='both', help='Language filter')
