@@ -48,6 +48,16 @@ class GPTConfig:
     
     # Checkpoint dtype (None = use current model dtype)
     save_dtype: str | None = None  # 'fp32', 'bf16', 'fp16', or None
+    
+    # Episode-indexed SFT data loading options
+    # dataset_mode: 'token_stream' (default, random windows) or 'sft_episode' (episode-indexed)
+    # Note: dataset_mode is auto-detected from dataset format, these are fallback/override options
+    batch_sampling_mode: str = "epoch"    # 'epoch' (deterministic coverage) or 'random'
+    pad_token_id: int | None = None       # Token ID for padding (None = use tokenizer EOS)
+    episode_min_tokens: int = 2           # Minimum episode length (shorter episodes skipped)
+    epoch_seed: int = 1337                # Seed for deterministic epoch shuffling (reproducibility)
+    epoch_shuffle: bool = True            # Shuffle episode order each epoch
+    epoch_drop_last: bool = True          # Drop incomplete final batch in epoch mode
 
     def __str__(self):
         return (
@@ -55,7 +65,8 @@ class GPTConfig:
             f'vocab_size:{self.vocab_size}, n_embd:{self.n_embd}, '
             f'n_head:{self.n_head}, n_layer:{self.n_layer}, '
             f'dropout:{self.dropout}, bias:{self.bias}, device:{self.device}, '
-            f'use_loss_mask:{self.use_loss_mask}, save_dtype:{self.save_dtype}'
+            f'use_loss_mask:{self.use_loss_mask}, save_dtype:{self.save_dtype}, '
+            f'batch_sampling_mode:{self.batch_sampling_mode}'
         )
     
     def to_dict(self):
@@ -1008,7 +1019,30 @@ class GPT(nn.Module):
 
         return self
 
-    
+    def _ban_repeat_ngrams(self, logits: torch.Tensor, out_ids: list[int], n: int):
+        if n <= 0:
+            return
+        if len(out_ids) < n:
+            return
+
+        seen = {}
+        for i in range(len(out_ids) - n + 1):
+            prefix = tuple(out_ids[i:i+n-1])
+            nxt = out_ids[i+n-1]
+            if prefix not in seen:
+                seen[prefix] = set()
+            seen[prefix].add(nxt)
+
+        current_prefix = tuple(out_ids[-(n-1):])
+        banned = seen.get(current_prefix)
+        if not banned:
+            return
+
+        banned_idx = torch.tensor(list(banned), device=logits.device, dtype=torch.long)
+        logits[0, banned_idx] = float("-inf")
+
+
+
     @torch.inference_mode()
     def generate(self, prompt, max_new_tokens, temperature=0.8, top_k=50, top_p=0.95,
                 repetition_penalty=1.1, stop_tokens=None, recent_penalty_window: int = 256):
@@ -1083,50 +1117,90 @@ class GPT(nn.Module):
         # Start from last token's logits
         logits = logits[:, -1, :]  # (1, vocab)
 
+        # --- DEBUG: verify cache path matches non-cache next-token ---
+        with torch.no_grad():
+            logits_nc, _, _ = self(idx_prompt, use_cache=False, kv_cache=None, cache_pos=0)
+            a_nc = int(torch.argmax(logits_nc[:, -1, :], dim=-1).item())
+            a_c  = int(torch.argmax(logits[:, :], dim=-1).item())
+            if a_nc != a_c:
+                print(f"[WARN] cache vs non-cache argmax mismatch: no_cache={a_nc} cache={a_c}")
+
+
         out_ids = list(ctx_ids)
 
         for _ in range(max_new_tokens):
+            base_logits = logits  # fp16/fp32 model dtype
+            work_logits = logits.float()  # fp32 for filtering/sampling stability
+
             # temperature
             if temperature is not None and temperature > 0 and temperature != 1.0:
-                logits = logits.div(temperature)   # keeps it as a tensor op (fine)
+                work_logits = work_logits / float(temperature)
 
             # repetition penalty (bounded + unique)
             if use_rep and recent_n > 0 and recent_len > 0:
                 recent_tokens = recent[:recent_len] if recent_len < recent_n else recent
                 uniq = torch.unique(recent_tokens)
-                penalty_logits = logits.index_select(1, uniq)
+                # operate on fp32 work_logits
+                penalty_logits = work_logits.index_select(1, uniq)
                 penalty_logits = torch.where(
                     penalty_logits > 0,
-                    penalty_logits / repetition_penalty,
-                    penalty_logits * repetition_penalty
+                    penalty_logits / float(repetition_penalty),
+                    penalty_logits * float(repetition_penalty),
                 )
-                logits.scatter_(1, uniq.unsqueeze(0), penalty_logits)
+                work_logits.scatter_(1, uniq.unsqueeze(0), penalty_logits)
 
             # top-k
             if top_k and top_k > 0:
-                top_k_actual = min(int(top_k), logits.size(-1))
-                v, _ = torch.topk(logits, top_k_actual)
-                logits = logits.masked_fill(logits < v[:, [-1]], float("-inf"))
+                top_k_actual = min(int(top_k), work_logits.size(-1))
+                v, _ = torch.topk(work_logits, top_k_actual)
+                work_logits = work_logits.masked_fill(work_logits < v[:, [-1]], float("-inf"))
 
-            # top-p
-            if top_p is not None and top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            # top-p (robust mask construction)
+            if top_p is not None and float(top_p) < 1.0:
+                sorted_logits, sorted_indices = torch.sort(work_logits, descending=True)
                 probs_sorted = F.softmax(sorted_logits, dim=-1)
                 cumulative_probs = torch.cumsum(probs_sorted, dim=-1)
 
-                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove = cumulative_probs > float(top_p)
                 sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                 sorted_indices_to_remove[..., 0] = 0
 
-                remove_mask = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                logits = logits.masked_fill(remove_mask, float("-inf"))
+                remove_mask = torch.zeros_like(work_logits, dtype=torch.bool)
+                remove_mask.scatter_(1, sorted_indices, sorted_indices_to_remove)
+                work_logits = work_logits.masked_fill(remove_mask, float("-inf"))
+            
+            no_repeat_ngram=3
+            if no_repeat_ngram and no_repeat_ngram > 0:
+                # this expects logits shape (1, V)
+                self._ban_repeat_ngrams(work_logits, out_ids, int(no_repeat_ngram))
 
-            probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)  # (1,1)
+
+            # --- SAFETY: if everything got masked, fall back ---
+            if not torch.isfinite(work_logits).any():
+                # fall back to base logits (also fp32), no filtering
+                work_logits = base_logits.float()
+
+            # If temperature <= 0, do GREEDY decoding (deterministic)
+            if temperature is None or float(temperature) <= 0.0:
+                idx_next = torch.argmax(work_logits, dim=-1, keepdim=True)
+            else:
+                # convert to probs safely
+                probs = F.softmax(work_logits, dim=-1)
+
+                # if probs are bad, force greedy
+                if (not torch.isfinite(probs).all()) or (probs.sum(dim=-1) <= 0).any():
+                    idx_next = torch.argmax(work_logits, dim=-1, keepdim=True)
+                else:
+                    idx_next = torch.multinomial(probs, num_samples=1)
+
 
 
 
             next_token = int(idx_next.item())
+            # if the last 32 tokens are identical pattern, break
+            if len(out_ids) > 64 and out_ids[-32:] == out_ids[-64:-32]:
+                break
+
 
             out_ids.append(next_token)
 

@@ -183,3 +183,4 @@ def reload_config() -> ComplianceConfig:
     _config = ComplianceConfig.load()
     return _config
 
+

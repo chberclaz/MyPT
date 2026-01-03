@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Prepare toolcall SFT dataset with loss masking.
+Prepare toolcall SFT dataset with episode-indexed format and loss masking.
 
 Reads JSONL with tool-augmented conversations, serializes to special token format,
-and creates shards with parallel loss mask files.
+and creates episode-indexed binary files with loss masks.
 
 Input JSONL format:
     {
@@ -21,14 +21,23 @@ Mask rules:
     - assistant, assistant_toolcall → mask = 1 (train on model outputs)
     - user, system, toolresult → mask = 0 (don't train)
 
-Output:
+Output (episode-indexed format):
     output_dir/
-        train/shard_00000.bin
-        train/shard_00000_mask.bin
-        val/shard_00000.bin
-        val/shard_00000_mask.bin
+        train/tokens.bin        # uint32 token IDs (all episodes concatenated)
+        train/mask.bin          # uint8 loss mask (aligned to tokens)
+        train/episodes.idx      # uint64 pairs: (start, length) per episode
+        val/tokens.bin
+        val/mask.bin
+        val/episodes.idx
         tokenizer_state.json
         dataset_metadata.json
+
+For large datasets (>100M tokens), outputs multi-shard format:
+    output_dir/
+        train/shard_00000/tokens.bin
+        train/shard_00000/mask.bin
+        train/shard_00000/episodes.idx
+        ...
 
 Usage:
     python scripts/prepare_tool_sft.py --input data/tool_conversations.jsonl --output_dir data/tool_sft
@@ -54,6 +63,13 @@ from core.special_tokens import SPECIAL_TOKEN_STRINGS
 from core.tokenizer import Tokenizer
 from core.model import GPTConfig
 
+# Audit logging for compliance
+try:
+    from core.compliance import audit
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+
 
 # Get tags from special_tokens.py
 SYSTEM_OPEN = SPECIAL_TOKEN_STRINGS["myPT_system_open"]
@@ -71,22 +87,22 @@ EOT = SPECIAL_TOKEN_STRINGS["myPT_eot"]
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Prepare toolcall SFT dataset with loss masking",
+        description="Prepare toolcall SFT dataset with episode-indexed format",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     
     parser.add_argument("--input", type=str, required=True,
                         help="Input JSONL file with tool conversations")
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Output directory for shards")
+                        help="Output directory for episode-indexed dataset")
     
     parser.add_argument("--tokenization", type=str, default="gpt2",
                         choices=["gpt2", "char"],
                         help="Tokenization method (default: gpt2)")
     parser.add_argument("--val_split", type=float, default=0.1,
                         help="Validation split ratio (default: 0.1)")
-    parser.add_argument("--shard_size", type=int, default=50_000_000,
-                        help="Target shard size in bytes (default: 50MB)")
+    parser.add_argument("--tokens_per_shard", type=int, default=50_000_000,
+                        help="Max tokens per shard (default: 50M, for multi-shard support)")
     parser.add_argument("--vocab_size", type=int, default=50304,
                         help="Vocab size for tokenizer config (default: 50304)")
     
@@ -212,22 +228,128 @@ def char_mask_to_token_mask(
     return token_ids, token_mask
 
 
-def save_shard(tokens: np.ndarray, masks: np.ndarray, shard_path: str) -> None:
-    """Save token and mask shards."""
-    tokens.astype(np.uint16).tofile(shard_path)
-    mask_path = shard_path.replace('.bin', '_mask.bin')
-    masks.astype(np.uint8).tofile(mask_path)
+class EpisodeShardWriter:
+    """
+    Writes episode-indexed shards with tokens, masks, and episode index.
+    
+    Handles multi-shard output when data exceeds tokens_per_shard.
+    """
+    
+    def __init__(self, output_dir: str, split: str, tokens_per_shard: int):
+        self.output_dir = output_dir
+        self.split = split
+        self.tokens_per_shard = tokens_per_shard
+        
+        # Current shard data
+        self.shard_idx = 0
+        self.tokens: List[int] = []
+        self.masks: List[int] = []
+        self.episodes: List[Tuple[int, int]] = []  # (start, length) pairs
+        
+        # Statistics
+        self.total_tokens = 0
+        self.total_episodes = 0
+        self.shards_written = 0
+    
+    def add_episode(self, token_ids: List[int], mask: List[int]):
+        """Add an episode to the current shard."""
+        episode_len = len(token_ids)
+        
+        # Check if we need to start a new shard
+        if self.tokens and (len(self.tokens) + episode_len > self.tokens_per_shard):
+            self._flush_shard()
+        
+        # Record episode boundary
+        start = len(self.tokens)
+        self.episodes.append((start, episode_len))
+        
+        # Append data
+        self.tokens.extend(token_ids)
+        self.masks.extend(mask)
+        
+        self.total_tokens += episode_len
+        self.total_episodes += 1
+    
+    def _get_shard_dir(self) -> str:
+        """Get directory for current shard."""
+        split_dir = os.path.join(self.output_dir, self.split)
+        
+        # Use multi-shard format if we've written any shards already,
+        # or if this is going to be a multi-shard dataset
+        if self.shards_written > 0 or len(self.tokens) >= self.tokens_per_shard:
+            return os.path.join(split_dir, f"shard_{self.shard_idx:05d}")
+        else:
+            # Single shard: write directly to split dir
+            return split_dir
+    
+    def _flush_shard(self):
+        """Write current shard to disk."""
+        if not self.tokens:
+            return
+        
+        shard_dir = self._get_shard_dir()
+        os.makedirs(shard_dir, exist_ok=True)
+        
+        # Write tokens.bin (uint32)
+        tokens_arr = np.array(self.tokens, dtype=np.uint32)
+        tokens_path = os.path.join(shard_dir, "tokens.bin")
+        tokens_arr.tofile(tokens_path)
+        
+        # Write mask.bin (uint8)
+        masks_arr = np.array(self.masks, dtype=np.uint8)
+        mask_path = os.path.join(shard_dir, "mask.bin")
+        masks_arr.tofile(mask_path)
+        
+        # Write episodes.idx (uint64 pairs: start, length)
+        episodes_arr = np.array(self.episodes, dtype=np.uint64)
+        episodes_path = os.path.join(shard_dir, "episodes.idx")
+        episodes_arr.tofile(episodes_path)
+        
+        print(f"  Written {self.split}/shard_{self.shard_idx:05d}: "
+              f"{len(self.tokens):,} tokens, {len(self.episodes)} episodes")
+        
+        # Reset for next shard
+        self.tokens = []
+        self.masks = []
+        self.episodes = []
+        self.shard_idx += 1
+        self.shards_written += 1
+    
+    def finalize(self) -> int:
+        """Flush remaining data and return number of shards written."""
+        self._flush_shard()
+        return self.shards_written
 
 
 def main():
     args = parse_args()
     
     from core.banner import print_banner
-    print_banner("MyPT Tool SFT", "Tool-Calling Dataset Preparer")
+    print_banner("MyPT Tool SFT", "Episode-Indexed Tool-Calling Dataset Preparer")
+    
+    # Audit: Dataset preparation started
+    if AUDIT_AVAILABLE:
+        audit.training(
+            "dataset_prepare_start",
+            dataset_type="tool_sft",
+            input_file=args.input,
+            output_dir=args.output_dir,
+            tokenization=args.tokenization,
+            details=f"Tool SFT dataset preparation started: {args.input}"
+        )
     
     # Validate input
     if not os.path.exists(args.input):
-        print(f"Error: Input file not found: {args.input}")
+        error_msg = f"Input file not found: {args.input}"
+        print(f"Error: {error_msg}")
+        if AUDIT_AVAILABLE:
+            audit.training(
+                "dataset_prepare_error",
+                level=audit.AuditLevel.ERROR,
+                dataset_type="tool_sft",
+                error="file_not_found",
+                details=error_msg
+            )
         sys.exit(1)
     
     # Create output directories
@@ -245,6 +367,7 @@ def main():
     print(f"  Output: {args.output_dir}")
     print(f"  Tokenization: {args.tokenization}")
     print(f"  Val split: {args.val_split}")
+    print(f"  Tokens per shard: {args.tokens_per_shard:,}")
     print()
     
     # Load conversations
@@ -264,7 +387,17 @@ def main():
     print(f"  Loaded {len(conversations)} conversations")
     
     if not conversations:
-        print("Error: No valid conversations found")
+        error_msg = "No valid conversations found in input file"
+        print(f"Error: {error_msg}")
+        if AUDIT_AVAILABLE:
+            audit.training(
+                "dataset_prepare_error",
+                level=audit.AuditLevel.ERROR,
+                dataset_type="tool_sft",
+                input_file=args.input,
+                error="no_conversations",
+                details=error_msg
+            )
         sys.exit(1)
     
     # Shuffle and split
@@ -288,67 +421,47 @@ def main():
     for name, count in sorted(tool_counts.items()):
         print(f"  {name}: {count}")
     
+    # Initialize shard writers
+    train_writer = EpisodeShardWriter(args.output_dir, "train", args.tokens_per_shard)
+    val_writer = EpisodeShardWriter(args.output_dir, "val", args.tokens_per_shard)
+    
     # Process conversations
     print("\nProcessing and tokenizing...")
     
-    train_tokens = []
-    train_masks = []
-    val_tokens = []
-    val_masks = []
+    train_mask_sum = 0
+    train_mask_count = 0
+    val_mask_sum = 0
+    val_mask_count = 0
     
     for i, conv in enumerate(conversations):
         text, char_mask = serialize_conversation(conv)
         tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
         
         if i in val_indices:
-            val_tokens.extend(tokens)
-            val_masks.extend(mask)
+            val_writer.add_episode(tokens, mask)
+            val_mask_sum += sum(mask)
+            val_mask_count += len(mask)
         else:
-            train_tokens.extend(tokens)
-            train_masks.extend(mask)
+            train_writer.add_episode(tokens, mask)
+            train_mask_sum += sum(mask)
+            train_mask_count += len(mask)
         
         if args.verbose and (i + 1) % 100 == 0:
             print(f"  Processed {i + 1}/{len(conversations)}")
     
-    total_train_tokens = len(train_tokens)
-    total_val_tokens = len(val_tokens)
+    # Finalize shards
+    print("\nWriting shards...")
+    train_shards = train_writer.finalize()
+    val_shards = val_writer.finalize()
     
-    print(f"  Total train tokens: {total_train_tokens:,}")
-    print(f"  Total val tokens: {total_val_tokens:,}")
+    # Calculate statistics
+    train_mask_ratio = train_mask_sum / train_mask_count if train_mask_count > 0 else 0
+    val_mask_ratio = val_mask_sum / val_mask_count if val_mask_count > 0 else 0
     
-    # Mask statistics
-    train_mask_ratio = sum(train_masks) / len(train_masks) if train_masks else 0
-    val_mask_ratio = sum(val_masks) / len(val_masks) if val_masks else 0
+    print(f"\n  Total train tokens: {train_writer.total_tokens:,}")
+    print(f"  Total val tokens: {val_writer.total_tokens:,}")
     print(f"  Train mask ratio: {train_mask_ratio:.1%}")
     print(f"  Val mask ratio: {val_mask_ratio:.1%}")
-    
-    # Save shards
-    print("\nSaving shards...")
-    
-    def save_split(tokens, masks, output_dir, split_name):
-        if not tokens:
-            return 0
-        
-        tokens_arr = np.array(tokens, dtype=np.uint16)
-        masks_arr = np.array(masks, dtype=np.uint8)
-        
-        bytes_per_token = 2
-        tokens_per_shard = args.shard_size // bytes_per_token
-        num_shards = (len(tokens_arr) + tokens_per_shard - 1) // tokens_per_shard
-        
-        for shard_idx in range(num_shards):
-            start = shard_idx * tokens_per_shard
-            end = min((shard_idx + 1) * tokens_per_shard, len(tokens_arr))
-            
-            shard_path = os.path.join(output_dir, f"shard_{shard_idx:05d}.bin")
-            save_shard(tokens_arr[start:end], masks_arr[start:end], shard_path)
-            
-            print(f"  Saved {split_name}/shard_{shard_idx:05d}.bin ({end - start:,} tokens)")
-        
-        return num_shards
-    
-    train_shards = save_split(train_tokens, train_masks, train_dir, "train")
-    val_shards = save_split(val_tokens, val_masks, val_dir, "val")
     
     # Save tokenizer state
     tokenizer_path = os.path.join(args.output_dir, "tokenizer_state.json")
@@ -358,17 +471,21 @@ def main():
     
     # Save metadata
     metadata = {
-        "schema": "toolcall_sft_v1",
+        "schema": "episode_indexed_sft_v1",
         "has_loss_mask": True,
+        "dataset_type": "toolcall_sft",
         "num_conversations": len(conversations),
-        "num_train_tokens": total_train_tokens,
-        "num_val_tokens": total_val_tokens,
+        "num_train_episodes": train_writer.total_episodes,
+        "num_val_episodes": val_writer.total_episodes,
+        "num_train_tokens": train_writer.total_tokens,
+        "num_val_tokens": val_writer.total_tokens,
         "num_train_shards": train_shards,
         "num_val_shards": val_shards,
         "train_mask_ratio": train_mask_ratio,
         "val_mask_ratio": val_mask_ratio,
         "tokenization": args.tokenization,
         "vocab_size": args.vocab_size,
+        "tokens_per_shard": args.tokens_per_shard,
         "tool_counts": tool_counts,
         "special_tokens_used": [
             "myPT_system", "myPT_user", "myPT_assistant",
@@ -383,13 +500,33 @@ def main():
     
     # Summary
     print("\n" + "=" * 60)
-    print(f"[SUCCESS] Toolcall SFT dataset prepared!")
+    print(f"✅ Episode-indexed Toolcall SFT dataset prepared!")
     print(f"   Conversations: {len(conversations)}")
-    print(f"   Train tokens: {total_train_tokens:,} ({train_shards} shards)")
-    print(f"   Val tokens: {total_val_tokens:,} ({val_shards} shards)")
+    print(f"   Train: {train_writer.total_tokens:,} tokens, {train_writer.total_episodes} episodes ({train_shards} shard(s))")
+    print(f"   Val: {val_writer.total_tokens:,} tokens, {val_writer.total_episodes} episodes ({val_shards} shard(s))")
     print(f"   Mask ratio: {train_mask_ratio:.1%}")
     print(f"   Output: {args.output_dir}")
     print("=" * 60)
+    
+    # Audit: Dataset preparation completed
+    if AUDIT_AVAILABLE:
+        audit.training(
+            "dataset_prepare_complete",
+            dataset_type="tool_sft",
+            input_file=args.input,
+            output_dir=args.output_dir,
+            num_conversations=len(conversations),
+            num_train_episodes=train_writer.total_episodes,
+            num_val_episodes=val_writer.total_episodes,
+            num_train_tokens=train_writer.total_tokens,
+            num_val_tokens=val_writer.total_tokens,
+            train_shards=train_shards,
+            val_shards=val_shards,
+            mask_ratio=round(train_mask_ratio, 4),
+            num_tools=len(tool_counts),
+            details=f"Tool SFT dataset prepared: {len(conversations)} conversations, "
+                    f"{train_writer.total_tokens:,} train tokens, {len(tool_counts)} unique tools"
+        )
     
     print(f"\nTo train:")
     print(f"  python train.py --model_name my_agent \\")
@@ -400,6 +537,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-

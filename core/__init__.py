@@ -51,6 +51,7 @@ from .tokenizer import Tokenizer
 
 # Data loading
 from .data_loader import GPTDataLoader
+from .episode_data_loader import GPTEpisodeDataLoader, is_episode_indexed_dataset
 
 # Checkpoint management
 from .checkpoint import CheckpointManager
@@ -99,6 +100,8 @@ __all__ = [
     
     # Data
     'GPTDataLoader',
+    'GPTEpisodeDataLoader',
+    'is_episode_indexed_dataset',
     
     # Checkpoints
     'CheckpointManager',
