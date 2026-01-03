@@ -391,6 +391,27 @@ def main():
         # Serialize to text + char mask
         text, char_mask = serialize_conversation(conv)
         
+        # Determine split for this episode
+        split = "val" if i in val_indices else "train"
+        episode_idx = val_writer.total_episodes if split == "val" else train_writer.total_episodes
+        
+        # Audit: Log episode text before tokenization (for traceability)
+        if AUDIT_AVAILABLE:
+            # Truncate text for log (first 500 chars) to avoid huge log entries
+            text_preview = text[:500] + "..." if len(text) > 500 else text
+            # Escape newlines for single-line log format
+            text_preview_escaped = text_preview.replace("\n", "\\n")
+            audit.training(
+                "episode_text",
+                dataset_type="chat_sft",
+                split=split,
+                episode_idx=episode_idx,
+                conversation_idx=i,
+                text_length=len(text),
+                num_assistant_chars=char_mask.count("1"),
+                details=text_preview_escaped
+            )
+        
         # Convert to token-level mask
         tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
         
