@@ -173,6 +173,14 @@ def main():
     effective_use_amp = get_effective_value('use_amp', args.use_amp, config_training, parser_defaults)
     effective_amp_dtype = get_effective_value('amp_dtype', args.amp_dtype, config_training, parser_defaults)
     
+    # Auto-adjust amp_dtype based on GPU capability (if user didn't explicitly override)
+    if effective_use_amp and args.amp_dtype is None and torch.cuda.is_available():
+        capability = torch.cuda.get_device_capability()
+        if capability[0] < 8 and effective_amp_dtype == 'bf16':
+            # Older GPU doesn't support native bf16, switch to fp16
+            effective_amp_dtype = 'fp16'
+            print(f"[Auto] GPU compute {capability[0]}.{capability[1]} - switching AMP from bf16 to fp16")
+    
     print(f"========== Training Configuration ==========")
     print(f"Model name: {args.model_name}")
     print(f"Input file: {args.input_file}")
@@ -242,11 +250,45 @@ def main():
         dataset_tokenizer_state=dataset_tokenizer_state
     )
     model = model.to(config.device)
-    model = model.to(dtype=torch.bfloat16)
-    for m in model.modules():
-        if isinstance(m, nn.LayerNorm):
-            m.float()
-    print("Model param dtype:", next(model.parameters()).dtype)
+    
+    # Smart dtype selection based on GPU capability
+    # - A100/H100 (compute 8.0+): bf16 weights + fp32 LayerNorm for stability
+    # - RTX 30/40 (compute 8.6): bf16 supported, same pattern works
+    # - RTX 20/GTX (compute < 8.0): Keep fp32 weights, rely on autocast for mixed precision
+    training_dtype = 'fp32'  # default
+    use_layernorm_fp32_hack = False
+    
+    if torch.cuda.is_available() and 'cuda' in str(config.device):
+        capability = torch.cuda.get_device_capability()
+        compute_capability = capability[0] + capability[1] / 10
+        
+        if compute_capability >= 8.0:
+            # Modern GPU with native bf16 support
+            training_dtype = 'bf16'
+            use_layernorm_fp32_hack = True
+            print(f"GPU compute {capability[0]}.{capability[1]}: Using bf16 weights + fp32 LayerNorm")
+        elif compute_capability >= 7.0:
+            # Older GPU (RTX 20 series, GTX 16 series) - use fp16 via autocast only
+            training_dtype = 'fp32'
+            print(f"GPU compute {capability[0]}.{capability[1]}: Using fp32 weights + fp16 autocast")
+            print("  (Weights stay fp32, autocast handles mixed precision during forward/backward)")
+        else:
+            # Very old GPU - fp32 only
+            training_dtype = 'fp32'
+            print(f"GPU compute {capability[0]}.{capability[1]}: Using fp32 (no mixed precision)")
+    else:
+        print("CPU training: Using fp32")
+    
+    # Apply dtype conversion
+    if training_dtype == 'bf16':
+        model = model.to(dtype=torch.bfloat16)
+        if use_layernorm_fp32_hack:
+            # Keep LayerNorm in fp32 for numerical stability (works on bf16-capable GPUs)
+            for m in model.modules():
+                if isinstance(m, nn.LayerNorm):
+                    m.float()
+    
+    print(f"Model weights dtype: {next(model.parameters()).dtype}")
     
     print(f"\n========== Model Configuration ==========")
     print(f"Architecture: {model.config.n_layer} layers × {model.config.n_head} heads")
