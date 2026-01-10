@@ -121,6 +121,11 @@ def banner_dataset():
     print_banner("MyPT Dataset", "Data Preparation Pipeline")
 
 
+def banner_phase2():
+    """Print Phase 2 domain corpus banner."""
+    print_banner("MyPT Phase 2", "Domain Corpus Builder")
+
+
 if __name__ == "__main__":
     # Demo all banners
     print_banner("MyPT", "Offline GPT Pipeline for Secure Environments")
