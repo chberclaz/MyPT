@@ -71,7 +71,41 @@ data_loader.prepare_data(text)
 
 # Sharded mode (new, large datasets)
 data_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/my_dataset")
+
+# Eval-only mode (for dual eval in domain adaptation)
+eval_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/general_eval", eval_only=True)
 ```
+
+### Dual Eval Mode (Phase 2 Domain Adaptation)
+
+For domain adaptation training, you often want to evaluate on both:
+1. **Domain validation set** - To track domain-specific learning
+2. **General validation set** - To detect catastrophic forgetting
+
+```python
+# Primary data loader (train + val for domain)
+domain_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/domain_dataset")
+
+# Additional eval loader (val only for general capability)
+general_loader = GPTDataLoader(
+    config, tokenizer, 
+    dataset_dir="data/general_eval",
+    eval_only=True  # Only loads val shards, no train shards
+)
+
+# Train with dual eval
+model.fit(
+    data_loader=domain_loader,
+    optimizer=optimizer,
+    eval_data_loaders={"general": general_loader}  # Additional eval sets
+)
+# Logs: step 100: val 2.15 | eval_general 2.89
+```
+
+**Key differences for `eval_only=True`:**
+- Only loads validation shards (no train directory required)
+- `get_batch('train')` will raise an error
+- Used purely for evaluation during training
 
 **How it works:**
 1. On initialization, scans for shard files

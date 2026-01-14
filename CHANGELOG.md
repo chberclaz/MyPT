@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Core Training
+
 - GPT model architecture with configurable layers, heads, and embedding dimensions
 - Support for both character-level and GPT-2 BPE tokenization
 - Sharded dataset format for large-scale training (100M+ tokens)
@@ -18,12 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Learning rate scheduling with warmup and cosine decay
 
 #### Domain Adaptation
+
 - Continued pretraining with `--init_from_model` for domain adaptation
 - Weighted multi-source dataset preparation (`prepare_weighted_dataset.py`)
 - Phase 2 domain corpus builder for IT security, protocols, and programming docs
 - Swiss Federal Law corpus scraper (Fedlex) with DE/EN support
 
 #### Data Pipeline
+
 - Multi-source data acquisition (Git cloning, direct downloads)
 - Text transformers for various formats:
   - Markdown/reStructuredText → plaintext
@@ -37,23 +40,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deterministic builds with configurable random seed
 
 #### Generation & Inference
+
 - Text generation with temperature and top-k/top-p sampling
 - Interactive generation mode
 - Batch generation support
 
 #### Web Application
+
 - Interactive chat interface
 - Workspace document integration
 - RAG (Retrieval-Augmented Generation) support
 - User management system
 
 #### Tools & Utilities
+
 - Model parameter calculator (`calculate_params.py`)
 - Dataset inspection and statistics
 - Checkpoint conversion (legacy → JSON format)
 - Configuration presets for various model sizes (150M, 350M, 750M, 1.5B)
 
 ### Infrastructure
+
 - Comprehensive logging with audit trail
 - Compliance tracking for data provenance
 - Cross-platform support (Windows/Linux)
@@ -64,9 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
+
 - Fine-tuning pipeline (SFT, RLHF)
-- Multi-GPU training support
-- Quantization for inference
-- Extended language support
-
-
+- RAG
+- RAG Tool-Calling

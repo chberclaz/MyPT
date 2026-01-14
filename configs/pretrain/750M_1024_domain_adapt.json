@@ -18,5 +18,13 @@
   "grad_clip": 1.0,
   "weight_decay": 0.1,
   "use_amp": true,
-  "amp_dtype": "bf16"
+  "amp_dtype": "bf16",
+
+  "_comment_eval": "Optional: Dual eval sets for domain vs general evaluation",
+  "eval_sets": {
+    "domain": "data/domain_161M_corpus_tokenized",
+    "general": "data/phase1_base_tokenized"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/domain_adapt_eval.jsonl"
 }

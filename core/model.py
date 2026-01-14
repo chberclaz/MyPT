@@ -751,12 +751,13 @@ class GPT(nn.Module):
     def fit(self, data_loader, optimizer, max_iters, eval_interval=20, 
             eval_iters=50, checkpoint_dir=None, start_step=0, learning_rate=None,
             save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0,
-            use_amp=True, amp_dtype='bf16'):
+            use_amp=True, amp_dtype='bf16', eval_data_loaders=None, log_file=None,
+            eval_seed=None):
         """
         Main training loop - the model trains itself!
         
         Args:
-            data_loader: GPTDataLoader instance
+            data_loader: GPTDataLoader instance (for training and default val)
             optimizer: Configured optimizer (from configure_optimizer)
             max_iters: Number of training iterations
             eval_interval: Evaluate every N steps
@@ -778,6 +779,12 @@ class GPT(nn.Module):
             use_amp: Enable automatic mixed precision training (default: True).
                     Significantly reduces memory usage and speeds up training on modern GPUs.
             amp_dtype: Dtype for AMP ('bf16' for A100/H100, 'fp16' for older GPUs).
+            eval_data_loaders: Optional dict of {name: GPTDataLoader} for additional eval sets.
+                              Example: {"domain": domain_loader, "general": general_loader}
+                              Each loader is evaluated at eval_interval and logged separately.
+            log_file: Optional path to JSONL file for training logs. Each eval writes a line:
+                     {"iter":N, "train_loss":X, "eval_domain":Y, "eval_general":Z, ...}
+            eval_seed: Optional seed for eval RNG stability. If set, resets RNG before each eval.
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -867,6 +874,12 @@ class GPT(nn.Module):
                 print(f"[GPU {tag}] alloc={alloc:.2f}GB reserved={resv:.2f}GB free={free_gb:.2f}GB total={total_gb:.2f}GB")
 
         
+        # Initialize JSONL log file if specified
+        if log_file is not None:
+            log_dir = os.path.dirname(log_file)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+        
         for iter in range(start_step, max_iters):
             # Update learning rate (warmup or constant)
             current_lr = get_lr(iter)
@@ -878,15 +891,50 @@ class GPT(nn.Module):
                 print(f"{iter} : {ct}")
                 _mem("before_estimate")
                 gpu_mem("before_estimate")
+                
+                # Set eval seed for reproducibility if specified
+                if eval_seed is not None:
+                    torch.manual_seed(eval_seed)
+                    if torch.cuda.is_available():
+                        torch.cuda.manual_seed(eval_seed)
+                
+                # Evaluate on main data loader (train split for train_loss reference)
                 losses = self.estimate_loss(data_loader, eval_iters, splits=['val'])
+                
+                # Build log entry
+                log_entry = {"iter": iter, "val_loss": float(losses['val'])}
+                
+                # Evaluate on additional eval sets if provided
+                eval_losses = {}
+                if eval_data_loaders is not None:
+                    for eval_name, eval_loader in eval_data_loaders.items():
+                        # Set eval seed for reproducibility if specified
+                        if eval_seed is not None:
+                            torch.manual_seed(eval_seed)
+                            if torch.cuda.is_available():
+                                torch.cuda.manual_seed(eval_seed)
+                        
+                        eval_loss = self.estimate_loss(eval_loader, eval_iters, splits=['val'])
+                        eval_losses[eval_name] = float(eval_loss['val'])
+                        log_entry[f"eval_{eval_name}"] = float(eval_loss['val'])
+                
                 _mem("after_estimate_before_save")
                 gpu_mem("after_estimate_before_save")
                 lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
-
-                print(f"step {iter}: Validation loss {losses['val']:.4f}{lr_info}")
+                
+                # Console output: iter N | val X.XX | eval_name Y.YY | ...
+                eval_parts = " | ".join([f"eval_{k} {v:.4f}" for k, v in eval_losses.items()])
+                if eval_parts:
+                    print(f"step {iter}: val {losses['val']:.4f} | {eval_parts}{lr_info}")
+                else:
+                    print(f"step {iter}: val {losses['val']:.4f}{lr_info}")
+                
+                # Write to JSONL log file (append mode)
+                if log_file is not None:
+                    with open(log_file, 'a', encoding='utf-8') as f:
+                        f.write(json.dumps(log_entry) + "\n")
                 
                 # Save eval checkpoint (fp32 by default, includes optimizer for resuming)
-
                 if checkpoint_dir:
                     self.save_checkpoint_bundle(
                         checkpoint_dir, 

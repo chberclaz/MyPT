@@ -16,6 +16,7 @@ The Phase 2 Domain Corpus pipeline automates the creation of a high-quality trai
 ## Features
 
 ### Multi-Format Transformers
+
 - **Markdown/RST** - Preserves code blocks, headings, and lists
 - **Man Pages** - Uses groff when available, fallback parser otherwise
 - **RFC XML** - Extracts structured content from IETF specifications
@@ -23,16 +24,19 @@ The Phase 2 Domain Corpus pipeline automates the creation of a high-quality trai
 - **JSON** - Extracts MITRE ATT&CK threat intelligence data
 
 ### Intelligent Deduplication
+
 - **Exact Deduplication** - SHA-256 hash matching
 - **Near-Duplicate Detection** - Simhash with configurable Hamming distance threshold
 
 ### Deterministic & Auditable
+
 - Configurable random seed for reproducibility
 - Comprehensive file logging with timestamps
 - Audit trail integration (`core.compliance.audit`)
 - Build metadata JSON for complete provenance
 
 ### Cross-Platform
+
 - Pure Python implementation (no bash dependencies)
 - Works on Windows, macOS, and Linux
 
@@ -53,6 +57,7 @@ python scripts/fetch_and_prepare_phase2_domain.py \
 ```
 
 This will:
+
 1. Clone all source repositories to `./sources/`
 2. Build the corpus with deduplication
 3. Tokenize into training shards
@@ -82,32 +87,32 @@ python scripts/prepare_weighted_dataset.py `
 
 #### `scripts/fetch_and_prepare_phase2_domain.py`
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--sources_dir` | `sources` | Directory for cloned repositories |
-| `--work_dir` | `work` | Working directory for logs and intermediate files |
-| `--out_dir` | `data/phase2_domain` | Output directory for final dataset |
-| `--config_file` | `data/sources/phase2_domain.json` | JSON configuration file |
-| `--total_tokens` | `100000000` | Target token count |
-| `--tokenization` | `gpt2` | Tokenizer type (`gpt2` or `char`) |
-| `--min_chars` | `400` | Minimum characters per document |
-| `--dedupe` | `exact,simhash` | Deduplication methods |
-| `--seed` | `42` | Random seed for reproducibility |
-| `--skip_fetch` | - | Skip repository cloning |
-| `--skip_build` | - | Skip corpus building |
-| `--corpus_only` | - | Build corpus only, skip tokenization |
-| `--sources` | all | Filter which sources to process |
+| Option           | Default                           | Description                                       |
+| ---------------- | --------------------------------- | ------------------------------------------------- |
+| `--sources_dir`  | `sources`                         | Directory for cloned repositories                 |
+| `--work_dir`     | `work`                            | Working directory for logs and intermediate files |
+| `--out_dir`      | `data/phase2_domain`              | Output directory for final dataset                |
+| `--config_file`  | `data/sources/phase2_domain.json` | JSON configuration file                           |
+| `--total_tokens` | `100000000`                       | Target token count                                |
+| `--tokenization` | `gpt2`                            | Tokenizer type (`gpt2` or `char`)                 |
+| `--min_chars`    | `400`                             | Minimum characters per document                   |
+| `--dedupe`       | `exact,simhash`                   | Deduplication methods                             |
+| `--seed`         | `42`                              | Random seed for reproducibility                   |
+| `--skip_fetch`   | -                                 | Skip repository cloning                           |
+| `--skip_build`   | -                                 | Skip corpus building                              |
+| `--corpus_only`  | -                                 | Build corpus only, skip tokenization              |
+| `--sources`      | all                               | Filter which sources to process                   |
 
 #### `tools/build_phase2_corpus.py`
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--fetch` | - | Clone repositories before building |
-| `--shard_mb` | `25` | Target shard size in MB |
-| `--simhash_threshold` | `4` | Hamming distance threshold for near-duplicates |
-| `--include_ext` | `.md,.rst,.txt,.html,.xml,.json` | File extensions to process |
-| `--max_docs_per_repo` | `0` | Max documents per repo (0 = unlimited) |
-| `--run_tokenizer` | - | Run tokenizer after corpus build |
+| Option                | Default                          | Description                                    |
+| --------------------- | -------------------------------- | ---------------------------------------------- |
+| `--fetch`             | -                                | Clone repositories before building             |
+| `--shard_mb`          | `25`                             | Target shard size in MB                        |
+| `--simhash_threshold` | `4`                              | Hamming distance threshold for near-duplicates |
+| `--include_ext`       | `.md,.rst,.txt,.html,.xml,.json` | File extensions to process                     |
+| `--max_docs_per_repo` | `0`                              | Max documents per repo (0 = unlimited)         |
+| `--run_tokenizer`     | -                                | Run tokenizer after corpus build               |
 
 ### JSON Configuration
 
@@ -119,7 +124,7 @@ The pipeline can be configured via `data/sources/phase2_domain.json`:
   "default_weights": {
     "owasp-cheatsheets": 0.12,
     "python-docs": 0.12,
-    "mdn-content": 0.10
+    "mdn-content": 0.1
   },
   "sources": {
     "owasp-cheatsheets": {
@@ -138,32 +143,44 @@ The pipeline can be configured via `data/sources/phase2_domain.json`:
 ## Included Sources
 
 ### Security
-| Source | Description | License |
-|--------|-------------|---------|
-| OWASP Top 10 | Security vulnerabilities documentation | CC-BY-SA-4.0 |
-| OWASP Cheat Sheets | Security best practices | CC-BY-SA-4.0 |
-| OWASP WSTG | Web security testing methodology | CC-BY-SA-4.0 |
-| MITRE ATT&CK | Threat intelligence framework | Apache-2.0 |
+
+| Source             | Description                            | License      |
+| ------------------ | -------------------------------------- | ------------ |
+| OWASP Top 10       | Security vulnerabilities documentation | CC-BY-SA-4.0 |
+| OWASP Cheat Sheets | Security best practices                | CC-BY-SA-4.0 |
+| OWASP WSTG         | Web security testing methodology       | CC-BY-SA-4.0 |
+| MITRE ATT&CK       | Threat intelligence framework          | Apache-2.0   |
 
 ### Protocols
-| Source | Description | License |
-|--------|-------------|---------|
+
+| Source  | Description             | License      |
+| ------- | ----------------------- | ------------ |
 | RFC XML | IETF RFC specifications | BSD-3-Clause |
 
 ### Unix/Bash
-| Source | Description | License |
-|--------|-------------|---------|
+
+| Source          | Description           | License     |
+| --------------- | --------------------- | ----------- |
 | Linux Man Pages | Official manual pages | GPL/BSD/MIT |
-| GNU Bash | Shell documentation | GPL-3.0 |
+| GNU Bash        | Shell documentation   | GPL-3.0     |
 
 ### Programming Languages
-| Source | Description | License |
-|--------|-------------|---------|
-| Python Docs | Official Python documentation | PSF-2.0 |
-| Python PEPs | Python Enhancement Proposals | PSF-2.0 |
-| Node.js Docs | Node.js API documentation | MIT |
-| MDN Web Docs | Mozilla web documentation | CC-BY-SA-2.5 |
-| OpenJDK | Java source documentation | GPL-2.0-classpath |
+
+| Source       | Description                   | License           |
+| ------------ | ----------------------------- | ----------------- |
+| Python Docs  | Official Python documentation | PSF-2.0           |
+| Python PEPs  | Python Enhancement Proposals  | PSF-2.0           |
+| Node.js Docs | Node.js API documentation     | MIT               |
+| MDN Web Docs | Mozilla web documentation     | CC-BY-SA-2.5      |
+| OpenJDK      | Java source documentation     | GPL-2.0-classpath |
+
+### Legal (Swiss Law)
+
+| Source | Description               | License |
+| ------ | ------------------------- | ------- |
+| Fedlex | Swiss Federal Law (DE/EN) | Public  |
+
+The Swiss Law corpus is built separately using a dedicated scraper that extracts legal texts from the official Fedlex repository.
 
 > **Note**: You are responsible for verifying licenses of included sources before use.
 
@@ -198,15 +215,15 @@ work/
 
 ### Key Files
 
-| File | Description |
-|------|-------------|
-| `corpus_shards/*.txt` | Cleaned plaintext documents with provenance |
-| `manifest.jsonl` | Document-level metadata (source, path, SHA256, bytes) |
-| `build_metadata.json` | Complete build parameters and statistics |
-| `pipeline_metadata.json` | Full pipeline execution record |
-| `dedupe_report.json` | Deduplication statistics |
-| `train/*.bin` | Tokenized training shards |
-| `val/*.bin` | Tokenized validation shards |
+| File                     | Description                                           |
+| ------------------------ | ----------------------------------------------------- |
+| `corpus_shards/*.txt`    | Cleaned plaintext documents with provenance           |
+| `manifest.jsonl`         | Document-level metadata (source, path, SHA256, bytes) |
+| `build_metadata.json`    | Complete build parameters and statistics              |
+| `pipeline_metadata.json` | Full pipeline execution record                        |
+| `dedupe_report.json`     | Deduplication statistics                              |
+| `train/*.bin`            | Tokenized training shards                             |
+| `val/*.bin`              | Tokenized validation shards                           |
 
 ### Shard Format
 
@@ -274,15 +291,121 @@ Example metadata for verification:
 
 ## Training
 
-After building the dataset:
+### Phase 1: Training from Scratch
 
 ```powershell
 python train.py `
     --dataset_dir data/phase2_domain `
-    --config_file configs/750M_2048.json `
+    --config_file configs/pretrain/750M_1024.json `
     --model_name phase2_domain `
     --max_iters 50000
 ```
+
+### Phase 2: Domain Adaptation with Dual Evaluation
+
+For domain adaptation from an existing model, use `--init_from_model` and optionally `--eval_dataset_dir` for dual evaluation:
+
+```powershell
+python train.py `
+    --dataset_dir data/phase2_domain `
+    --config_file configs/pretrain/750M_1024_domain_adapt.json `
+    --model_name domain_adapted `
+    --init_from_model checkpoints/base_750M `
+    --eval_dataset_dir data/base_eval `
+    --max_iters 65500
+```
+
+**Dual Evaluation** monitors both:
+
+- **Domain val loss** (`val`) - Tracks domain-specific learning
+- **General val loss** (`eval_general`) - Detects catastrophic forgetting
+
+Example output:
+
+```
+step 1000: val 2.45 | eval_general 2.89
+step 2000: val 2.31 | eval_general 2.91
+step 3000: val 2.18 | eval_general 2.93  # General stable = no forgetting
+```
+
+### Recommended Hyperparameters for Domain Adaptation
+
+| Parameter       | Value              | Notes                         |
+| --------------- | ------------------ | ----------------------------- |
+| `learning_rate` | `5e-5`             | Lower than pretraining (3e-4) |
+| `warmup_iters`  | ~2% of `max_iters` | e.g., 1,300 for 65,500 iters  |
+| `epochs`        | 3-5                | More risks forgetting         |
+| `weight_decay`  | `0.1`              | Standard                      |
+
+See `configs/pretrain/750M_1024_domain_adapt.json` for a complete example.
+
+## Swiss Law Corpus (Fedlex)
+
+The Swiss Federal Law corpus is built using a dedicated scraper that extracts legal texts from the official [fedlex-assets](https://github.com/droid-f/fedlex-assets) repository.
+
+### Building the Swiss Law Corpus
+
+```powershell
+# Run the Fedlex scraper
+python tools/swiss_law_fedlex_scraper.py `
+    --output data/swiss_law_domain/fedlex_de_en.txt `
+    --languages de,en
+```
+
+This will:
+
+1. Clone the `fedlex-assets` repository (~2.5 GB)
+2. Parse HTML files for German and English legal texts
+3. Deduplicate documents (keeps most recent version per SR number)
+4. Output structured plaintext with metadata markers
+
+### Output Format
+
+Each document includes metadata and the full legal text:
+
+```
+<|doc|>
+source=fedlex
+level=federal
+lang=de
+type=statute
+id=SR-142.20
+version=20240101
+title=Ausländer- und Integrationsgesetz (AIG)
+<|text|>
+Art. 1 Zweck
+1 Dieses Gesetz regelt die Ein- und Ausreise...
+2 Es bezweckt...
+...
+<|enddoc|>
+```
+
+### Merging with Domain Corpus
+
+After building both corpora, merge them using:
+
+```powershell
+python scripts/append_to_dataset.py `
+    --dataset_dir data/domain_161M_corpus_tokenized `
+    --source swiss_law:data/swiss_law_domain/fedlex_de_en.txt `
+    --target_tokens 50000000
+```
+
+### Scraper Options
+
+| Option        | Default                                    | Description                  |
+| ------------- | ------------------------------------------ | ---------------------------- |
+| `--output`    | `data/swiss_law_domain/fedlex_de_en.txt`   | Output file path             |
+| `--repo_dir`  | `data/swiss_law_domain/fedlex-assets-repo` | Clone directory              |
+| `--languages` | `de,en`                                    | Languages to extract (de/en) |
+| `--resume`    | -                                          | Resume from existing output  |
+
+### Deduplication Strategy
+
+The scraper implements two levels of deduplication:
+
+1. **Document-level**: Only the most recent version (by date in path) is kept for each SR number + language combination
+2. **Within-document**: Removes duplicate paragraphs caused by nested HTML structures
 
 ## Troubleshooting
 
@@ -297,6 +420,7 @@ python train.py `
 ### Clone timeout
 
 Large repositories (MDN, OpenJDK) may timeout. Solutions:
+
 - Increase network timeout
 - Clone problematic repos manually
 - Use `--sources` to exclude large repos initially
@@ -304,6 +428,7 @@ Large repositories (MDN, OpenJDK) may timeout. Solutions:
 ### Out of disk space
 
 The full pipeline requires ~15-20 GB:
+
 - Sources: ~8 GB
 - Corpus shards: ~2 GB
 - Tokenized data: ~4 GB
@@ -353,9 +478,28 @@ distance = hamming_distance(fp1, fp2)
 is_duplicate = distance <= 4  # threshold
 ```
 
+### Swiss Law Scraper
+
+```python
+from tools.swiss_law_fedlex_scraper import (
+    clone_fedlex_repo,
+    process_fedlex_assets,
+    extract_text_from_html,
+)
+
+# Clone the fedlex-assets repository
+clone_fedlex_repo("data/swiss_law_domain/fedlex-assets-repo")
+
+# Process and extract legal texts
+process_fedlex_assets(
+    repo_dir="data/swiss_law_domain/fedlex-assets-repo",
+    output_file="data/swiss_law_domain/fedlex_de_en.txt",
+    languages=["de", "en"]
+)
+```
+
 ## See Also
 
 - [prepare_weighted_dataset.py](../scripts/README.md) - Tokenization pipeline
 - [spec_domain_datagrabber.md](spec_domain_datagrabber.md) - Original specification
 - [multilingual_de_en.json](../data/sources/multilingual_de_en.json) - Example source config
-

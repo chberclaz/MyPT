@@ -358,6 +358,60 @@ checkpoints/my_model/
 
 ---
 
+---
+
+## Dual Evaluation for Domain Adaptation
+
+When performing domain adaptation (Phase 2 training), you can evaluate on multiple datasets:
+
+### CLI Usage
+
+```bash
+python train.py \
+    --dataset_dir data/domain_corpus \
+    --eval_dataset_dir data/general_eval \
+    --init_from_model checkpoints/base_model \
+    --model_name domain_adapted
+```
+
+### Programmatic Usage
+
+```python
+from core import GPTDataLoader
+
+# Primary loader (train + val)
+domain_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/domain_corpus")
+
+# Additional eval loader (val only)
+general_loader = GPTDataLoader(
+    config, tokenizer,
+    dataset_dir="data/general_eval",
+    eval_only=True  # Only loads val shards
+)
+
+# Train with dual evaluation
+model.fit(
+    data_loader=domain_loader,
+    optimizer=optimizer,
+    eval_data_loaders={"general": general_loader}
+)
+```
+
+### Output Format
+
+Training logs show both metrics:
+```
+step 1000: val 2.45 | eval_general 2.89
+step 2000: val 2.31 | eval_general 2.91
+```
+
+JSONL log entries include all eval losses:
+```json
+{"iter": 1000, "val_loss": 2.45, "eval_general": 2.89, "train_loss": 2.52}
+```
+
+---
+
 ## Summary
 
 **Current storage:**

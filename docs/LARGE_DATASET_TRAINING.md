@@ -485,6 +485,72 @@ python generate.py --model_name my_char_model --prompt "Hello"
 
 ---
 
+---
+
+## Domain Adaptation Training (Phase 2)
+
+For domain adaptation, you typically want to:
+1. Train on domain-specific data
+2. Evaluate on **both** domain validation AND general validation (to detect catastrophic forgetting)
+
+### Dual Eval Setup
+
+```bash
+# Phase 2 domain training with dual evaluation
+python train.py \
+    --dataset_dir data/domain_corpus \
+    --model_name domain_model \
+    --config_file configs/pretrain/750M_1024_domain_adapt.json \
+    --init_from_model checkpoints/base_model \
+    --eval_dataset_dir data/general_corpus \
+    --max_iters 65500
+```
+
+**What this does:**
+- Trains on `data/domain_corpus/train/*.bin`
+- Evaluates on `data/domain_corpus/val/*.bin` (domain val loss)
+- Evaluates on `data/general_corpus/val/*.bin` (general val loss)
+- Logs both: `step 100: val 2.15 | eval_general 2.89`
+
+### Programmatic Dual Eval
+
+```python
+from core import GPTDataLoader, Tokenizer
+
+# Domain loader (train + val)
+domain_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/domain_corpus")
+
+# General eval loader (val only - no training data loaded)
+general_loader = GPTDataLoader(
+    config, tokenizer,
+    dataset_dir="data/general_corpus",
+    eval_only=True  # Only loads val shards
+)
+
+# Train with dual evaluation
+model.fit(
+    data_loader=domain_loader,
+    optimizer=optimizer,
+    eval_data_loaders={"general": general_loader}
+)
+```
+
+### Monitoring Catastrophic Forgetting
+
+During domain adaptation, watch both metrics:
+
+| Metric | Healthy | Warning |
+|--------|---------|---------|
+| `val` (domain) | ↓ Decreasing | Expected to improve |
+| `eval_general` | Stable or slight ↑ | Large ↑ = forgetting |
+
+**If general loss increases significantly:**
+- Reduce learning rate (try 5e-5 instead of 3e-4)
+- Reduce epochs (3-5 epochs max for domain adaptation)
+- Increase warmup iterations
+
+---
+
 ## Summary
 
 **When to use in-memory mode:**
@@ -499,6 +565,11 @@ python generate.py --model_name my_char_model --prompt "Hello"
 - ✅ Want to add data incrementally
 - ✅ Production training
 
+**When to use dual eval mode:**
+- ✅ Domain adaptation (Phase 2 training)
+- ✅ Monitoring catastrophic forgetting
+- ✅ Multi-domain evaluation
+
 **Quick start:**
 
 ```bash
@@ -512,6 +583,13 @@ python train.py \
     --dataset_dir data/my_dataset \
     --model_name my_model \
     --config_file configs/150M.json
+
+# 3. Domain adaptation with dual eval
+python train.py \
+    --dataset_dir data/domain_corpus \
+    --init_from_model checkpoints/base_model \
+    --eval_dataset_dir data/general_eval \
+    --model_name domain_adapted
 ```
 
 **Train on billions of tokens without running out of RAM!** 🚀

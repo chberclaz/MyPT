@@ -26,12 +26,17 @@ class GPTDataLoader:
         # With loss masking for SFT
         data_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/chat_sft", 
                                     use_loss_mask=True)
+        
+        # Eval-only mode (for separate eval sets, no train shards needed)
+        eval_loader = GPTDataLoader(config, tokenizer, dataset_dir="data/eval_set", 
+                                    eval_only=True)
     """
-    def __init__(self, config, tokenizer, dataset_dir=None, use_loss_mask=False):
+    def __init__(self, config, tokenizer, dataset_dir=None, use_loss_mask=False, eval_only=False):
         self.config = config
         self.tokenizer = tokenizer
         self.dataset_dir = dataset_dir
         self.use_loss_mask = use_loss_mask
+        self.eval_only = eval_only  # If True, only load val shards (for separate eval sets)
         
         # In-memory data (legacy mode)
         self.train_data = None
@@ -54,27 +59,36 @@ class GPTDataLoader:
             self._load_sharded_dataset(dataset_dir)
     
     def _load_sharded_dataset(self, dataset_dir):
-        """Load metadata for sharded dataset."""
+        """Load metadata for sharded dataset.
+        
+        Supports multiple directory structures:
+        1. Standard: dataset_dir/train/*.bin and dataset_dir/val/*.bin
+        2. Eval-only: dataset_dir/val/*.bin (when eval_only=True)
+        3. Flat: dataset_dir/*.bin (shards directly in directory)
+        """
         if not os.path.exists(dataset_dir):
             raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
         
-        # Load metadata
+        # Load metadata if present
         metadata_path = os.path.join(dataset_dir, "dataset_metadata.json")
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
             # Support both 'total_tokens' and 'total_tokens_written' for backwards compatibility
             total_tokens = metadata.get('total_tokens', metadata.get('total_tokens_written', 0))
-            print(f"📦 Loaded sharded dataset:")
+            mode_str = "(eval-only)" if self.eval_only else ""
+            print(f"📦 Loaded sharded dataset {mode_str}:")
             print(f"   Total tokens: {total_tokens:,}")
-            print(f"   Train shards: {metadata.get('train_shards', 'unknown')}")
+            if not self.eval_only:
+                print(f"   Train shards: {metadata.get('train_shards', 'unknown')}")
             print(f"   Val shards: {metadata.get('val_shards', 'unknown')}")
         
         # Find shard files
         train_dir = os.path.join(dataset_dir, "train")
         val_dir = os.path.join(dataset_dir, "val")
         
-        if os.path.exists(train_dir):
+        # Load train shards (skip in eval_only mode)
+        if not self.eval_only and os.path.exists(train_dir):
             # Load token shards (exclude mask files)
             self.train_shards = sorted([f for f in glob.glob(os.path.join(train_dir, "*.bin"))
                                        if not f.endswith("_mask.bin")])
@@ -82,6 +96,7 @@ class GPTDataLoader:
             if self.use_loss_mask:
                 self.train_mask_shards = sorted(glob.glob(os.path.join(train_dir, "*_mask.bin")))
         
+        # Load val shards
         if os.path.exists(val_dir):
             # Load token shards (exclude mask files)
             self.val_shards = sorted([f for f in glob.glob(os.path.join(val_dir, "*.bin"))
@@ -89,12 +104,23 @@ class GPTDataLoader:
             # Load mask shards if using loss masking
             if self.use_loss_mask:
                 self.val_mask_shards = sorted(glob.glob(os.path.join(val_dir, "*_mask.bin")))
+        elif self.eval_only:
+            # For eval_only, also check for flat structure (shards directly in dataset_dir)
+            flat_shards = sorted([f for f in glob.glob(os.path.join(dataset_dir, "*.bin"))
+                                 if not f.endswith("_mask.bin")])
+            if flat_shards:
+                self.val_shards = flat_shards
+                print(f"   Found {len(flat_shards)} shards in flat structure")
         
-        if not self.train_shards:
+        # Validation
+        if not self.eval_only and not self.train_shards:
             raise FileNotFoundError(f"No training shards found in {train_dir}")
         
-        # Validate mask shards if needed
-        if self.use_loss_mask:
+        if self.eval_only and not self.val_shards:
+            raise FileNotFoundError(f"No eval shards found in {dataset_dir}")
+        
+        # Validate mask shards if needed (only for train)
+        if self.use_loss_mask and not self.eval_only:
             if len(self.train_mask_shards) != len(self.train_shards):
                 print(f"   ⚠️ Warning: use_loss_mask=True but mask shards not found or incomplete")
                 print(f"   Expected {len(self.train_shards)} mask shards, found {len(self.train_mask_shards)}")
@@ -103,7 +129,8 @@ class GPTDataLoader:
                 print(f"   Using loss masking for SFT (assistant-only training)")
         
         self.use_shards = True
-        print(f"   Using shard-based loading (low memory mode)")
+        mode_str = "eval-only" if self.eval_only else "low memory"
+        print(f"   Using shard-based loading ({mode_str} mode)")
     
     def _load_shard(self, shard_path):
         """Load a shard from disk (with caching)."""

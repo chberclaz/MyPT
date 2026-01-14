@@ -34,6 +34,8 @@ def parse_args():
                         help="Tokenizer type: gpt2 or char")
     parser.add_argument("--init_from_model", type=str, default=None,
                         help="Optional: model_name to initialize weights from (e.g. dante_base)")
+    parser.add_argument("--eval_dataset_dir", type=str, default=None,
+                        help="Additional eval dataset for dual evaluation (e.g., general eval during domain adaptation)")
     
     # Configuration file (alternative to individual params)
     parser.add_argument("--config_file", type=str, default=None,
@@ -110,7 +112,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
@@ -386,6 +388,41 @@ def main():
             print(f"LR warmup: {effective_warmup_iters*100:.0f}% of training ({int(effective_warmup_iters * effective_max_iters)} steps)")
         else:
             print(f"LR warmup: {int(effective_warmup_iters)} steps")
+    
+    # Setup additional eval data loaders if eval_sets specified in config or CLI
+    eval_data_loaders = None
+    eval_sets_config = config_training.get('eval_sets', None)
+    
+    # Merge CLI --eval_dataset_dir with config eval_sets
+    if args.eval_dataset_dir:
+        if eval_sets_config is None:
+            eval_sets_config = {}
+        # CLI arg adds a "general" eval set (common use case for domain adaptation)
+        eval_sets_config["general"] = args.eval_dataset_dir
+    
+    if eval_sets_config is not None:
+        print()
+        print("========== Additional Eval Sets ==========")
+        eval_data_loaders = {}
+        for eval_name, eval_path in eval_sets_config.items():
+            print(f"Loading eval set '{eval_name}' from: {eval_path}")
+            eval_loader = GPTDataLoader(
+                model.config,
+                model.tokenizer,
+                dataset_dir=eval_path,
+                eval_only=True
+            )
+            eval_data_loaders[eval_name] = eval_loader
+        print()
+    
+    # Get optional eval_seed and log_file from config
+    eval_seed = config_training.get('eval_seed', None)
+    log_file = config_training.get('log_file', None)
+    if log_file is not None:
+        print(f"Training log: {log_file}")
+    if eval_seed is not None:
+        print(f"Eval RNG seed: {eval_seed}")
+    
     print()
     print("Model param dtype:", next(model.parameters()).dtype)
     model.fit(
@@ -400,7 +437,10 @@ def main():
         warmup_iters=effective_warmup_iters,
         grad_clip=effective_grad_clip,
         use_amp=effective_use_amp,
-        amp_dtype=effective_amp_dtype
+        amp_dtype=effective_amp_dtype,
+        eval_data_loaders=eval_data_loaders,
+        log_file=log_file,
+        eval_seed=eval_seed
     )
     
     print("\n========== Training Complete ==========")

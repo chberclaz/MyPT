@@ -62,6 +62,7 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
 
   - Sharded dataset system for 100M+ tokens
   - Minimal RAM usage (memory-mapped shards)
+  - **Dual evaluation for domain adaptation** (monitor forgetting)
   - Step-by-step examples
   - Performance comparison
 
@@ -71,6 +72,13 @@ Welcome to the MyPT documentation! This folder contains comprehensive guides and
   - Configuring download URLs and weights
   - Creating custom source files
   - Usage with fetch_and_prepare_multilingual.py
+
+- **[phase2_domain_corpus.md](phase2_domain_corpus.md)** - Phase 2 Domain Corpus Builder
+
+  - Build domain-specific training data
+  - Multi-format transformers (Markdown, man pages, RFC, HTML, etc.)
+  - Deduplication (exact + near-duplicate)
+  - Integration with training pipeline
 
 - **[SHARDED_DATASET_IMPLEMENTATION.md](SHARDED_DATASET_IMPLEMENTATION.md)** - Sharded dataset implementation
 
