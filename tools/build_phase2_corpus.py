@@ -375,6 +375,7 @@ DEFAULT_REPOS = {
         include_patterns=[
             "Documentation/**/*.rst",
             "Documentation/**/*.txt",
+            "Documentation/**/*.yaml",  # Device tree bindings - 5000+ docs!
         ],
         exclude_patterns=["**/translations/**"],
         description="Linux kernel documentation",
@@ -415,6 +416,18 @@ DEFAULT_REPOS = {
         exclude_patterns=["**/test/**", "**/tests/**"],
         description="TypeScript documentation and source",
         license_hint="Apache-2.0"
+    ),
+    
+    # Swiss Law - Fedlex (requires running swiss_law_fedlex_scraper.py first)
+    "fedlex-swiss-law": SourceConfig(
+        name="Swiss Federal Law (Fedlex)",
+        path="fedlex-swiss-law",
+        repo_url="__FEDLEX_SCRAPER__",  # Special marker for Fedlex scraper
+        weight=2.0,
+        include_patterns=["**/*.txt"],
+        exclude_patterns=[],
+        description="Swiss federal legislation from fedlex.admin.ch (DE/EN)",
+        license_hint="Swiss Federal Chancellery Open Data"
     ),
 }
 
@@ -532,6 +545,62 @@ def download_rfc_documents(
         return False, elapsed, f"error: {e}"
 
 
+def run_fedlex_scraper(
+    target_dir: Path,
+    logger: logging.Logger,
+    languages: str = "de,en",
+    limit: int = 5000,
+) -> Tuple[bool, float, str]:
+    """
+    Run the Fedlex Swiss Law scraper.
+    
+    Returns:
+        (success, elapsed_time, message)
+    """
+    start_time = time.time()
+    fedlex_dir = target_dir / "fedlex-swiss-law"
+    
+    # Check if already scraped
+    if fedlex_dir.exists():
+        existing_de = len(list((fedlex_dir / "de").glob("*.txt"))) if (fedlex_dir / "de").exists() else 0
+        existing_en = len(list((fedlex_dir / "en").glob("*.txt"))) if (fedlex_dir / "en").exists() else 0
+        if existing_de > 100 or existing_en > 100:
+            elapsed = time.time() - start_time
+            logger.info(f"Fedlex directory already has {existing_de} DE + {existing_en} EN files")
+            return True, elapsed, f"exists_{existing_de}de_{existing_en}en"
+    
+    logger.info("Running Fedlex Swiss Law scraper...")
+    logger.info(f"  Languages: {languages}, Limit: {limit}")
+    
+    try:
+        # Import and run the scraper
+        from tools.swiss_law_fedlex_scraper import FedlexScraper
+        
+        lang_list = [lang.strip() for lang in languages.split(',')]
+        scraper = FedlexScraper(
+            output_dir=str(fedlex_dir),
+            languages=lang_list,
+            delay=0.3,
+        )
+        
+        stats = scraper.scrape_all(limit=limit, skip_existing=True)
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Fedlex scrape complete: {stats['texts_downloaded']} texts ({stats['bytes_total'] / (1024*1024):.1f} MB)")
+        
+        return True, elapsed, f"scraped_{stats['texts_downloaded']}"
+        
+    except ImportError as e:
+        elapsed = time.time() - start_time
+        logger.error(f"Fedlex scraper not found: {e}")
+        logger.error("Run: python tools/swiss_law_fedlex_scraper.py --output_dir sources/fedlex-swiss-law")
+        return False, elapsed, f"import_error: {e}"
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"Fedlex scraper error: {e}")
+        return False, elapsed, f"error: {e}"
+
+
 def fetch_all_sources(
     sources: Dict[str, SourceConfig],
     target_dir: Path,
@@ -558,6 +627,12 @@ def fetch_all_sources(
         # Special case: RFC download
         if config.repo_url == "__RFC_DOWNLOAD__":
             success, elapsed, msg = download_rfc_documents(target_dir, logger)
+            results[name] = (success, msg)
+            continue
+        
+        # Special case: Fedlex Swiss Law scraper
+        if config.repo_url == "__FEDLEX_SCRAPER__":
+            success, elapsed, msg = run_fedlex_scraper(target_dir, logger)
             results[name] = (success, msg)
             continue
         
@@ -844,30 +919,67 @@ class DocumentProcessor:
             return None, "invalid_json"
     
     def _extract_yaml_text(self, path: str) -> Tuple[Optional[str], str]:
-        """Extract readable text content from YAML files."""
+        """Extract readable text content from YAML files (especially Linux device tree docs)."""
         try:
             with open(path, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
             
-            # For YAML, we extract string values that look like documentation
             texts = []
-            for line in content.split('\n'):
-                # Look for description/text fields
+            lines = content.split('\n')
+            i = 0
+            
+            # Keys that contain documentation text
+            doc_keys = {'description', 'title', 'summary', 'text', 'content', 
+                       'explanation', 'note', 'details', 'maintainers', 'help',
+                       'allof', 'oneof', 'anyof', 'examples'}
+            
+            while i < len(lines):
+                line = lines[i]
+                
+                # Check for doc keys
                 if ':' in line:
                     key, _, value = line.partition(':')
+                    key_clean = key.strip().lower().rstrip(':')
+                    
+                    # Handle multi-line block (description: |)
+                    if key_clean in doc_keys and value.strip() in ('|', '|-', '>'):
+                        # Collect indented block
+                        block_lines = []
+                        i += 1
+                        if i < len(lines):
+                            # Determine indent level
+                            first_content = lines[i]
+                            indent = len(first_content) - len(first_content.lstrip())
+                            while i < len(lines):
+                                next_line = lines[i]
+                                if next_line.strip() == '':
+                                    block_lines.append('')
+                                    i += 1
+                                elif len(next_line) - len(next_line.lstrip()) >= indent and next_line.strip():
+                                    block_lines.append(next_line[indent:] if len(next_line) > indent else next_line.strip())
+                                    i += 1
+                                else:
+                                    break
+                        if block_lines:
+                            block_text = '\n'.join(block_lines).strip()
+                            if len(block_text) > 30:
+                                texts.append(f"## {key_clean.title()}\n{block_text}")
+                        continue
+                    
+                    # Handle single-line values
                     value = value.strip().strip('"').strip("'")
-                    # Only extract meaningful text fields
-                    key_lower = key.strip().lower()
-                    if key_lower in ('description', 'text', 'content', 'summary', 
-                                    'title', 'name', 'explanation', 'note', 'details'):
-                        if len(value) > 20:
-                            texts.append(value)
+                    if key_clean in doc_keys and len(value) > 20:
+                        texts.append(f"{key_clean.title()}: {value}")
+                
+                i += 1
             
             if texts:
-                return '\n\n'.join(texts), "yaml_text"
+                # Add title from filename if we have content
+                title = Path(path).stem.replace('-', ' ').replace('_', ' ').title()
+                return f"# {title}\n\n" + '\n\n'.join(texts), "yaml_doc"
             return None, "empty_yaml"
-        except Exception:
-            return None, "yaml_error"
+        except Exception as e:
+            return None, f"yaml_error: {e}"
 
 
 # ---------------------------------------------------------------------------

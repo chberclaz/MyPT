@@ -1,6 +1,6 @@
 {
   "name": "GPT-750M-1024-Domain-Adaptation",
-  "description": "Domain adaptation config for 750M reasoning model. Lower LR + shorter warmup to preserve base knowledge while learning domain (IT security, protocols, Bash, Python/JS/Java docs). Use with --init_from_model.",
+  "description": "Domain adaptation config for 750M reasoning model. Lower LR + shorter warmup to preserve base knowledge while learning domains (IT security, protocols, Bash, Python/JS/Java docs, Swiss Law DE/EN). 161M tokens, 5 epochs (~805M token views). Use with --init_from_model.",
 
   "batch_size": 12,
   "block_size": 1024,
@@ -11,10 +11,10 @@
   "dropout": 0.1,
   "bias": false,
 
-  "learning_rate": 7e-5,
-  "max_iters": 41000,
+  "learning_rate": 5e-5,
+  "max_iters": 65500,
   "eval_interval": 2000,
-  "warmup_iters": 0.02,
+  "warmup_iters": 1300,
   "grad_clip": 1.0,
   "weight_decay": 0.1,
   "use_amp": true,

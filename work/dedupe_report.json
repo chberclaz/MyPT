@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-01-14T14:52:49.787352",
+  "timestamp": "2026-01-14T17:24:31.503006",
   "methods": [
     "exact"
   ],
   "simhash_threshold": 4,
   "stats": {
-    "exact_hashes_seen": 17827,
+    "exact_hashes_seen": 38019,
     "simhash_fingerprints": 0,
-    "exact_dupes_found": 479,
+    "exact_dupes_found": 1245,
     "near_dupes_found": 0
   }
 }

@@ -105,7 +105,7 @@ annotated-types>=0.4.0
 # =============================================================================
 # DOCUMENT FORMAT SUPPORT (Recommended for workspace/RAG functionality)
 # =============================================================================
-
+rdflib>=7.0.0
 # PyMuPDF - PDF text extraction (highly recommended)
 # Cross-platform: Windows, Linux, macOS
 # pip install PyMuPDF
@@ -118,6 +118,10 @@ python-docx>=1.1.0
 
 # lxml - XML processing (python-docx dependency)
 lxml>=4.9.0
+
+# BeautifulSoup4 - HTML parsing for web scraping and document extraction
+# Used by swiss_law_fedlex_scraper.py for extracting law texts from HTML
+beautifulsoup4>=4.12.0
 
 # =============================================================================
 # OPTIONAL: Performance Enhancement

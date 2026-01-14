@@ -12,6 +12,8 @@ work/
 work/*
 out/
 out/*
+out_tokenized/
+out_tokenized/*
 logs/
 logs/*
 logs/audit/
