@@ -71,6 +71,10 @@ from tools.transformers import (
     RFCXMLConverter,
     HTMLConverter,
     MarkdownRSTConverter,
+    JavaDocConverter,
+    TexinfoConverter,
+    CodeDocExtractor,
+    RFCDownloader,
 )
 
 # Audit logging for compliance
@@ -135,14 +139,14 @@ class SourceConfig:
 
 
 DEFAULT_REPOS = {
-    # Security sources
+    # Security sources - OWASP Projects (comprehensive)
     "owasp-top10": SourceConfig(
         name="OWASP Top 10",
         path="owasp-top10",
         repo_url="https://github.com/OWASP/Top10.git",
-        weight=1.0,
+        weight=1.5,
         include_patterns=["**/*.md"],
-        exclude_patterns=["README.md", "CONTRIBUTING.md"],
+        exclude_patterns=["CONTRIBUTING.md"],
         description="OWASP Top 10 security vulnerabilities",
         license_hint="CC-BY-SA-4.0"
     ),
@@ -150,8 +154,9 @@ DEFAULT_REPOS = {
         name="OWASP Cheat Sheets",
         path="owasp-cheatsheets",
         repo_url="https://github.com/OWASP/CheatSheetSeries.git",
-        weight=1.5,
-        include_patterns=["cheatsheets/*.md", "cheatsheets_draft/*.md"],
+        weight=2.0,
+        include_patterns=["**/*.md"],  # All markdown files
+        exclude_patterns=["CONTRIBUTING.md"],
         description="Security cheat sheets and best practices",
         license_hint="CC-BY-SA-4.0"
     ),
@@ -159,10 +164,101 @@ DEFAULT_REPOS = {
         name="OWASP Web Security Testing Guide",
         path="owasp-wstg",
         repo_url="https://github.com/OWASP/wstg.git",
-        weight=1.2,
-        include_patterns=["document/**/*.md"],
+        weight=1.5,
+        include_patterns=["**/*.md"],  # All markdown
+        exclude_patterns=["CONTRIBUTING.md"],
         description="Web application security testing methodology",
         license_hint="CC-BY-SA-4.0"
+    ),
+    "owasp-asvs": SourceConfig(
+        name="OWASP Application Security Verification Standard",
+        path="owasp-asvs",
+        repo_url="https://github.com/OWASP/ASVS.git",
+        weight=1.5,
+        include_patterns=["**/*.md", "**/*.txt"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="Application security verification standard",
+        license_hint="CC-BY-SA-4.0"
+    ),
+    "owasp-samm": SourceConfig(
+        name="OWASP Software Assurance Maturity Model",
+        path="owasp-samm",
+        repo_url="https://github.com/OWASP/samm.git",
+        weight=1.2,
+        include_patterns=["**/*.md", "**/*.yaml"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="Software assurance maturity model",
+        license_hint="CC-BY-SA-4.0"
+    ),
+    "owasp-mstg": SourceConfig(
+        name="OWASP Mobile Security Testing Guide",
+        path="owasp-mstg",
+        repo_url="https://github.com/OWASP/owasp-mstg.git",
+        weight=1.5,
+        include_patterns=["**/*.md"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="Mobile application security testing guide",
+        license_hint="CC-BY-SA-4.0"
+    ),
+    "owasp-mastg": SourceConfig(
+        name="OWASP Mobile Application Security",
+        path="owasp-mastg",
+        repo_url="https://github.com/OWASP/owasp-mastg.git",
+        weight=1.5,
+        include_patterns=["**/*.md"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="Mobile application security testing guide (new)",
+        license_hint="CC-BY-SA-4.0"
+    ),
+    "owasp-wrongsecrets": SourceConfig(
+        name="OWASP WrongSecrets",
+        path="owasp-wrongsecrets",
+        repo_url="https://github.com/OWASP/wrongsecrets.git",
+        weight=1.0,
+        include_patterns=["**/*.md", "**/*.adoc"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="Vulnerable app for secrets management education",
+        license_hint="MIT"
+    ),
+    "owasp-juice-shop": SourceConfig(
+        name="OWASP Juice Shop",
+        path="owasp-juice-shop",
+        repo_url="https://github.com/juice-shop/juice-shop.git",
+        weight=1.0,
+        include_patterns=["**/*.md"],
+        exclude_patterns=["CONTRIBUTING.md", "**/node_modules/**"],
+        description="Vulnerable web application for security training",
+        license_hint="MIT"
+    ),
+    "owasp-api-security": SourceConfig(
+        name="OWASP API Security",
+        path="owasp-api-security",
+        repo_url="https://github.com/OWASP/API-Security.git",
+        weight=1.5,
+        include_patterns=["**/*.md"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="API security top 10 and best practices",
+        license_hint="CC-BY-SA-4.0"
+    ),
+    "owasp-cornucopia": SourceConfig(
+        name="OWASP Cornucopia",
+        path="owasp-cornucopia",
+        repo_url="https://github.com/OWASP/cornucopia.git",
+        weight=1.0,
+        include_patterns=["**/*.md", "**/*.xml"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="Card game for threat modeling",
+        license_hint="CC-BY-SA-3.0"
+    ),
+    "owasp-secure-coding": SourceConfig(
+        name="OWASP Secure Coding Practices",
+        path="owasp-secure-coding",
+        repo_url="https://github.com/OWASP/secure-coding-practices-quick-reference-guide.git",
+        weight=1.2,
+        include_patterns=["**/*.md", "**/*.rst"],
+        exclude_patterns=["CONTRIBUTING.md"],
+        description="Secure coding practices quick reference",
+        license_hint="CC-BY-SA-3.0"
     ),
     "mitre-cti": SourceConfig(
         name="MITRE ATT&CK",
@@ -174,15 +270,15 @@ DEFAULT_REPOS = {
         license_hint="Apache-2.0"
     ),
     
-    # RFCs and Protocols
-    "rfcxml": SourceConfig(
-        name="RFC XML",
-        path="rfcxml",
-        repo_url="https://github.com/ietf-tools/rfcxml.git",
+    # RFCs and Protocols - Use direct .txt downloads instead of rfcxml repo
+    "rfc-txt": SourceConfig(
+        name="RFC Text Documents",
+        path="rfc-txt",
+        repo_url="__RFC_DOWNLOAD__",  # Special marker for RFC download
         weight=1.5,
-        include_patterns=["**/*.xml"],
-        description="IETF RFC specifications",
-        license_hint="BSD-3-Clause"
+        include_patterns=["**/*.txt"],
+        description="IETF RFC specifications (text format)",
+        license_hint="Public Domain / IETF Trust"
     ),
     
     # Unix/Bash
@@ -191,7 +287,12 @@ DEFAULT_REPOS = {
         path="man-pages",
         repo_url="https://github.com/mkerrisk/man-pages.git",
         weight=1.2,
-        include_patterns=["man*/*.[1-8]", "man*/*.[1-8].gz"],
+        include_patterns=[
+            "man*/*.1", "man*/*.2", "man*/*.3", "man*/*.4",
+            "man*/*.5", "man*/*.6", "man*/*.7", "man*/*.8",
+            "man*/*.1.gz", "man*/*.2.gz", "man*/*.3.gz", "man*/*.4.gz",
+            "man*/*.5.gz", "man*/*.6.gz", "man*/*.7.gz", "man*/*.8.gz",
+        ],
         description="Linux manual pages",
         license_hint="GPL/BSD/MIT"
     ),
@@ -205,15 +306,15 @@ DEFAULT_REPOS = {
         license_hint="GPL-3.0"
     ),
     
-    # Python
+    # Python - ALL documentation
     "python-docs": SourceConfig(
         name="Python Documentation",
         path="python-docs",
         repo_url="https://github.com/python/cpython.git",
         weight=1.5,
-        include_patterns=["Doc/**/*.rst"],
-        exclude_patterns=["Doc/whatsnew/*"],
-        description="Official Python documentation",
+        include_patterns=["Doc/**/*.rst", "Doc/**/*.txt"],  # All docs
+        exclude_patterns=[],  # Include everything
+        description="Official Python documentation (full)",
         license_hint="PSF-2.0"
     ),
     "python-peps": SourceConfig(
@@ -237,28 +338,83 @@ DEFAULT_REPOS = {
         license_hint="MIT"
     ),
     
-    # MDN
+    # MDN - ALL English content (massive documentation source)
     "mdn-content": SourceConfig(
         name="MDN Web Docs",
         path="mdn-content",
         repo_url="https://github.com/mdn/content.git",
         weight=2.0,
-        include_patterns=["files/en-us/**/*.md"],
-        exclude_patterns=["**/glossary/**", "**/games/**"],
-        description="Mozilla Developer Network documentation",
+        include_patterns=[
+            "files/en-us/**/*.md",  # ALL English MDN content
+        ],
+        exclude_patterns=["**/games/**"],  # Only exclude games
+        description="Mozilla Developer Network documentation (full)",
         license_hint="CC-BY-SA-2.5"
     ),
     
-    # Java
+    # Java - ALL java.base classes
     "openjdk": SourceConfig(
         name="OpenJDK Documentation",
         path="openjdk",
         repo_url="https://github.com/openjdk/jdk.git",
-        weight=0.8,
-        include_patterns=["src/java.base/share/classes/**/*.java"],
-        exclude_patterns=["**/test/**"],
-        description="OpenJDK source documentation",
+        weight=1.0,
+        include_patterns=[
+            "src/java.base/share/classes/**/*.java",  # All java.base
+        ],
+        exclude_patterns=["**/test/**", "**/*Test*.java", "**/internal/**"],
+        description="OpenJDK source documentation (Javadoc)",
         license_hint="GPL-2.0-classpath"
+    ),
+    
+    # Linux Kernel Documentation - Massive high-quality source
+    "linux-docs": SourceConfig(
+        name="Linux Kernel Documentation",
+        path="linux-docs",
+        repo_url="https://github.com/torvalds/linux.git",
+        weight=1.5,
+        include_patterns=[
+            "Documentation/**/*.rst",
+            "Documentation/**/*.txt",
+        ],
+        exclude_patterns=["**/translations/**"],
+        description="Linux kernel documentation",
+        license_hint="GPL-2.0"
+    ),
+    
+    # Rust Book & Documentation - Modern systems programming
+    "rust-book": SourceConfig(
+        name="The Rust Programming Language",
+        path="rust-book",
+        repo_url="https://github.com/rust-lang/book.git",
+        weight=1.2,
+        include_patterns=["**/*.md"],
+        exclude_patterns=["**/redirects/**"],
+        description="The Rust Programming Language book",
+        license_hint="MIT/Apache-2.0"
+    ),
+    
+    # Go Documentation
+    "go-docs": SourceConfig(
+        name="Go Documentation",
+        path="go-docs",
+        repo_url="https://github.com/golang/go.git",
+        weight=1.0,
+        include_patterns=["doc/**/*.html", "src/**/*.go"],
+        exclude_patterns=["**/test/**", "**/testdata/**"],
+        description="Go language documentation and source",
+        license_hint="BSD-3-Clause"
+    ),
+    
+    # TypeScript Documentation
+    "typescript-docs": SourceConfig(
+        name="TypeScript Documentation",
+        path="typescript-docs",
+        repo_url="https://github.com/microsoft/TypeScript.git",
+        weight=1.0,
+        include_patterns=["doc/**/*.md", "src/**/*.ts"],
+        exclude_patterns=["**/test/**", "**/tests/**"],
+        description="TypeScript documentation and source",
+        license_hint="Apache-2.0"
     ),
 }
 
@@ -331,6 +487,51 @@ def clone_repository(
         return False, elapsed, f"exception: {e}"
 
 
+def download_rfc_documents(
+    target_dir: Path,
+    logger: logging.Logger,
+) -> Tuple[bool, float, str]:
+    """
+    Download RFC documents from rfc-editor.org.
+    
+    Returns:
+        (success, elapsed_time, message)
+    """
+    start_time = time.time()
+    rfc_dir = target_dir / "rfc-txt"
+    
+    if rfc_dir.exists() and len(list(rfc_dir.glob("rfc*.txt"))) > 10:
+        # Already have RFCs
+        existing = len(list(rfc_dir.glob("rfc*.txt")))
+        elapsed = time.time() - start_time
+        logger.info(f"RFC directory already has {existing} files")
+        return True, elapsed, f"exists_{existing}_files"
+    
+    logger.info("Downloading RFC documents from rfc-editor.org...")
+    
+    try:
+        downloader = RFCDownloader(str(rfc_dir), delay=0.3)
+        
+        def progress(current, total, rfc_num, status):
+            if current % 10 == 0 or current == total:
+                logger.info(f"  RFC download progress: {current}/{total}")
+        
+        results = downloader.download_key_rfcs(progress_callback=progress)
+        
+        successful = sum(1 for _, path, _ in results if path is not None)
+        stats = downloader.get_stats()
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Downloaded {successful}/{len(results)} RFCs ({stats['total_size_mb']:.1f} MB)")
+        
+        return True, elapsed, f"downloaded_{successful}"
+        
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"RFC download error: {e}")
+        return False, elapsed, f"error: {e}"
+
+
 def fetch_all_sources(
     sources: Dict[str, SourceConfig],
     target_dir: Path,
@@ -353,6 +554,13 @@ def fetch_all_sources(
             continue
         
         logger.info(f"[{i}/{total}] Fetching {config.name}...")
+        
+        # Special case: RFC download
+        if config.repo_url == "__RFC_DOWNLOAD__":
+            success, elapsed, msg = download_rfc_documents(target_dir, logger)
+            results[name] = (success, msg)
+            continue
+        
         success, elapsed, msg = clone_repository(
             name=config.path,
             url=config.repo_url,
@@ -535,12 +743,18 @@ class DocumentProcessor:
     
     EXTENSION_MAP = {
         '.md': 'markdown', '.markdown': 'markdown', '.rst': 'rst',
-        '.1': 'man', '.2': 'man', '.3': 'man',
-        '.5': 'man', '.7': 'man', '.8': 'man',
+        '.1': 'man', '.2': 'man', '.3': 'man', '.4': 'man',
+        '.5': 'man', '.6': 'man', '.7': 'man', '.8': 'man',
         '.1p': 'man', '.3p': 'man', '.gz': 'man_gz',
         '.html': 'html', '.htm': 'html',
         '.xml': 'xml', '.txt': 'text', '.text': 'text',
         '.json': 'json',
+        '.java': 'java',  # Javadoc extraction
+        '.texi': 'texinfo', '.texinfo': 'texinfo', '.txi': 'texinfo',  # GNU Texinfo
+        '.go': 'go',  # Go source with doc comments
+        '.ts': 'typescript', '.tsx': 'typescript',  # TypeScript with JSDoc
+        '.adoc': 'asciidoc',  # AsciiDoc format
+        '.yaml': 'yaml', '.yml': 'yaml',  # YAML (extract readable content)
     }
     
     def __init__(self):
@@ -548,6 +762,9 @@ class DocumentProcessor:
         self.rfc_converter = RFCXMLConverter()
         self.html_converter = HTMLConverter()
         self.md_converter = MarkdownRSTConverter()
+        self.java_converter = JavaDocConverter()
+        self.texinfo_converter = TexinfoConverter()
+        self.code_converter = CodeDocExtractor()
     
     def get_file_type(self, path: str) -> Optional[str]:
         """Determine file type from path."""
@@ -585,6 +802,19 @@ class DocumentProcessor:
                     return f.read(), "plaintext"
             elif file_type == 'json':
                 return self._extract_mitre_json(path)
+            elif file_type == 'java':
+                return self.java_converter.convert(path)
+            elif file_type == 'texinfo':
+                return self.texinfo_converter.convert(path)
+            elif file_type in ('go', 'typescript'):
+                return self.code_converter.convert(path)
+            elif file_type == 'asciidoc':
+                # AsciiDoc - treat similar to markdown
+                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                    return f.read(), "asciidoc"
+            elif file_type == 'yaml':
+                # YAML - extract text content
+                return self._extract_yaml_text(path)
             else:
                 return None, f"unhandled_type:{file_type}"
         except Exception as e:
@@ -612,6 +842,32 @@ class DocumentProcessor:
             return None, "empty_json"
         except json.JSONDecodeError:
             return None, "invalid_json"
+    
+    def _extract_yaml_text(self, path: str) -> Tuple[Optional[str], str]:
+        """Extract readable text content from YAML files."""
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            
+            # For YAML, we extract string values that look like documentation
+            texts = []
+            for line in content.split('\n'):
+                # Look for description/text fields
+                if ':' in line:
+                    key, _, value = line.partition(':')
+                    value = value.strip().strip('"').strip("'")
+                    # Only extract meaningful text fields
+                    key_lower = key.strip().lower()
+                    if key_lower in ('description', 'text', 'content', 'summary', 
+                                    'title', 'name', 'explanation', 'note', 'details'):
+                        if len(value) > 20:
+                            texts.append(value)
+            
+            if texts:
+                return '\n\n'.join(texts), "yaml_text"
+            return None, "empty_yaml"
+        except Exception:
+            return None, "yaml_error"
 
 
 # ---------------------------------------------------------------------------
@@ -704,23 +960,48 @@ class CorpusBuilder:
         include_patterns = source_config.include_patterns or ['**/*']
         exclude_patterns = source_config.exclude_patterns or []
         
+        self.logger.info(f"Scanning {source_path} with patterns: {include_patterns}")
+        
+        # Man page extensions (sections 1-8)
+        man_extensions = {'.1', '.2', '.3', '.4', '.5', '.6', '.7', '.8', '.1p', '.3p'}
+        
+        files_found = 0
+        files_filtered_ext = 0
+        files_excluded = 0
+        files_yielded = 0
+        
         for pattern in include_patterns:
-            for path in source_path.glob(pattern):
+            pattern_matches = list(source_path.glob(pattern))
+            self.logger.debug(f"  Pattern '{pattern}' matched {len(pattern_matches)} items")
+            
+            for path in pattern_matches:
                 if not path.is_file():
                     continue
                 
+                files_found += 1
+                
                 ext = path.suffix.lower()
+                original_ext = ext
                 if ext == '.gz':
                     ext = Path(path.stem).suffix.lower()
                 
-                if ext not in self.include_ext and ext not in ('.1', '.2', '.3', '.5', '.7', '.8'):
+                if ext not in self.include_ext and ext not in man_extensions:
+                    files_filtered_ext += 1
+                    if files_filtered_ext <= 3:
+                        self.logger.debug(f"    Filtered by ext: {path.name} (ext={original_ext}, inner={ext})")
                     continue
                 
                 rel_path = str(path.relative_to(source_path))
                 excluded = any(Path(rel_path).match(exc) for exc in exclude_patterns)
                 
-                if not excluded:
-                    yield path
+                if excluded:
+                    files_excluded += 1
+                    continue
+                
+                files_yielded += 1
+                yield path
+        
+        self.logger.info(f"  Scan summary: found={files_found}, filtered_ext={files_filtered_ext}, excluded={files_excluded}, yielded={files_yielded}")
     
     def process_document(self, path: Path, source_name: str) -> Optional[Dict]:
         """Process a single document."""
@@ -775,6 +1056,7 @@ class CorpusBuilder:
         self.logger.info(f"Min chars:         {self.min_chars}")
         self.logger.info(f"Shard size:        {self.shard_mb} MB")
         self.logger.info(f"Random seed:       {self.seed}")
+        self.logger.info(f"Include ext:       {self.include_ext}")
         
         start_time = time.time()
         
@@ -1067,7 +1349,7 @@ def main():
                         help="Deduplication methods: exact,simhash (default: exact)")
     parser.add_argument("--simhash_threshold", type=int, default=4,
                         help="Simhash Hamming distance threshold (default: 4)")
-    parser.add_argument("--include_ext", type=str, default=".md,.rst,.txt,.html,.xml,.json",
+    parser.add_argument("--include_ext", type=str, default=".md,.rst,.txt,.html,.xml,.json,.java,.texi,.go,.ts,.adoc,.yaml,.yml",
                         help="File extensions to process")
     parser.add_argument("--max_docs_per_repo", type=int, default=0,
                         help="Max documents per repo, 0 = unlimited (default: 0)")

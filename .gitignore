@@ -6,7 +6,23 @@ data/*
 workspace/docs/*
 workspace/index/*
 workspace/*
-
+sources/
+sources/*
+work/
+work/*
+out/
+out/*
+logs/
+logs/*
+logs/audit/
+logs/app/
+logs/train/
+logs/eval/
+logs/eval/audit/
+logs/eval/app/
+logs/eval/train/
+logs/eval/train/audit/
+logs/eval/train/app/
 
 
 # Python

@@ -211,7 +211,7 @@ class ManPageConverter:
         text = re.sub(r'\\-', '-', text)  # Minus sign
         text = re.sub(r'\\ ', ' ', text)  # Non-breaking space
         text = re.sub(r'\\&', '', text)   # Zero-width character
-        text = re.sub(r'\\e', '\\', text) # Backslash
+        text = re.sub(r'\\e', r'\\', text) # Backslash (raw string for replacement)
         text = re.sub(r'\\`', '`', text)  # Grave accent
         text = re.sub(r"\\'", "'", text)  # Apostrophe
         text = re.sub(r'\\[*"]', '', text) # String interpolation
