@@ -254,21 +254,19 @@ def main():
     model = model.to(config.device)
     
     # Smart dtype selection based on GPU capability
-    # - A100/H100 (compute 8.0+): bf16 weights + fp32 LayerNorm for stability
+    # - A100/H100 (compute 8.0+): Native bf16 support, use bf16 throughout
     # - RTX 30/40 (compute 8.6): bf16 supported, same pattern works
     # - RTX 20/GTX (compute < 8.0): Keep fp32 weights, rely on autocast for mixed precision
     training_dtype = 'fp32'  # default
-    use_layernorm_fp32_hack = False
     
     if torch.cuda.is_available() and 'cuda' in str(config.device):
         capability = torch.cuda.get_device_capability()
         compute_capability = capability[0] + capability[1] / 10
         
         if compute_capability >= 8.0:
-            # Modern GPU with native bf16 support
+            # Modern GPU with native bf16 support (A100, H100, RTX 30/40)
             training_dtype = 'bf16'
-            use_layernorm_fp32_hack = True
-            print(f"GPU compute {capability[0]}.{capability[1]}: Using bf16 weights + fp32 LayerNorm")
+            print(f"GPU compute {capability[0]}.{capability[1]}: Using bf16 weights")
         elif compute_capability >= 7.0:
             # Older GPU (RTX 20 series, GTX 16 series) - use fp16 via autocast only
             training_dtype = 'fp32'
@@ -284,11 +282,6 @@ def main():
     # Apply dtype conversion
     if training_dtype == 'bf16':
         model = model.to(dtype=torch.bfloat16)
-        if use_layernorm_fp32_hack:
-            # Keep LayerNorm in fp32 for numerical stability (works on bf16-capable GPUs)
-            for m in model.modules():
-                if isinstance(m, nn.LayerNorm):
-                    m.float()
     
     print(f"Model weights dtype: {next(model.parameters()).dtype}")
     
