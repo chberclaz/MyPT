@@ -921,7 +921,7 @@ class GPT(nn.Module):
                 _mem("after_estimate_before_save")
                 gpu_mem("after_estimate_before_save")
                 lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
-                
+
                 # Console output: iter N | val X.XX | eval_name Y.YY | ...
                 eval_parts = " | ".join([f"eval_{k} {v:.4f}" for k, v in eval_losses.items()])
                 if eval_parts:

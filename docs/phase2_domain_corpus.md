@@ -113,6 +113,9 @@ python scripts/prepare_weighted_dataset.py `
 | `--include_ext`       | `.md,.rst,.txt,.html,.xml,.json` | File extensions to process                     |
 | `--max_docs_per_repo` | `0`                              | Max documents per repo (0 = unlimited)         |
 | `--run_tokenizer`     | -                                | Run tokenizer after corpus build               |
+| `--replay_dir`        | -                                | Directory with general corpus for data mixing  |
+| `--replay_ratio`      | `0.3`                            | Ratio of replay data to mix (e.g., 0.3 = 30%)  |
+| `--replay_shards`     | `0`                              | Number of replay shards (0 = auto from ratio)  |
 
 ### JSON Configuration
 
@@ -288,6 +291,90 @@ Example metadata for verification:
   }
 }
 ```
+
+## Data Mixing (Replay) for Domain Adaptation
+
+When fine-tuning a model on domain-specific data, **catastrophic forgetting** can cause the model to lose general language capabilities. Data mixing (also called "replay") helps mitigate this by including general corpus data alongside domain data during training.
+
+### Why Use Data Mixing?
+
+| Problem                    | Solution with Replay                   |
+| -------------------------- | -------------------------------------- |
+| Domain loss stays high     | General data anchors the loss          |
+| General eval degrades 10%+ | Maintains base language patterns       |
+| Model forgets common words | Regular exposure to general vocabulary |
+
+### Recommended Ratios
+
+| Domain Data | Replay Data | Use Case                      |
+| ----------- | ----------- | ----------------------------- |
+| 100%        | 0%          | Maximum domain specialization |
+| 70%         | 30%         | Balanced (recommended)        |
+| 50%         | 50%         | Preserve general capabilities |
+
+### Usage
+
+```powershell
+# Build domain corpus with 30% general data mixed in
+python tools/build_phase2_corpus.py `
+    --sources_dir sources `
+    --out_dir out/corpus `
+    --replay_dir data/general_corpus/corpus_shards `
+    --replay_ratio 0.3 `
+    --run_tokenizer
+```
+
+The replay shards are copied to the corpus with a `replay_` prefix, and will be tokenized alongside domain data.
+
+### Manual Mixing
+
+If you prefer to mix at the tokenization stage:
+
+```powershell
+python scripts/prepare_weighted_dataset.py `
+    --source domain:out/corpus/corpus_shards/*.txt `
+    --source general:data/wiki_corpus/*.txt `
+    --weights 0.7,0.3 `
+    --total_tokens 200000000 `
+    --out_dir data/mixed_tokenized
+```
+
+## Improved Cleaning (v3.0)
+
+### Global Boilerplate Exclusions
+
+The corpus builder automatically excludes common boilerplate files:
+
+- `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `LICENSE.md`
+- Root-level `README.md` files
+- GitHub-specific directories (`.github/`)
+- Test directories (`test/`, `tests/`, `__tests__/`)
+- Node modules and vendor directories
+
+### RFC Header Cleaning
+
+RFC documents often contain page headers/footers that add noise:
+
+```
+Doe                     Standards Track                    [Page 1]
+RFC 4606      GMPLS Extensions for SONET & SDH Control      August 2006
+```
+
+These are automatically stripped during text cleaning.
+
+### YAML Front Matter Removal
+
+Markdown files with YAML front matter (common in documentation sites) have the front matter removed:
+
+```yaml
+---
+title: My Document
+author: Someone
+tags: [security, web]
+---
+```
+
+Only the actual content after `---` is kept.
 
 ## Training
 

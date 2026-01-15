@@ -125,6 +125,58 @@ def setup_logging(log_dir: Path, log_level: int = logging.INFO) -> logging.Logge
 # Configuration
 # ---------------------------------------------------------------------------
 
+# Global exclusion patterns for boilerplate/non-content files
+# These are applied to ALL sources in addition to source-specific excludes
+GLOBAL_EXCLUDE_PATTERNS = [
+    # Standard repo boilerplate
+    "CODE_OF_CONDUCT.md",
+    "CODE_OF_CONDUCT.rst",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.rst",
+    "CHANGELOG.md",
+    "CHANGELOG.rst",
+    "HISTORY.md",
+    "HISTORY.rst",
+    "LICENSE.md",
+    "LICENSE.txt",
+    "LICENSE",
+    "SECURITY.md",
+    "GOVERNANCE.md",
+    "REVIEWING.md",
+    "CODEOWNERS",
+    ".github/**",
+    # Root-level READMEs (keep nested ones for documentation)
+    "README.md",
+    "README.rst",
+    "README.txt",
+    "README",
+    # Build/config files that might match patterns
+    "package.json",
+    "package-lock.json",
+    "Makefile",
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    ".gitignore",
+    ".gitattributes",
+    # Test directories
+    "**/test/**",
+    "**/tests/**",
+    "**/testing/**",
+    "**/__tests__/**",
+    # Node modules and vendor directories
+    "**/node_modules/**",
+    "**/vendor/**",
+    "**/venv/**",
+    "**/.venv/**",
+    # Metadata files
+    "metadata.yml",
+    "metadata.yaml",
+    "metadata.md",
+    "**/SUMMARY.md",
+]
+
+
 @dataclass
 class SourceConfig:
     """Configuration for a source repository."""
@@ -190,24 +242,17 @@ DEFAULT_REPOS = {
         description="Software assurance maturity model",
         license_hint="CC-BY-SA-4.0"
     ),
-    "owasp-mstg": SourceConfig(
-        name="OWASP Mobile Security Testing Guide",
-        path="owasp-mstg",
-        repo_url="https://github.com/OWASP/owasp-mstg.git",
-        weight=1.5,
-        include_patterns=["**/*.md"],
-        exclude_patterns=["CONTRIBUTING.md"],
-        description="Mobile application security testing guide",
-        license_hint="CC-BY-SA-4.0"
-    ),
+    # Note: owasp-mstg was renamed to owasp-mastg - only include once
     "owasp-mastg": SourceConfig(
-        name="OWASP Mobile Application Security",
+        name="OWASP Mobile Application Security Testing Guide",
         path="owasp-mastg",
         repo_url="https://github.com/OWASP/owasp-mastg.git",
         weight=1.5,
-        include_patterns=["**/*.md"],
-        exclude_patterns=["CONTRIBUTING.md"],
-        description="Mobile application security testing guide (new)",
+        include_patterns=["Document/**/*.md", "techniques/**/*.md", "tools/**/*.md", 
+                          "tests/**/*.md", "tests-beta/**/*.md", "knowledge/**/*.md",
+                          "best-practices/**/*.md", "demos/**/*.md", "apps/**/*.md"],
+        exclude_patterns=[],  # Global excludes handle boilerplate
+        description="Mobile application security testing guide (MASTG)",
         license_hint="CC-BY-SA-4.0"
     ),
     "owasp-wrongsecrets": SourceConfig(
@@ -725,6 +770,7 @@ class TextCleaner:
     """Clean and normalize text documents."""
     
     BOILERPLATE_PATTERNS = [
+        # Web page navigation
         r'Edit this page on GitHub.*',
         r'Edit on GitHub.*',
         r'View on GitHub.*',
@@ -734,12 +780,14 @@ class TextCleaner:
         r'Table of Contents',
         r'Skip to (main )?content.*',
         r'Skip to navigation.*',
+        # Copyright and legal
         r'© \d{4}.*',
         r'Copyright \d{4}.*',
         r'All rights reserved.*',
         r'Terms of Service.*',
         r'Privacy Policy.*',
         r'Cookie.*preferences.*',
+        # Social and interaction
         r'Subscribe to.*newsletter.*',
         r'Follow us on.*',
         r'Share this.*',
@@ -750,15 +798,38 @@ class TextCleaner:
         r'Last modified:.*',
     ]
     
+    # RFC-specific patterns to clean (page headers, footers, etc.)
+    RFC_HEADER_PATTERNS = [
+        # Page headers like "Doe                     Standards Track                    [Page 1]"
+        r'^[A-Z][a-z]+(?:\s+&\s+[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+)?\s+(?:Standards Track|Informational|Best Current Practice|Experimental|Historic)\s+\[Page \d+\]$',
+        # RFC header lines like "RFC 4606      GMPLS Extensions for SONET & SDH Control      August 2006"
+        r'^RFC \d+\s+.*?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$',
+        # Form feed characters and blank lines around them
+        r'\x0c',
+        # Table of contents dotted lines
+        r'\.{5,}\d+$',
+    ]
+    
     def __init__(self, min_chars: int = 400):
         self.min_chars = min_chars
         self.boilerplate_re = [
             re.compile(p, re.IGNORECASE | re.MULTILINE) 
             for p in self.BOILERPLATE_PATTERNS
         ]
+        self.rfc_header_re = [
+            re.compile(p, re.MULTILINE)
+            for p in self.RFC_HEADER_PATTERNS
+        ]
     
     def clean(self, text: str) -> Optional[str]:
         """Clean and normalize text. Returns None if too short."""
+        # Remove YAML front matter (common in markdown files)
+        text = self._strip_yaml_frontmatter(text)
+        
+        # Remove RFC headers/footers (page markers, etc.)
+        for pattern in self.rfc_header_re:
+            text = pattern.sub('', text)
+        
         # Remove boilerplate
         for pattern in self.boilerplate_re:
             text = pattern.sub('', text)
@@ -807,6 +878,36 @@ class TextCleaner:
             text = text.replace(old, new)
         
         return text
+    
+    def _strip_yaml_frontmatter(self, text: str) -> str:
+        """Remove YAML front matter from markdown files.
+        
+        YAML front matter is delimited by --- at the start of a file:
+        ---
+        title: My Document
+        author: Someone
+        ---
+        Actual content starts here...
+        """
+        if not text.startswith('---'):
+            return text
+        
+        # Find the closing ---
+        lines = text.split('\n')
+        if len(lines) < 3:
+            return text
+        
+        end_idx = None
+        for i, line in enumerate(lines[1:], 1):  # Start from second line
+            if line.strip() == '---':
+                end_idx = i
+                break
+        
+        if end_idx is None:
+            return text
+        
+        # Return content after the front matter
+        return '\n'.join(lines[end_idx + 1:]).lstrip()
 
 
 # ---------------------------------------------------------------------------
@@ -1070,7 +1171,8 @@ class CorpusBuilder:
             return
         
         include_patterns = source_config.include_patterns or ['**/*']
-        exclude_patterns = source_config.exclude_patterns or []
+        # Combine source-specific excludes with global excludes
+        exclude_patterns = list(source_config.exclude_patterns or []) + list(GLOBAL_EXCLUDE_PATTERNS)
         
         self.logger.info(f"Scanning {source_path} with patterns: {include_patterns}")
         
@@ -1080,6 +1182,7 @@ class CorpusBuilder:
         files_found = 0
         files_filtered_ext = 0
         files_excluded = 0
+        files_global_excluded = 0
         files_yielded = 0
         
         for pattern in include_patterns:
@@ -1104,16 +1207,27 @@ class CorpusBuilder:
                     continue
                 
                 rel_path = str(path.relative_to(source_path))
-                excluded = any(Path(rel_path).match(exc) for exc in exclude_patterns)
+                
+                # Check against all exclude patterns (source-specific + global)
+                excluded = False
+                for exc in exclude_patterns:
+                    if Path(rel_path).match(exc):
+                        excluded = True
+                        # Track if it was a global exclude for logging
+                        if exc in GLOBAL_EXCLUDE_PATTERNS:
+                            files_global_excluded += 1
+                        else:
+                            files_excluded += 1
+                        break
                 
                 if excluded:
-                    files_excluded += 1
                     continue
                 
                 files_yielded += 1
                 yield path
         
-        self.logger.info(f"  Scan summary: found={files_found}, filtered_ext={files_filtered_ext}, excluded={files_excluded}, yielded={files_yielded}")
+        self.logger.info(f"  Scan summary: found={files_found}, filtered_ext={files_filtered_ext}, "
+                        f"excluded={files_excluded}, global_excluded={files_global_excluded}, yielded={files_yielded}")
     
     def process_document(self, path: Path, source_name: str) -> Optional[Dict]:
         """Process a single document."""
@@ -1476,6 +1590,14 @@ def main():
     parser.add_argument("--sources", type=str, nargs="+", default=None,
                         help="Which sources to process (default: all available)")
     
+    # Data mixing / replay options for domain adaptation
+    parser.add_argument("--replay_dir", type=str, default=None,
+                        help="Directory containing general corpus text files for replay mixing")
+    parser.add_argument("--replay_ratio", type=float, default=0.3,
+                        help="Ratio of replay (general) data to mix in (default: 0.3 = 30%%)")
+    parser.add_argument("--replay_shards", type=int, default=0,
+                        help="Number of replay shards to include (0 = auto-calculate from ratio)")
+    
     args = parser.parse_args()
     
     # Print banner
@@ -1598,6 +1720,56 @@ def main():
             total_bytes=sum(d['bytes'] for d in docs),
             total_shards=builder.stats.get('total_shards', 0),
         )
+    
+    # Mix in replay data if specified (for domain adaptation)
+    if args.replay_dir:
+        print("\n" + "=" * 60)
+        print("  STEP: Mixing Replay (General) Data")
+        print("=" * 60)
+        
+        replay_dir = Path(args.replay_dir)
+        if replay_dir.exists():
+            domain_shards = builder.stats.get('total_shards', 0)
+            
+            # Calculate replay shards based on ratio
+            if args.replay_shards > 0:
+                replay_shard_count = args.replay_shards
+            else:
+                # Auto-calculate: if ratio is 0.3, we want 30% replay
+                # domain_shards is (1 - ratio), so replay = domain * ratio / (1 - ratio)
+                replay_shard_count = int(domain_shards * args.replay_ratio / (1 - args.replay_ratio))
+            
+            logger.info(f"Adding {replay_shard_count} replay shards from {replay_dir}")
+            logger.info(f"Replay ratio: {args.replay_ratio:.0%}")
+            
+            # Find replay shard files
+            replay_files = sorted(replay_dir.glob("*.txt"))
+            if replay_files:
+                shard_dir = Path(args.out_dir) / 'corpus_shards'
+                replay_added = 0
+                
+                for replay_file in replay_files[:replay_shard_count]:
+                    target_name = f"replay_{replay_file.name}"
+                    target_path = shard_dir / target_name
+                    shutil.copy2(replay_file, target_path)
+                    replay_added += 1
+                    logger.debug(f"  Copied replay shard: {target_name}")
+                
+                logger.info(f"Added {replay_added} replay shards to corpus")
+                print(f"\n  Added {replay_added} replay shards ({args.replay_ratio:.0%} general data)")
+                
+                if AUDIT_AVAILABLE:
+                    audit.training(
+                        "corpus_replay_added",
+                        corpus_type="phase2_domain",
+                        replay_shards=replay_added,
+                        replay_ratio=args.replay_ratio,
+                        replay_source=str(replay_dir),
+                    )
+            else:
+                logger.warning(f"No text files found in replay directory: {replay_dir}")
+        else:
+            logger.warning(f"Replay directory not found: {replay_dir}")
     
     # Optionally run tokenizer
     if args.run_tokenizer:

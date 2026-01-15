@@ -1,6 +1,6 @@
 {
   "name": "GPT-750M-1024-Domain-Adaptation",
-  "description": "Domain adaptation config for 750M reasoning model. Lower LR + shorter warmup to preserve base knowledge while learning domains (IT security, protocols, Bash, Python/JS/Java docs, Swiss Law DE/EN). 161M tokens, 5 epochs (~805M token views). Use with --init_from_model.",
+  "description": "Domain adaptation config for 750M reasoning model. Lower LR + shorter warmup to preserve base knowledge while learning domains (IT security, protocols, Bash, Python/JS/Java docs, Swiss Law DE/EN). 220M tokens (70% domain + 30% replay), 5 epochs (~1.1B token views). Use with --init_from_model.",
 
   "batch_size": 12,
   "block_size": 1024,
@@ -12,9 +12,9 @@
   "bias": false,
 
   "learning_rate": 5e-5,
-  "max_iters": 65500,
+  "max_iters": 89520,
   "eval_interval": 2000,
-  "warmup_iters": 1300,
+  "warmup_iters": 1790,
   "grad_clip": 1.0,
   "weight_decay": 0.1,
   "use_amp": true,
@@ -22,9 +22,9 @@
 
   "_comment_eval": "Optional: Dual eval sets for domain vs general evaluation",
   "eval_sets": {
-    "domain": "data/domain_161M_corpus_tokenized",
-    "general": "data/phase1_base_tokenized"
+    "domain": "data/itsec_v3_tokenized",
+    "general": "data/multilingual_1.5B_wiki90"
   },
   "eval_seed": 1337,
-  "log_file": "logs/train/domain_adapt_eval.jsonl"
+  "log_file": "logs/train/domain_adapt_v3_eval.jsonl"
 }
