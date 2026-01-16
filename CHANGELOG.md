@@ -5,6 +5,25 @@ All notable changes to MyPT will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-01-16
+
+### Changed
+
+- Phase 2 domain adaptation pipeline validated on large-scale corpora
+- Dual-evaluation mechanism (domain + general) stabilized for catastrophic-forgetting detection
+- Training constraints and helper utilities added to preserve base model capability during continued pretraining
+- Documentation updated to reflect completed Phase 2 workflow and best practices
+
+### Added
+
+- Official Phase 2 Domain Adaptation Guide
+- Helper tooling for controlled replay ratios and learning-rate safety
+
+### Notes
+
+- Phase 2 (Domain Adaptation) is considered complete and production-stable for internal and pilot deployments.
+- No breaking changes.
+
 ## [0.2.0] - 2026-01-14
 
 ### Added
