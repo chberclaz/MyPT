@@ -407,7 +407,16 @@ class GPT(nn.Module):
                             optimizer_state: dict | None = None,
                             training_config: dict | None = None,
                             save_dtype: str | None = None):
+        import shutil
         os.makedirs(checkpoint_dir, exist_ok=True)
+
+        # 0) Copy original config file if provided (for reproducibility)
+        if training_config is not None and training_config.get("config_file") is not None:
+            config_file_path = training_config["config_file"]
+            if os.path.exists(config_file_path):
+                dest_path = os.path.join(checkpoint_dir, "original_config.json")
+                shutil.copy2(config_file_path, dest_path)
+                print(f"Saved config to {dest_path}")
 
         # 1) CPU snapshot of weights (and optional cast) — no VRAM spike
         target_dtype = _resolve_dtype(save_dtype) if save_dtype is not None else None
@@ -752,7 +761,7 @@ class GPT(nn.Module):
             eval_iters=50, checkpoint_dir=None, start_step=0, learning_rate=None,
             save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0,
             use_amp=True, amp_dtype='bf16', eval_data_loaders=None, log_file=None,
-            eval_seed=None):
+            eval_seed=None, config_file=None, dataset_dir=None):
         """
         Main training loop - the model trains itself!
         
@@ -785,6 +794,10 @@ class GPT(nn.Module):
             log_file: Optional path to JSONL file for training logs. Each eval writes a line:
                      {"iter":N, "train_loss":X, "eval_domain":Y, "eval_general":Z, ...}
             eval_seed: Optional seed for eval RNG stability. If set, resets RNG before each eval.
+            config_file: Optional path to the config file used for training. If provided,
+                        a copy is saved to the checkpoint directory for reproducibility.
+            dataset_dir: Optional path to the dataset directory. Saved in training_state.json
+                        for provenance tracking.
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -847,6 +860,20 @@ class GPT(nn.Module):
             "save_dtype": effective_save_dtype,
             "warmup_iters": warmup_steps,
             "grad_clip": grad_clip,
+            # Provenance tracking
+            "config_file": config_file,
+            "dataset_dir": dataset_dir,
+            # Model architecture (for quick reference without loading config.json)
+            "model_params": {
+                "n_layer": self.config.n_layer,
+                "n_head": self.config.n_head,
+                "n_embd": self.config.n_embd,
+                "block_size": self.config.block_size,
+                "vocab_size": self.config.vocab_size,
+                "dropout": self.config.dropout,
+                "bias": self.config.bias,
+                "total_params": sum(p.numel() for p in self.parameters()),
+            },
         }
         
         def get_lr(step):
@@ -889,8 +916,8 @@ class GPT(nn.Module):
             if iter % eval_interval == 0:
                 ct = datetime.datetime.now()
                 print(f"{iter} : {ct}")
-                _mem("before_estimate")
-                gpu_mem("before_estimate")
+                # _mem("before_estimate")
+                # gpu_mem("before_estimate")
                 
                 # Set eval seed for reproducibility if specified
                 if eval_seed is not None:
@@ -918,8 +945,8 @@ class GPT(nn.Module):
                         eval_losses[eval_name] = float(eval_loss['val'])
                         log_entry[f"eval_{eval_name}"] = float(eval_loss['val'])
                 
-                _mem("after_estimate_before_save")
-                gpu_mem("after_estimate_before_save")
+                # _mem("after_estimate_before_save")
+                # gpu_mem("after_estimate_before_save")
                 lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
 
                 # Console output: iter N | val X.XX | eval_name Y.YY | ...
@@ -943,8 +970,8 @@ class GPT(nn.Module):
                         training_config=training_config,
                         save_dtype=effective_save_dtype
                     )
-                _mem("after_save")
-                gpu_mem("after_save")
+                # _mem("after_save")
+                # gpu_mem("after_save")
 
                 import gc
                 gc.collect()

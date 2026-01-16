@@ -433,18 +433,22 @@ def main():
         amp_dtype=effective_amp_dtype,
         eval_data_loaders=eval_data_loaders,
         log_file=log_file,
-        eval_seed=eval_seed
+        eval_seed=eval_seed,
+        config_file=args.config_file,
+        dataset_dir=args.dataset_dir
     )
     
     print("\n========== Training Complete ==========")
     print(f"✅ Model saved to: {ckpt_manager.checkpoint_dir}")
     print()
     print("Checkpoint files:")
-    print("  📄 model.pt           - Model weights")
-    print("  📄 config.json        - Architecture configuration")
-    print("  📄 tokenizer.json     - Vocabulary")
-    print("  📄 training_state.json - Training progress")
-    print("  📄 optimizer.pt       - Optimizer state")
+    print("  📄 model.pt            - Model weights")
+    print("  📄 config.json         - Architecture configuration")
+    print("  📄 tokenizer.json      - Vocabulary")
+    print("  📄 training_state.json - Training progress + hyperparameters + provenance")
+    print("  📄 optimizer.pt        - Optimizer state")
+    if args.config_file:
+        print("  📄 original_config.json - Copy of training config file")
     print()
     print("Next steps:")
     print(f"  Generate: python generate.py --model_name {args.model_name} --prompt 'Your prompt'")
