@@ -14,16 +14,16 @@
   "learning_rate": 5e-5,
   "max_iters": 89520,
   "eval_interval": 2000,
+  "eval_iters": 150,
   "warmup_iters": 1790,
   "grad_clip": 1.0,
   "weight_decay": 0.1,
   "use_amp": true,
   "amp_dtype": "bf16",
 
-  "_comment_eval": "Optional: Dual eval sets for domain vs general evaluation",
   "eval_sets": {
     "domain": "data/itsec_v3_tokenized",
-    "general": "data/multilingual_1.5B_wiki90"
+    "general": "data/general"
   },
   "eval_seed": 1337,
   "log_file": "logs/train/domain_adapt_v3_eval.jsonl"
