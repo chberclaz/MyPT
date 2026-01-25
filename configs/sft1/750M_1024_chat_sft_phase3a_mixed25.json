@@ -12,9 +12,9 @@
   "dropout": 0.12,
   "bias": false,
 
-  "comment_training": "SFT training with replay buffer",
-  "learning_rate": 5e-5,
-  "max_iters": 8000,
+  "comment_training": "SFT training with replay buffer - conservative LR for first run",
+  "learning_rate": 3e-5,
+  "max_iters": 10000,
   "eval_interval": 500,
   "save_every": 1000,
   "warmup_iters": 0.03,
@@ -35,6 +35,9 @@
   "comment_optimizer": "AdamW with moderate weight decay",
   "weight_decay": 0.05,
 
+  "comment_eval": "Disable additional eval sets (episode-indexed format incompatible with GPTDataLoader)",
+  "eval_sets": null,
+
   "comment_replay_strategy": "25% general replay (domain_v8 knowledge preservation). Higher than v5/v7's 20% for extra safety on small SFT dataset.",
 
   "comment_calculations": [
@@ -42,7 +45,7 @@
     "General: ~28K tokens as pseudo-episodes with mask=1",
     "Combined: ~550 pseudo-episodes, ~112K trainable tokens",
     "At batch_size=10: ~55 batches/epoch",
-    "8000 iters = ~145 epochs through combined data",
+    "10000 iters = ~180 epochs (lower LR needs more iterations)",
     "Reduced dropout (0.12) since general data adds diversity"
   ],
 

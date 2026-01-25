@@ -364,9 +364,9 @@ Base 750M Model
 Stage 1 (Required)     →    Stage 2 (Choose One)      →    Stage 3 (Optional)
 ─────────────────────       ─────────────────────          ─────────────────────
 v3: Foundation              v5: Balanced                   
-LR=3e-5, 30% replay         LR=5e-5, 20% replay            
+LR=3e-5, 30% replay         LR=5e-5, 20% replay
                             (stop here for general use)    
-                                                           
+                            
                       OR    v7: Domain Expert         →    v8: Domain Beast
                             LR=7e-5, 20% replay            LR=9e-5, 20% replay
                             (stop here for balance)        (maximum domain)
