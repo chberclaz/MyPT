@@ -30,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description="Diagnose SFT training pipeline")
     parser.add_argument("--dataset", type=str, required=True, help="Dataset directory")
     parser.add_argument("--model", type=str, default=None, help="Base model to load (optional)")
+    parser.add_argument("--show_episode", type=int, default=0, help="Episode index to display in detail")
     args = parser.parse_args()
     
     print("=" * 70)
@@ -173,6 +174,94 @@ def main():
             print(f"    ✓ All-ones mask ≈ no mask (expected)")
         else:
             print(f"    ? All-ones mask differs from no mask (unexpected)")
+    
+    # Step 7: Decode an actual episode and show structure
+    print("\n[7] Decoding training episode to check structure...")
+    
+    # Load raw episode data
+    import numpy as np
+    train_dir = os.path.join(args.dataset, "train")
+    tokens_file = os.path.join(train_dir, "tokens.bin")
+    mask_file = os.path.join(train_dir, "mask.bin")
+    episodes_file = os.path.join(train_dir, "episodes.idx")
+    
+    if os.path.exists(tokens_file) and os.path.exists(episodes_file):
+        tokens_raw = np.memmap(tokens_file, dtype=np.uint32, mode='r')
+        episodes_raw = np.memmap(episodes_file, dtype=np.uint64, mode='r').reshape(-1, 2)
+        
+        mask_raw = None
+        if os.path.exists(mask_file):
+            mask_raw = np.memmap(mask_file, dtype=np.uint8, mode='r')
+        
+        ep_idx = min(args.show_episode, len(episodes_raw) - 1)
+        start, length = episodes_raw[ep_idx]
+        start, length = int(start), int(length)
+        
+        ep_tokens = tokens_raw[start:start+length]
+        ep_mask = mask_raw[start:start+length] if mask_raw is not None else None
+        
+        print(f"\n    Episode {ep_idx}: {length} tokens (offset {start})")
+        
+        # Decode and show
+        text = tokenizer.decode(list(ep_tokens))
+        print(f"\n    === DECODED TEXT ===")
+        print("    " + text.replace("\n", "\n    ")[:2000])  # First 2000 chars
+        
+        # Show special token positions
+        print(f"\n    === SPECIAL TOKEN POSITIONS ===")
+        for i, tok in enumerate(ep_tokens[:200]):  # First 200 tokens
+            tok = int(tok)
+            if tok >= 50257:  # Special token range
+                tok_str = tokenizer.decode([tok])
+                m = ep_mask[i] if ep_mask is not None else "N/A"
+                print(f"    Position {i}: token={tok} '{tok_str}' mask={m}")
+        
+        # Show mask transitions
+        if ep_mask is not None:
+            print(f"\n    === MASK TRANSITIONS ===")
+            prev_m = -1
+            for i, (tok, m) in enumerate(zip(ep_tokens, ep_mask)):
+                if m != prev_m:
+                    tok_str = tokenizer.decode([int(tok)])
+                    direction = "START>>>" if m == 1 else "<<<END"
+                    print(f"    Position {i}: {direction} mask={m}, token={tok} '{repr(tok_str)}'")
+                prev_m = m
+    else:
+        print(f"    Cannot find episode data files in {train_dir}")
+    
+    # Step 8: Test special token round-trip
+    print("\n[8] Testing special token encoding round-trip...")
+    test_text = "<myPT_system>Test system</myPT_system>\n<myPT_user>Test user</myPT_user>\n<myPT_assistant>Test response</myPT_assistant>\n<myPT_eot>\n"
+    
+    encoded = tokenizer.encode(test_text)
+    decoded = tokenizer.decode(encoded)
+    
+    print(f"    Original: {repr(test_text[:100])}")
+    print(f"    Encoded:  {encoded[:20]}...")
+    print(f"    Decoded:  {repr(decoded[:100])}")
+    
+    if test_text == decoded:
+        print(f"    ✓ Perfect round-trip!")
+    else:
+        print(f"    ✗ MISMATCH! Text changed during encode/decode!")
+        print(f"    This could cause training/inference discrepancy!")
+    
+    # Check special tokens are single tokens
+    print(f"\n    Checking special tokens are single IDs:")
+    for tag_name, tag_str in [
+        ("system_open", "<myPT_system>"),
+        ("system_close", "</myPT_system>"),
+        ("user_open", "<myPT_user>"),
+        ("user_close", "</myPT_user>"),
+        ("assistant_open", "<myPT_assistant>"),
+        ("assistant_close", "</myPT_assistant>"),
+        ("eot", "<myPT_eot>"),
+    ]:
+        enc = tokenizer.encode(tag_str)
+        if len(enc) == 1:
+            print(f"    ✓ {tag_str} -> single token {enc[0]}")
+        else:
+            print(f"    ✗ {tag_str} -> MULTIPLE tokens {enc}! BUG!")
     
     print("\n" + "=" * 70)
     print("DIAGNOSTIC COMPLETE")
