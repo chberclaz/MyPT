@@ -14,8 +14,8 @@
 
   "comment_training": "SFT training with replay buffer - conservative LR for first run",
   "learning_rate": 3e-5,
-  "max_iters": 10000,
-  "eval_interval": 500,
+  "max_iters": 1500,
+  "eval_interval": 100,
   "save_every": 1000,
   "warmup_iters": 0.03,
   "use_amp": true,
@@ -41,12 +41,11 @@
   "comment_replay_strategy": "25% general replay (domain_v8 knowledge preservation). Higher than v5/v7's 20% for extra safety on small SFT dataset.",
 
   "comment_calculations": [
-    "SFT: ~417 episodes, ~84K trainable tokens (assistant responses)",
-    "General: ~28K tokens as pseudo-episodes with mask=1",
-    "Combined: ~550 pseudo-episodes, ~112K trainable tokens",
-    "At batch_size=10: ~55 batches/epoch",
-    "10000 iters = ~180 epochs (lower LR needs more iterations)",
-    "Reduced dropout (0.12) since general data adds diversity"
+    "443 train episodes, ~138K total tokens",
+    "At batch_size=10: ~44 batches/epoch",
+    "1500 iters = ~34 epochs (sweet spot for SFT)",
+    "eval_interval=100 for fine-grained monitoring",
+    "Watch for val loss plateau or divergence → early stop"
   ],
 
   "comment_usage": "python train.py --model_name phase3a_chat_sft_mixed --config_file configs/sft1/750M_1024_chat_sft_phase3a_mixed25.json --dataset_dir data/sft_phase3a_mixed --init_from_model checkpoints/domain_v8"
