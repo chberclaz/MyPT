@@ -95,3 +95,8 @@ logs/app/
 *.backup
 
 webapp/users.json
+
+# Environment files with secrets
+.env
+.env.local
+*.env

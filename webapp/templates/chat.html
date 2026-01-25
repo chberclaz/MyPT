@@ -67,6 +67,16 @@
             <option disabled>Loading models...</option>
         </select>
         
+        <!-- Mode Selection -->
+        <div class="sidebar-title mt-md">Mode</div>
+        <select id="mode-select" class="form-select">
+            <option value="conversation">💬 Conversation</option>
+            <option value="agentic" selected>🔧 Agentic (RAG)</option>
+        </select>
+        <div class="text-muted text-xs mt-sm" id="mode-description">
+            Uses workspace tools to search documents
+        </div>
+        
         <label class="flex items-center gap-sm mt-md" style="cursor: pointer;">
             <input type="checkbox" id="verbose-check" style="width: 18px; height: 18px;">
             <span class="text-sm">Verbose mode</span>

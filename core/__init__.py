@@ -80,6 +80,17 @@ from .training_utils import (
     print_training_estimates,
 )
 
+# System prompts (for training scripts and inference)
+from .system_prompts import (
+    CONVERSATION_SYSTEM_PROMPT,
+    DEFAULT_CONVERSATION_PROMPT,
+    AGENTIC_COMPACT_PROMPT,
+    AGENTIC_STANDARD_PROMPT,
+    AGENTIC_VERBOSE_PROMPT,
+    AGENTIC_SYSTEM_PROMPT,
+    DEFAULT_AGENTIC_PROMPT,
+)
+
 
 # Public API - explicitly define what gets imported with "from core import *"
 __all__ = [
@@ -125,6 +136,15 @@ __all__ = [
     'banner_workspace',
     'banner_dataset',
     'ROBOT_HEAD',
+    
+    # System Prompts
+    'CONVERSATION_SYSTEM_PROMPT',
+    'DEFAULT_CONVERSATION_PROMPT',
+    'AGENTIC_COMPACT_PROMPT',
+    'AGENTIC_STANDARD_PROMPT',
+    'AGENTIC_VERBOSE_PROMPT',
+    'AGENTIC_SYSTEM_PROMPT',
+    'DEFAULT_AGENTIC_PROMPT',
 ]
 
 

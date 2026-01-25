@@ -14,6 +14,7 @@ import time
 import json
 import torch
 from core import load_model
+from core.system_prompts import CONVERSATION_SYSTEM_PROMPT, DEFAULT_AGENTIC_PROMPT
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -49,6 +50,7 @@ class SendMessageRequest(BaseModel):
     message: str
     model: Optional[str] = None
     verbose: bool = False
+    mode: str = "auto"  # "auto", "conversation", "agentic"
 
 
 class SendMessageResponse(BaseModel):
@@ -210,6 +212,34 @@ async def get_models(user: User = Depends(require_user)):
     return {"models": models}
 
 
+@router.get("/modes")
+async def get_modes(user: User = Depends(require_user)):
+    """List available chat modes - requires authentication."""
+    log.request("GET", "/modes", user=user.username)
+    modes = [
+        {
+            "id": "conversation",
+            "name": "Conversation",
+            "description": "Simple Q&A without tools. Best for Phase 3a-only models.",
+            "icon": "💬"
+        },
+        {
+            "id": "agentic", 
+            "name": "Agentic (RAG)",
+            "description": "Uses workspace tools for document search/retrieval. Requires Phase 3b training.",
+            "icon": "🔧"
+        },
+        {
+            "id": "auto",
+            "name": "Auto",
+            "description": "Automatically selects mode (defaults to agentic).",
+            "icon": "🤖"
+        }
+    ]
+    log.response(200, count=len(modes))
+    return {"modes": modes, "default": "auto"}
+
+
 @router.get("/history")
 async def get_history(session_id: str = "default", user: User = Depends(require_user)):
     """Get chat history for a session - requires authentication."""
@@ -297,15 +327,51 @@ async def send_message(
             log.section("END MODEL INFO")
         
         # =================================================================
-        # TRUE AGENTIC MODE: Always use AgentController
-        # The MODEL decides whether to use tools, not the code!
+        # MODE SELECTION: conversation (no tools) vs agentic (with tools)
+        # =================================================================
+        #
+        # - "conversation": Simple Q&A, uses CONVERSATION_SYSTEM_PROMPT
+        #                   Good for Phase 3a-only models
+        # - "agentic": Uses AgentController with tool descriptions
+        #              Requires Phase 3b training for best results
+        # - "auto": Default to agentic (backwards compatible)
+        #
         # =================================================================
         
+        # =================================================================
+        # MODE SELECTION: Select system prompt based on mode
+        # =================================================================
+        mode = msg_request.mode
+        
+        # Auto mode defaults to agentic for backwards compatibility
+        if mode == "auto":
+            mode = "agentic"
+        
+        # Select system prompt based on mode
+        if mode == "conversation":
+            selected_system_prompt = CONVERSATION_SYSTEM_PROMPT
+            log.info("Using CONVERSATION mode (no tools)")
+            if is_debug_mode():
+                print(f"\n{'='*60}")
+                print(f"  MODE: CONVERSATION (no tool descriptions)")
+                print(f"  System prompt: {selected_system_prompt[:60]}...")
+                print(f"{'='*60}\n")
+        else:
+            selected_system_prompt = DEFAULT_AGENTIC_PROMPT
+            log.info("Using AGENTIC mode (with tools)")
+            if is_debug_mode():
+                print(f"\n{'='*60}")
+                print(f"  MODE: AGENTIC (with tool descriptions)")
+                print(f"  System prompt: {selected_system_prompt[:60]}...")
+                print(f"{'='*60}\n")
+        
+        # =================================================================
+        # AGENT/MODEL EXECUTION
+        # =================================================================
         workspace_dir = PROJECT_ROOT / "workspace"
         index_dir = workspace_dir / "index" / "latest"
         
         log.workspace("check_index", path=str(index_dir), exists=index_dir.exists())
-        log.info("Using AGENTIC mode - model decides tool usage")
         
         try:
             from core.workspace import WorkspaceEngine, WorkspaceTools
@@ -334,7 +400,7 @@ async def send_message(
             tools = WorkspaceTools(engine)
             
             log.agent("init_controller")
-            controller = AgentController(model, tools)
+            controller = AgentController(model, tools, system_prompt=selected_system_prompt)
             
             # Build history for agent
             agent_history = [

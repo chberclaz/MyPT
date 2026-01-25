@@ -60,6 +60,10 @@ def parse_args():
     parser.add_argument("--system", type=str, default=None,
                         help="Custom system prompt")
     
+    parser.add_argument("--mode", type=str, default="agentic",
+                        choices=["conversation", "agentic"],
+                        help="Chat mode: 'conversation' (no tools) or 'agentic' (with tools)")
+    
     return parser.parse_args()
 
 
@@ -89,7 +93,12 @@ def main():
     args = parse_args()
     
     from core.banner import print_banner
-    print_banner("MyPT Workspace Agent", "Agentic RAG Chat Interface")
+    from core.system_prompts import CONVERSATION_SYSTEM_PROMPT, DEFAULT_AGENTIC_PROMPT
+    from core.special_tokens import SPECIAL_TOKEN_STRINGS
+    
+    mode = args.mode
+    subtitle = "Agentic RAG Chat Interface" if mode == "agentic" else "Conversation Mode"
+    print_banner("MyPT Workspace Agent", subtitle)
     
     # Determine index directory
     index_dir = args.index_dir
@@ -105,32 +114,49 @@ def main():
         print(f"  [ERROR] Failed to load model: {e}")
         sys.exit(1)
     
-    # Initialize workspace
-    print(f"Loading workspace: {args.workspace_dir}...")
-    try:
-        engine = WorkspaceEngine(args.workspace_dir, index_dir)
-        print(f"  [OK] Workspace loaded: {engine.num_docs} documents")
-        if engine.has_index:
-            print(f"  [OK] Index loaded: {engine.num_chunks} chunks")
-        else:
-            print(f"  [WARN] No index loaded. Run build_rag_index.py first.")
-    except Exception as e:
-        print(f"  [ERROR] Failed to load workspace: {e}")
-        sys.exit(1)
+    # Initialize workspace (only needed for agentic mode)
+    engine = None
+    tools = None
+    controller = None
     
-    # Create tools and controller
-    tools = WorkspaceTools(engine, model=model)
-    controller = AgentController(
-        model=model,
-        tools=tools,
-        system_prompt=args.system,
-    )
+    if mode == "agentic":
+        print(f"Loading workspace: {args.workspace_dir}...")
+        try:
+            engine = WorkspaceEngine(args.workspace_dir, index_dir)
+            print(f"  [OK] Workspace loaded: {engine.num_docs} documents")
+            if engine.has_index:
+                print(f"  [OK] Index loaded: {engine.num_chunks} chunks")
+            else:
+                print(f"  [WARN] No index loaded. Run build_rag_index.py first.")
+        except Exception as e:
+            print(f"  [ERROR] Failed to load workspace: {e}")
+            sys.exit(1)
+        
+        # Create tools and controller
+        tools = WorkspaceTools(engine, model=model)
+        system_prompt = args.system or DEFAULT_AGENTIC_PROMPT
+        controller = AgentController(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+        )
+    else:
+        print(f"  [OK] Conversation mode (no workspace tools)")
     
     # State
     history = []
     verbose = args.verbose
     
+    # Get special tokens for conversation mode
+    SYSTEM_OPEN = SPECIAL_TOKEN_STRINGS["myPT_system_open"]
+    SYSTEM_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_system_close"]
+    USER_OPEN = SPECIAL_TOKEN_STRINGS["myPT_user_open"]
+    USER_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_user_close"]
+    ASSISTANT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_assistant_open"]
+    ASSISTANT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_assistant_close"]
+    
     print("\n" + "-" * 60)
+    print(f"Mode: {mode.upper()}")
     print("Ready! Type your question or /help for commands.")
     print("-" * 60 + "\n")
     
@@ -155,27 +181,36 @@ def main():
                 break
             
             elif cmd == "reload":
-                print("Reloading workspace...")
-                try:
-                    engine.refresh()
-                    engine.reload_index()
-                    print(f"  [OK] Reloaded: {engine.num_docs} docs, {engine.num_chunks} chunks")
-                except Exception as e:
-                    print(f"  [ERROR] {e}")
+                if mode == "agentic" and engine:
+                    print("Reloading workspace...")
+                    try:
+                        engine.refresh()
+                        engine.reload_index()
+                        print(f"  [OK] Reloaded: {engine.num_docs} docs, {engine.num_chunks} chunks")
+                    except Exception as e:
+                        print(f"  [ERROR] {e}")
+                else:
+                    print("Reload not available in conversation mode.")
             
             elif cmd == "docs":
-                docs = engine.list_docs()
-                if docs:
-                    print(f"\nDocuments ({len(docs)}):")
-                    for d in docs:
-                        print(f"  - {d.title} ({d.doc_id[:8]}...)")
+                if mode == "agentic" and engine:
+                    docs = engine.list_docs()
+                    if docs:
+                        print(f"\nDocuments ({len(docs)}):")
+                        for d in docs:
+                            print(f"  - {d.title} ({d.doc_id[:8]}...)")
+                    else:
+                        print("No documents in workspace.")
                 else:
-                    print("No documents in workspace.")
+                    print("Document listing not available in conversation mode.")
             
             elif cmd == "tools":
-                print("\nAvailable tools:")
-                for name in tools.list_tools():
-                    print(f"  - {name}")
+                if mode == "agentic" and tools:
+                    print("\nAvailable tools:")
+                    for name in tools.list_tools():
+                        print(f"  - {name}")
+                else:
+                    print("\nNo tools available in conversation mode.")
             
             elif cmd == "history":
                 print(f"\nConversation history ({len(history)} messages):")
@@ -212,26 +247,69 @@ Commands:
         # Add user message to history
         history.append({"role": "user", "content": user_input})
         
-        # Run agent
+        # Generate response based on mode
         try:
-            result = controller.run(
-                history,
-                max_steps=args.max_steps,
-                max_new_tokens=args.max_tokens,
-                verbose=verbose,
-            )
-            
-            # Show tool calls if verbose
-            if verbose and result.get("tool_calls"):
-                print_tool_calls(result["tool_calls"])
+            if mode == "agentic":
+                # Use AgentController with tools
+                result = controller.run(
+                    history,
+                    max_steps=args.max_steps,
+                    max_new_tokens=args.max_tokens,
+                    verbose=verbose,
+                )
+                
+                # Show tool calls if verbose
+                if verbose and result.get("tool_calls"):
+                    print_tool_calls(result["tool_calls"])
+                
+                answer = result.get("content", "")
+                steps = result.get("steps", 0)
+                tool_count = len(result.get("tool_calls", []))
+                
+            else:
+                # Conversation mode - simple generation
+                system_prompt = args.system or CONVERSATION_SYSTEM_PROMPT
+                
+                # Build prompt
+                parts = [f"{SYSTEM_OPEN}{system_prompt}{SYSTEM_CLOSE}"]
+                for msg in history:
+                    if msg["role"] == "user":
+                        parts.append(f"{USER_OPEN}{msg['content']}{USER_CLOSE}")
+                    elif msg["role"] == "assistant":
+                        parts.append(f"{ASSISTANT_OPEN}{msg['content']}{ASSISTANT_CLOSE}")
+                parts.append(ASSISTANT_OPEN)
+                
+                prompt = "\n".join(parts)
+                
+                if verbose:
+                    print(f"\n[Prompt: {len(prompt)} chars]")
+                
+                # Generate
+                output = model.generate(
+                    prompt,
+                    max_new_tokens=args.max_tokens,
+                    temperature=0.7,
+                    top_k=40,
+                    repetition_penalty=1.1
+                )
+                
+                # Extract response
+                if prompt in output:
+                    answer = output[len(prompt):]
+                else:
+                    answer = output
+                
+                if ASSISTANT_CLOSE in answer:
+                    answer = answer.split(ASSISTANT_CLOSE)[0]
+                
+                answer = answer.strip()
+                steps = 1
+                tool_count = 0
             
             # Show answer
-            answer = result.get("content", "")
             print(f"\nassistant> {answer}")
             
             # Show step count
-            steps = result.get("steps", 0)
-            tool_count = len(result.get("tool_calls", []))
             if tool_count > 0:
                 print(f"\n  ({tool_count} tool calls, {steps} steps)")
             

@@ -20,9 +20,11 @@ We compute logits for all positions.
 
 With an assistant-only loss mask, we do:
 
-positions where the target token is part of <Assistant> ... </Assistant> → loss_mask[t] = 1
+positions where the target token is `<myPT_assistant>`, assistant content, or `</myPT_assistant>` → loss_mask[t] = 1
 
-positions where the target is user-side or tags → loss_mask[t] = 0
+positions where the target is user/system content or user/system/EOT tags → loss_mask[t] = 0
+
+**Note:** The `<myPT_assistant>` tag itself has mask=1 because the model must learn WHEN to generate it.
 
 So for predicting "I'm":
 

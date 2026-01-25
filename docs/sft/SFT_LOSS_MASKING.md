@@ -403,17 +403,22 @@ step 150: train loss 0.8123, val loss 2.0211  ← Overfitting! Stop here
 
 If validation loss stops improving or increases, stop training.
 
-### 5. Align Mask Boundaries Carefully
+### 5. Align Mask Boundaries Correctly
 
-Make sure mask transitions align with actual role boundaries:
+**Our implementation includes assistant tags in the mask (mask=1):**
 
 ```
-Tokens: [USER_TAG, "Hi", ASST_TAG, "Hello", "!"]
-Mask:   [   0    ,  0  ,    0    ,    1   , 1 ]
-                         ↑ Mask starts AFTER assistant tag
+Tokens: [USER_TAG, "Hi", ASST_TAG, "Hello", "!", ASST_CLOSE]
+Mask:   [   0    ,  0  ,    1    ,    1   ,  1 ,     1     ]
+                         ↑ Mask includes assistant tag!
 ```
 
-If you include special tokens in the mask, the model will learn to generate them.
+**Why include `<myPT_assistant>` in the mask?**
+- The model must learn WHEN to produce the assistant tag
+- The model must learn to close responses with `</myPT_assistant>`
+- Without this, inference would break (model wouldn't know response boundaries)
+
+This is intentional and correct for chat models.
 
 ### 6. Validate Masks
 

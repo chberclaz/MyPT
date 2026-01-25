@@ -1,6 +1,7 @@
 /**
  * MyPT Web Application - Vanilla JavaScript
  * Self-contained - No external dependencies
+ * Version: 2026-01-25-v2 (mode selector fix)
  */
 
 // ============================================================================
@@ -14,6 +15,7 @@ const AppState = {
         isLoading: false,
         selectedModel: '',
         models: [],
+        mode: 'agentic',  // 'conversation' or 'agentic'
         verbose: false,
         documents: [],
         indexStatus: { chunks: 0, lastUpdated: null }
@@ -204,6 +206,34 @@ function setupChatEventListeners() {
             AppState.chat.verbose = e.target.checked;
         });
     }
+    
+    // Mode selector
+    const modeSelect = $('#mode-select');
+    console.log('[DEBUG] mode-select element:', modeSelect);
+    if (modeSelect) {
+        // Sync initial value from HTML to AppState
+        AppState.chat.mode = modeSelect.value;
+        console.log(`[MODE INIT] Starting with: ${AppState.chat.mode} (from dropdown)`);
+        
+        modeSelect.addEventListener('change', (e) => {
+            AppState.chat.mode = e.target.value;
+            console.log(`[MODE CHANGED] Now using: ${AppState.chat.mode}`);
+            updateModeDescription();
+        });
+    } else {
+        console.warn('[MODE] mode-select element NOT FOUND!');
+    }
+}
+
+function updateModeDescription() {
+    const desc = $('#mode-description');
+    if (!desc) return;
+    
+    if (AppState.chat.mode === 'conversation') {
+        desc.textContent = 'Simple Q&A without tools (Phase 3a)';
+    } else {
+        desc.textContent = 'Uses workspace tools to search documents';
+    }
 }
 
 async function sendMessage() {
@@ -228,14 +258,18 @@ async function sendMessage() {
     updateLoadingState();
     
     try {
+        const requestBody = {
+            message: message,
+            model: AppState.chat.selectedModel,
+            mode: AppState.chat.mode,
+            verbose: AppState.chat.verbose
+        };
+        console.log('[SEND] Request:', requestBody);
+        
         const response = await fetch('/api/chat/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: message,
-                model: AppState.chat.selectedModel,
-                verbose: AppState.chat.verbose
-            })
+            body: JSON.stringify(requestBody)
         });
         
         const data = await response.json();
@@ -780,7 +814,7 @@ function renderLogs() {
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('MyPT Web Application initialized');
+    console.log('MyPT Web Application initialized (v2026-01-25-v2)');
     
     // Detect which page we're on and initialize
     const path = window.location.pathname;

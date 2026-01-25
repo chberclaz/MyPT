@@ -27,6 +27,12 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
 from core.special_tokens import SPECIAL_TOKEN_STRINGS
+from core.system_prompts import (
+    AGENTIC_COMPACT_PROMPT,
+    AGENTIC_STANDARD_PROMPT,
+    AGENTIC_VERBOSE_PROMPT,
+    DEFAULT_AGENTIC_PROMPT,
+)
 from .parsing import (
     find_toolcall, 
     has_toolcall, 
@@ -57,7 +63,7 @@ EOT = SPECIAL_TOKEN_STRINGS["myPT_eot"]
 
 
 # =============================================================================
-# System Prompt Options
+# System Prompt Options (imported from core.system_prompts)
 # =============================================================================
 # 
 # COMPACT (~50 tokens): Best for small models / limited context
@@ -69,41 +75,14 @@ EOT = SPECIAL_TOKEN_STRINGS["myPT_eot"]
 #   1. List available tools (prevent hallucinated tool names)
 #   2. Show the exact toolcall syntax
 #
+# Prompts are defined in core/system_prompts.py for reuse in training scripts.
 # =============================================================================
 
-# Compact version - minimal tokens, relies on SFT training
-COMPACT_SYSTEM_PROMPT = """Tools: workspace.search(query), workspace.list_docs(), workspace.get_doc(doc_id|title), workspace.summarize(doc_id|text)
-Use: <myPT_toolcall>{"name": "...", ...}</myPT_toolcall>"""
-
-# Standard version - good balance
-STANDARD_SYSTEM_PROMPT = """You are MyPT. Answer questions using workspace tools when needed.
-
-Tools:
-- workspace.search(query, top_k=5) - find relevant documents
-- workspace.list_docs() - list all documents  
-- workspace.get_doc(doc_id or title) - get document text
-- workspace.summarize(doc_id or text) - summarize content
-
-Format: <myPT_toolcall>{"name": "workspace.search", "query": "..."}</myPT_toolcall>"""
-
-# Verbose version - explicit instructions (original)
-VERBOSE_SYSTEM_PROMPT = """You are MyPT, a helpful workspace assistant.
-
-You have access to workspace tools to search, read, and summarize documents.
-
-To use a tool, output a toolcall block like:
-<myPT_toolcall>{"name": "workspace.search", "query": "your search", "top_k": 5}</myPT_toolcall>
-
-Available tools:
-- workspace.search: Search documents by query
-- workspace.list_docs: List all documents
-- workspace.get_doc: Get full document text (args: doc_id or title)
-- workspace.summarize: Summarize a document (args: doc_id or text)
-
-After receiving tool results, provide a helpful answer to the user."""
-
-# Default - use STANDARD for balance of clarity and efficiency
-DEFAULT_SYSTEM_PROMPT = STANDARD_SYSTEM_PROMPT
+# Aliases for backwards compatibility
+COMPACT_SYSTEM_PROMPT = AGENTIC_COMPACT_PROMPT
+STANDARD_SYSTEM_PROMPT = AGENTIC_STANDARD_PROMPT
+VERBOSE_SYSTEM_PROMPT = AGENTIC_VERBOSE_PROMPT
+DEFAULT_SYSTEM_PROMPT = DEFAULT_AGENTIC_PROMPT
 
 
 @dataclass
