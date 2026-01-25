@@ -46,6 +46,11 @@ class GPTConfig:
     # SFT / loss-masking behavior
     use_loss_mask: bool = False   # if True, expect loss_mask from data loader during SFT
     
+    # Weight tying (share embedding and lm_head weights)
+    # True: GPT-2 style, input/output share weights (fewer params, faster special token learning)
+    # False: Separate weights (more capacity, but special tokens learn slower)
+    tie_weights: bool = False
+    
     # Checkpoint dtype (None = use current model dtype)
     save_dtype: str | None = None  # 'fp32', 'bf16', 'fp16', or None
     
@@ -65,8 +70,8 @@ class GPTConfig:
             f'vocab_size:{self.vocab_size}, n_embd:{self.n_embd}, '
             f'n_head:{self.n_head}, n_layer:{self.n_layer}, '
             f'dropout:{self.dropout}, bias:{self.bias}, device:{self.device}, '
-            f'use_loss_mask:{self.use_loss_mask}, save_dtype:{self.save_dtype}, '
-            f'batch_sampling_mode:{self.batch_sampling_mode}'
+            f'use_loss_mask:{self.use_loss_mask}, tie_weights:{self.tie_weights}, '
+            f'save_dtype:{self.save_dtype}, batch_sampling_mode:{self.batch_sampling_mode}'
         )
     
     def to_dict(self):
@@ -295,7 +300,17 @@ class GPT(nn.Module):
         self.position_embedding_table= nn.Embedding(self.config.block_size, self.config.n_embd)
         self.blocks = nn.ModuleList([Block(self.config) for _ in range(self.config.n_layer)])
         self.ln_f= nn.LayerNorm(self.config.n_embd) # final Layer norm
-        self.lm_head = nn.Linear(self.config.n_embd,self.config.vocab_size)
+        self.lm_head = nn.Linear(self.config.n_embd, self.config.vocab_size)
+        
+        # Optional weight tying (GPT-2 style)
+        # When enabled, input embeddings and output projection share weights
+        # Benefits: fewer params, special tokens learn faster (gradients flow both ways)
+        # Note: existing checkpoints without tie_weights will load normally
+        if getattr(self.config, 'tie_weights', False):
+            # Share weights between embedding and lm_head
+            # Bias remains separate (if present)
+            self.lm_head.weight = self.token_embedding_table.weight
+            print("Weight tying enabled: embedding and lm_head share weights")
 
     def forward(
         self,

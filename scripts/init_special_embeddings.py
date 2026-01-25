@@ -134,15 +134,34 @@ def main():
     output_dir = f"checkpoints/{args.output}"
     print(f"\nSaving to {output_dir}...")
     
-    # Copy the original checkpoint directory
+    # Copy the original checkpoint directory (preserves config.json, tokenizer.json, etc.)
     source_dir = f"checkpoints/{args.model}"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
     shutil.copytree(source_dir, output_dir)
     
-    # Save updated model weights
-    model_path = os.path.join(output_dir, "model.pt")
-    torch.save(model.state_dict(), model_path)
+    # Load the original checkpoint to get the format
+    original_checkpoint = torch.load(os.path.join(source_dir, "model.pt"), map_location="cpu", weights_only=True)
+    
+    # Update the state_dict in the checkpoint
+    # Keep the same format (dict with state_dict, checkpoint_dtype, model_dtype)
+    if isinstance(original_checkpoint, dict) and "state_dict" in original_checkpoint:
+        # New format checkpoint
+        original_checkpoint["state_dict"] = model.state_dict()
+        # Move to CPU to avoid VRAM issues
+        for k, v in original_checkpoint["state_dict"].items():
+            if torch.is_tensor(v):
+                original_checkpoint["state_dict"][k] = v.cpu()
+        torch.save(original_checkpoint, os.path.join(output_dir, "model.pt"))
+        print(f"  Saved in new checkpoint format (with state_dict wrapper)")
+    else:
+        # Old format - just save the state dict directly
+        sd = model.state_dict()
+        for k, v in sd.items():
+            if torch.is_tensor(v):
+                sd[k] = v.cpu()
+        torch.save(sd, os.path.join(output_dir, "model.pt"))
+        print(f"  Saved in old checkpoint format (raw state_dict)")
     
     print(f"\n✅ Saved model with initialized special token embeddings to: {output_dir}")
     

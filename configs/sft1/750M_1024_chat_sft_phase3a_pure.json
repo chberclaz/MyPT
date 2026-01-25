@@ -2,7 +2,6 @@
   "name": "GPT-750M-1024-Chat-SFT-Phase3a-Pure",
   "description": "Phase 3a: Pure SFT on gold conversation episodes. No replay. Baseline to verify SFT works.",
   
-  "comment_architecture": "Same architecture as domain_v8 base model",
   "batch_size": 10,
   "block_size": 1024,
   "vocab_size": 50304,
@@ -12,19 +11,15 @@
   "dropout": 0.1,
   "bias": false,
   
-  "comment_training": "Conservative SFT - pure dataset, no replay",
-  "learning_rate": 2e-5,
-  "max_iters": 2000,
-  "eval_interval": 100,
-  "save_every": 500,
-  "warmup_iters": 100,
+  "learning_rate": 8e-5,
+  "max_iters": 250,
+  "eval_interval": 25,
+  "warmup_iters": 25,
   "use_amp": true,
   "amp_dtype": "bf16",
   
-  "comment_sft": "Loss masking for assistant-only training",
   "use_loss_mask": true,
   
-  "comment_episode_indexed": "Episode-indexed data loading",
   "batch_sampling_mode": "epoch",
   "pad_token_id": null,
   "episode_min_tokens": 10,
@@ -32,11 +27,10 @@
   "epoch_shuffle": true,
   "epoch_drop_last": true,
   
-  "comment_optimizer": "Moderate weight decay for SFT",
   "weight_decay": 0.05,
   
-  "comment_eval_sets": "Disable eval_sets to avoid format mismatch",
   "eval_sets": null,
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase3a_chat_sft_v5.jsonl"
   
-  "comment_note": "Pure SFT baseline. ~418 episodes, ~50 epochs. Run with: python train.py --model domain_v8 --config configs/sft1/750M_1024_chat_sft_phase3a_pure.json --dataset data/sft_phase3a_pure --output checkpoints/phase3a_chat_sft_pure"
-}
+  }
