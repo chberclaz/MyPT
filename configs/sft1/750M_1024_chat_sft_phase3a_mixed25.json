@@ -1,0 +1,50 @@
+{
+  "name": "GPT-750M-1024-Chat-SFT-Phase3a-Mixed25",
+  "description": "Phase 3a Chat SFT with 25% general replay data to prevent catastrophic forgetting. ~417 bilingual episodes + general domain chunks.",
+
+  "comment_architecture": "Must match domain_v8 architecture exactly",
+  "batch_size": 10,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.12,
+  "bias": false,
+
+  "comment_training": "SFT training with replay buffer",
+  "learning_rate": 5e-5,
+  "max_iters": 8000,
+  "eval_interval": 500,
+  "save_every": 1000,
+  "warmup_iters": 0.03,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+
+  "comment_sft": "Loss masking: SFT episodes = assistant-only, general chunks = all tokens",
+  "use_loss_mask": true,
+
+  "comment_episode_indexed": "Episode-indexed data loading (treats general chunks as pseudo-episodes)",
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 3303,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+
+  "comment_optimizer": "AdamW with moderate weight decay",
+  "weight_decay": 0.05,
+
+  "comment_replay_strategy": "25% general replay (domain_v8 knowledge preservation). Higher than v5/v7's 20% for extra safety on small SFT dataset.",
+
+  "comment_calculations": [
+    "SFT: ~417 episodes, ~84K trainable tokens (assistant responses)",
+    "General: ~28K tokens as pseudo-episodes with mask=1",
+    "Combined: ~550 pseudo-episodes, ~112K trainable tokens",
+    "At batch_size=10: ~55 batches/epoch",
+    "8000 iters = ~145 epochs through combined data",
+    "Reduced dropout (0.12) since general data adds diversity"
+  ],
+
+  "comment_usage": "python train.py --model_name phase3a_chat_sft_mixed --config_file configs/sft1/750M_1024_chat_sft_phase3a_mixed25.json --dataset_dir data/sft_phase3a_mixed --init_from_model checkpoints/domain_v8"
+}

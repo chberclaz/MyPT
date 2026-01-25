@@ -18,7 +18,7 @@ Usage:
 # =============================================================================
 # 
 # Used for:
-#   - Chat SFT training (Phase 3a)
+#   - Chat SFT training (Phase 3a)x
 #   - Simple Q&A inference (no RAG/tools)
 #
 # Characteristics:

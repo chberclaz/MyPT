@@ -55,6 +55,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.special_tokens import SPECIAL_TOKEN_STRINGS
 from core.tokenizer import Tokenizer
 from core.model import GPTConfig
+from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
 
 # Audit logging for compliance
 try:
@@ -67,8 +68,7 @@ except ImportError:
 # Get tags from special_tokens.py
 SYSTEM_OPEN = SPECIAL_TOKEN_STRINGS["myPT_system_open"]
 SYSTEM_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_system_close"]
-CONTEXT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_user_context_open"]
-CONTEXT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_user_context_close"]
+# NOTE: CONTEXT tags NOT used in Phase 3a - reserved for Phase 3b agentic SFT
 USER_OPEN = SPECIAL_TOKEN_STRINGS["myPT_user_open"]
 USER_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_user_close"]
 ASSISTANT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_assistant_open"]
@@ -115,17 +115,14 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
     text_parts = []
     mask_parts = []
     
-    # System message (masked out)
-    if item.get("system"):
-        s = f"{SYSTEM_OPEN}{item['system']}{SYSTEM_CLOSE}\n"
-        text_parts.append(s)
-        mask_parts.append("0" * len(s))
+    # System message (masked out) - always use centralized prompt for consistency
+    s = f"{SYSTEM_OPEN}{CONVERSATION_SYSTEM_PROMPT}{SYSTEM_CLOSE}\n"
+    text_parts.append(s)
+    mask_parts.append("0" * len(s))
     
-    # Context (masked out) - used for RAG
-    if item.get("context"):
-        c = f"{CONTEXT_OPEN}{item['context']}{CONTEXT_CLOSE}\n"
-        text_parts.append(c)
-        mask_parts.append("0" * len(c))
+    # NOTE: We do NOT include <myPT_user_context> here!
+    # The JSONL "context" field is just metadata (episode_id, language), NOT RAG context.
+    # <myPT_user_context> is reserved for Phase 3b agentic SFT where actual RAG data goes.
     
     # Messages
     for msg in item.get("messages", []):
