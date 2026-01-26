@@ -517,7 +517,8 @@ class GPT(nn.Module):
     @classmethod
     def load(cls, checkpoint_dir: str,
              map_location: str | torch.device | None = None,
-             load_dtype: str | None = None):
+             load_dtype: str | None = None,
+             load_optimizer: bool = True):
         """
         Load model from checkpoint bundle (new JSON-based format).
 
@@ -531,6 +532,12 @@ class GPT(nn.Module):
         model.pt can be either:
             - a raw state_dict (old behavior)
             - a dict with keys: 'state_dict', 'checkpoint_dtype', 'model_dtype'
+        
+        Args:
+            checkpoint_dir: Path to checkpoint directory
+            map_location: Device to load model to
+            load_dtype: Optional dtype ('fp32', 'fp16', 'bf16')
+            load_optimizer: Whether to load optimizer state (False for inference)
 
         Args:
             checkpoint_dir: Directory containing checkpoint files
@@ -647,8 +654,8 @@ class GPT(nn.Module):
                 training_state = json.load(f)
             step = training_state.get("step", None)
 
-            # Load optimizer state if it exists
-            if "optimizer_file" in training_state:
+            # Load optimizer state if requested and it exists
+            if load_optimizer and "optimizer_file" in training_state:
                 optimizer_path = os.path.join(checkpoint_dir, training_state["optimizer_file"])
                 if os.path.exists(optimizer_path):
                     optimizer_state = torch.load(optimizer_path, map_location=map_location, weights_only=True)

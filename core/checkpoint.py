@@ -118,9 +118,27 @@ class CheckpointManager:
                             if isinstance(layer, torch.nn.Dropout):
                                 layer.p = config.dropout
             
+            # Handle tie_weights change
+            base_tied = getattr(model.config, 'tie_weights', False)
+            new_tied = getattr(config, 'tie_weights', False)
+            
+            if new_tied and not base_tied:
+                # Enable weight tying: average the two weight matrices and share
+                print(f"  Enabling weight tying (averaging embedding and lm_head weights)...")
+                with torch.no_grad():
+                    avg_weight = (model.token_embedding_table.weight + model.lm_head.weight) / 2
+                    model.token_embedding_table.weight.data = avg_weight
+                    model.lm_head.weight = model.token_embedding_table.weight
+                model.config.tie_weights = True
+                print(f"  ✓ Weight tying enabled")
+            elif not new_tied and base_tied:
+                # Disable weight tying: this is tricky, need to un-share
+                print(f"  ⚠️  Cannot disable weight tying on a tied model (weights are shared)")
+            
             print(f"  use_loss_mask: {model.config.use_loss_mask}")
             print(f"  dropout: {model.config.dropout}")
             print(f"  batch_size: {model.config.batch_size}")
+            print(f"  tie_weights: {model.config.tie_weights}")
             
             optimizer = model.configure_optimizer(learning_rate, weight_decay)
             return model, optimizer, 0  # start from step 0 for new training
@@ -209,7 +227,7 @@ class CheckpointManager:
         # Try new JSON format first
         if ckpt_manager.exists_new_format():
             print(f"Loading model '{model_name}' (new format)")
-            model, _, _, _ = GPT.load(ckpt_manager.checkpoint_dir, map_location=device, load_dtype=load_dtype)
+            model, _, _, _ = GPT.load(ckpt_manager.checkpoint_dir, map_location=device, load_dtype=load_dtype, load_optimizer=False)
             return model
         
         # Fall back to legacy format
