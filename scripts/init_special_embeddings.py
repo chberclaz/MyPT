@@ -23,24 +23,35 @@ from core.model import GPT
 
 # Map special tokens to meaningful source tokens
 # We use tokens that appear in similar contexts to bootstrap the embeddings
-INIT_SOURCES = {
-    # Format: special_token_id -> [list of source token texts to average]
+#
+# IMPORTANT: Only initialize tokens that appear in Phase 3a training data!
+# Unused tokens should keep their random embeddings so the model doesn't generate them.
+
+# Phase 3a tokens (conversational, no tools):
+INIT_SOURCES_PHASE3A = {
     50257: ["system", ":", "<"],           # <myPT_system>
     50258: ["system", ">", "/"],           # </myPT_system>  
     50259: ["user", ":", "<"],             # <myPT_user>
     50260: ["user", ">", "/"],             # </myPT_user>
-    50261: ["context", ":", "<"],          # <myPT_user_context>
-    50262: ["context", ">", "/"],          # </myPT_user_context>
     50263: ["assistant", ":", "<"],        # <myPT_assistant>
     50264: ["assistant", ">", "/"],        # </myPT_assistant>
+    50271: ["end", ".", "\n"],             # <myPT_eot>
+}
+
+# Phase 3b tokens (agentic with tools) - add these later:
+INIT_SOURCES_PHASE3B = {
+    50261: ["context", ":", "<"],          # <myPT_user_context>
+    50262: ["context", ">", "/"],          # </myPT_user_context>
     50265: ["tool", "call", "<"],          # <myPT_toolcall>
     50266: ["tool", "call", ">"],          # </myPT_toolcall>
     50267: ["result", ":", "<"],           # <myPT_toolresult>
     50268: ["result", ">", "/"],           # </myPT_toolresult>
     50269: ["think", ":", "<"],            # <myPT_thinking>
     50270: ["think", ">", "/"],            # </myPT_thinking>
-    50271: ["end", ".", "\n"],             # <myPT_eot>
 }
+
+# Default: only Phase 3a tokens
+INIT_SOURCES = INIT_SOURCES_PHASE3A
 
 TOKEN_NAMES = {
     50257: "<myPT_system>",
@@ -67,7 +78,21 @@ def main():
     parser.add_argument("--output", type=str, required=True, help="Output model name")
     parser.add_argument("--scale", type=float, default=1.0, 
                         help="Scale factor for initialized embeddings (default: 1.0)")
+    parser.add_argument("--phase", type=str, default="3a", choices=["3a", "3b", "all"],
+                        help="Which phase's tokens to initialize: 3a (conversational), 3b (agentic), all")
     args = parser.parse_args()
+    
+    # Select which tokens to initialize based on phase
+    global INIT_SOURCES
+    if args.phase == "3a":
+        INIT_SOURCES = INIT_SOURCES_PHASE3A
+        print(f"Initializing Phase 3a tokens only (conversational)")
+    elif args.phase == "3b":
+        INIT_SOURCES = {**INIT_SOURCES_PHASE3A, **INIT_SOURCES_PHASE3B}
+        print(f"Initializing Phase 3a + 3b tokens (conversational + agentic)")
+    else:  # all
+        INIT_SOURCES = {**INIT_SOURCES_PHASE3A, **INIT_SOURCES_PHASE3B}
+        print(f"Initializing all special tokens")
     
     print("=" * 70)
     print("SPECIAL TOKEN EMBEDDING INITIALIZATION")

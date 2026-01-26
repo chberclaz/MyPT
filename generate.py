@@ -1,5 +1,22 @@
 import argparse
+import codecs
 from core import load_model, get_model_info, Generator, banner_generate
+
+
+def process_prompt(prompt: str) -> str:
+    """
+    Process prompt string to handle escape sequences.
+    
+    Converts literal \\n to actual newlines, \\t to tabs, etc.
+    This is important for command-line prompts containing special characters.
+    """
+    # Use codecs.decode to handle common escape sequences
+    # This converts \n -> newline, \t -> tab, \\ -> \, etc.
+    try:
+        return codecs.decode(prompt, 'unicode_escape')
+    except UnicodeDecodeError:
+        # If decode fails (e.g., malformed escapes), return original
+        return prompt
 
 
 def parse_args():
@@ -121,6 +138,9 @@ def main():
     
     # Create generator
     gen = Generator(model)
+    
+    # Process prompt to handle escape sequences (e.g., \n -> actual newlines)
+    args.prompt = process_prompt(args.prompt)
     
     # Generate based on mode
     print(f"========== Generating ==========")
