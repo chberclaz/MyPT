@@ -1135,10 +1135,22 @@ class GPT(nn.Module):
 
     @torch.inference_mode()
     def generate(self, prompt, max_new_tokens, temperature=0.8, top_k=50, top_p=0.95,
-                repetition_penalty=1.1, stop_tokens=None, recent_penalty_window: int = 256):
+                repetition_penalty=1.1, stop_tokens=None, recent_penalty_window: int = 256,
+                use_default_stop_tokens: bool = True):
         """
         KV-cache generation (fast).
         Fixes repetition penalty (no growing cat) using a bounded recent window.
+        
+        Args:
+            prompt: Input text to continue from
+            max_new_tokens: Maximum tokens to generate
+            temperature: Sampling temperature (0=greedy, 1=neutral, >1=creative)
+            top_k: Top-K sampling (0=disabled)
+            top_p: Nucleus sampling threshold (1.0=disabled)
+            repetition_penalty: Penalize repeated tokens (1.0=disabled)
+            stop_tokens: Additional tokens to stop on (set or list of token IDs)
+            recent_penalty_window: Window size for repetition penalty
+            use_default_stop_tokens: If True, automatically stop on </myPT_assistant> and <myPT_eot>
         """
         device = self.config.device
         device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
@@ -1151,10 +1163,19 @@ class GPT(nn.Module):
             ctx_ids = [0]
 
         # Stop tokens handling
+        # Default: stop on </myPT_assistant> (50264) and <myPT_eot> (50271)
+        # These are the natural end-of-response tokens for MyPT conversations
+        DEFAULT_STOP_TOKENS = {50264, 50271}  # </myPT_assistant>, <myPT_eot>
+        
         if stop_tokens is None:
-            stop_tokens = set()
+            stop_tokens = DEFAULT_STOP_TOKENS if use_default_stop_tokens else set()
         elif not isinstance(stop_tokens, set):
             stop_tokens = set(stop_tokens)
+            if use_default_stop_tokens:
+                stop_tokens = stop_tokens | DEFAULT_STOP_TOKENS
+        else:
+            if use_default_stop_tokens:
+                stop_tokens = stop_tokens | DEFAULT_STOP_TOKENS
 
         # We'll do KV-cache prefill on at most block_size tokens
         if len(ctx_ids) > self.config.block_size:
