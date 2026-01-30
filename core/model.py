@@ -1238,7 +1238,8 @@ class GPT(nn.Module):
         logits = logits[:, -1, :]  # (1, vocab)
 
         # --- DEBUG: verify cache path matches non-cache next-token ---
-        with torch.no_grad():
+        # Both paths must use same autocast context for fair comparison
+        with torch.no_grad(), ctx:
             logits_nc, _, _ = self(idx_prompt, use_cache=False, kv_cache=None, cache_pos=0)
             a_nc = int(torch.argmax(logits_nc[:, -1, :], dim=-1).item())
             a_c  = int(torch.argmax(logits[:, :], dim=-1).item())
