@@ -14,6 +14,8 @@ from core import (
     get_model_info,
     calculate_dataset_coverage,
     print_coverage_analysis,
+    calculate_episode_coverage,
+    print_episode_coverage_analysis,
     banner_train,
 )
 
@@ -323,10 +325,14 @@ def main():
                 use_loss_mask=model.config.use_loss_mask
             )
         
-        # Get total tokens from metadata
+        # Get dataset info from metadata
         import json
         import os
         metadata_path = os.path.join(args.dataset_dir, "dataset_metadata.json")
+        total_tokens = None
+        total_episodes = None
+        is_episode_dataset = is_episode_indexed_dataset(args.dataset_dir)
+        
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
@@ -334,10 +340,18 @@ def main():
             total_tokens = metadata.get('num_train_tokens', metadata.get('total_tokens', 0))
             if metadata.get('num_val_tokens'):
                 total_tokens += metadata.get('num_val_tokens', 0)
-        else:
-            total_tokens = None
+            # Get episode counts for episode-indexed datasets
+            if is_episode_dataset:
+                total_episodes = metadata.get('num_train_episodes', 0)
+        
+        # For episode datasets, also try to get count from dataloader
+        if is_episode_dataset and hasattr(data_loader, 'get_epoch_info'):
+            epoch_info = data_loader.get_epoch_info('train')
+            total_episodes = epoch_info.get('episodes_total', total_episodes)
     else:
         # In-memory mode: load and tokenize entire text
+        is_episode_dataset = False
+        total_episodes = None
         data_loader = GPTDataLoader(
             model.config, 
             model.tokenizer,
@@ -346,8 +360,26 @@ def main():
         data_loader.prepare_data(text)
         total_tokens = len(data_loader.train_data) + len(data_loader.val_data)
     
-    # Analyze dataset coverage
-    if total_tokens:
+    # Analyze dataset coverage (different calculation for episode vs token datasets)
+    if is_episode_dataset and total_episodes:
+        # Episode-indexed dataset: coverage by episodes
+        coverage = calculate_episode_coverage(
+            max_iters=effective_max_iters,
+            batch_size=model.config.batch_size,
+            total_episodes=total_episodes
+        )
+        print_episode_coverage_analysis(coverage, effective_max_iters)
+        
+        # Ask user to confirm if coverage is very low
+        if coverage['coverage_ratio'] < 1.0:
+            print("⚠️  Your model will not see all episodes!")
+            response = input("Continue anyway? (y/n): ").lower().strip()
+            if response != 'y' and response != 'yes':
+                print("Training cancelled. Adjust --max_iters and try again.")
+                return
+            print()
+    elif total_tokens:
+        # Token-stream dataset: coverage by tokens
         coverage = calculate_dataset_coverage(
             max_iters=effective_max_iters,
             batch_size=model.config.batch_size,

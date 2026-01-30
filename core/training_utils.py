@@ -4,6 +4,146 @@ Training utilities for MyPT.
 Includes functions for calculating dataset coverage, training statistics, etc.
 """
 
+
+def calculate_episode_coverage(max_iters, batch_size, total_episodes):
+    """
+    Calculate dataset coverage for episode-indexed (sequential) datasets.
+    
+    For episode-indexed datasets:
+    - Each batch contains `batch_size` episodes (not tokens)
+    - Total episodes seen = batch_size * max_iters
+    - Coverage = episodes_seen / total_episodes
+    
+    Args:
+        max_iters: Number of training iterations
+        batch_size: Batch size (episodes per batch)
+        total_episodes: Total episodes in dataset
+    
+    Returns:
+        dict with coverage statistics
+    """
+    # Episodes processed per iteration
+    episodes_per_iter = batch_size
+    
+    # Total episodes that will be viewed
+    total_episodes_viewed = max_iters * episodes_per_iter
+    
+    # Coverage ratio (how many times dataset is seen)
+    coverage_ratio = total_episodes_viewed / total_episodes if total_episodes > 0 else 0
+    
+    # Batches needed for one epoch
+    batches_per_epoch = total_episodes // batch_size
+    
+    # Calculate recommended iterations for 2-5x coverage
+    iters_for_1x = batches_per_epoch
+    recommended_min = int(2.0 * iters_for_1x)
+    recommended_max = int(5.0 * iters_for_1x)
+    recommended_optimal = int(3.5 * iters_for_1x)
+    
+    return {
+        'episodes_per_iter': episodes_per_iter,
+        'total_episodes_viewed': total_episodes_viewed,
+        'dataset_episodes': total_episodes,
+        'batches_per_epoch': batches_per_epoch,
+        'coverage_ratio': coverage_ratio,
+        'coverage_percentage': coverage_ratio * 100,
+        'recommended_min_iters': recommended_min,
+        'recommended_max_iters': recommended_max,
+        'recommended_optimal_iters': recommended_optimal,
+        'is_episode_indexed': True,
+    }
+
+
+def print_episode_coverage_analysis(coverage, current_iters):
+    """
+    Print dataset coverage analysis for episode-indexed datasets.
+    
+    Args:
+        coverage: dict from calculate_episode_coverage()
+        current_iters: Current max_iters setting
+    """
+    print()
+    print("=" * 70)
+    print("Episode Dataset Coverage Analysis")
+    print("=" * 70)
+    
+    # Basic stats
+    print(f"Dataset size:           {coverage['dataset_episodes']:,} episodes")
+    print(f"Episodes per batch:     {coverage['episodes_per_iter']:,}")
+    print(f"Batches per epoch:      {coverage['batches_per_epoch']:,}")
+    print(f"Total iterations:       {current_iters:,}")
+    print(f"Total episodes to view: {coverage['total_episodes_viewed']:,}")
+    print()
+    
+    # Coverage ratio
+    ratio = coverage['coverage_ratio']
+    percentage = coverage['coverage_percentage']
+    
+    print(f"Dataset coverage:       {ratio:.2f}x ({percentage:.1f}%)")
+    
+    # Visual indicator
+    if ratio < 1.0:
+        bar_length = int(ratio * 50)
+        bar = "█" * bar_length + "░" * (50 - bar_length)
+        print(f"Progress:               [{bar}]")
+    else:
+        full_passes = int(ratio)
+        partial = ratio - full_passes
+        print(f"Full passes:            {full_passes}x + {partial:.1%} of dataset")
+    
+    print()
+    
+    # Assessment and recommendations
+    if ratio < 0.5:
+        print("⚠️  WARNING: Very low coverage!")
+        print("   Your model will only see a small fraction of episodes.")
+        print("   Risk: Underfitting, poor behavior learning")
+        print()
+    elif ratio < 1.0:
+        print("⚠️  WARNING: Low coverage")
+        print("   Your model won't see all episodes even once.")
+        print("   Risk: Underfitting, incomplete learning")
+        print()
+    elif ratio < 2.0:
+        print("ℹ️  Note: Below recommended coverage")
+        print("   Model will see each episode ~1x. Consider training longer.")
+        print()
+    elif ratio >= 2.0 and ratio <= 5.0:
+        print("✅ GOOD: Coverage is in optimal range (2-5x)")
+        print("   Model will see each episode multiple times for good learning.")
+        print()
+    elif ratio > 5.0 and ratio <= 10.0:
+        print("ℹ️  Note: High coverage")
+        print("   Model will see episodes many times. May overfit on small datasets.")
+        print()
+    else:  # ratio > 10.0
+        print("⚠️  WARNING: Very high coverage")
+        print("   Model will see episodes many times. Risk of overfitting.")
+        print("   Consider: Reducing max_iters, or use more episodes.")
+        print()
+    
+    # Recommendations
+    print("Recommendations:")
+    print(f"  Minimum (2x):         --max_iters {coverage['recommended_min_iters']:,}")
+    print(f"  Optimal (3.5x):       --max_iters {coverage['recommended_optimal_iters']:,}")
+    print(f"  Maximum (5x):         --max_iters {coverage['recommended_max_iters']:,}")
+    
+    # Special recommendations based on ratio
+    if ratio < 1.0:
+        print()
+        print("💡 Suggestion:")
+        print(f"   Increase max_iters to at least {coverage['recommended_min_iters']:,}")
+        print(f"   for 2x coverage (current: {current_iters:,})")
+    elif ratio > 10.0:
+        print()
+        print("💡 Suggestion:")
+        print(f"   Reduce max_iters to {coverage['recommended_max_iters']:,} for 5x coverage")
+        print(f"   OR add more episodes to avoid overfitting")
+    
+    print("=" * 70)
+    print()
+
+
 def calculate_dataset_coverage(max_iters, batch_size, block_size, total_tokens):
     """
     Calculate how many times the dataset will be viewed during training.

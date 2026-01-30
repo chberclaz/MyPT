@@ -76,6 +76,8 @@ from .banner import (
 from .training_utils import (
     calculate_dataset_coverage,
     print_coverage_analysis,
+    calculate_episode_coverage,
+    print_episode_coverage_analysis,
     estimate_training_time,
     print_training_estimates,
 )
@@ -123,6 +125,8 @@ __all__ = [
     # Training utilities
     'calculate_dataset_coverage',
     'print_coverage_analysis',
+    'calculate_episode_coverage',
+    'print_episode_coverage_analysis',
     'estimate_training_time',
     'print_training_estimates',
     
