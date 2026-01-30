@@ -4,8 +4,23 @@ DeepL Translation Script for SFT Goldset
 Translates English user/assistant messages to German using DeepL API.
 
 Usage:
+    # Default (uses data/temp/ directory):
     python scripts/translate_deepl.py
-    python scripts/translate_deepl.py --resume  # Resume from last position
+    
+    # Custom directory:
+    python scripts/translate_deepl.py --dir data/sft_run2_minimal_qa
+    
+    # Resume from last position:
+    python scripts/translate_deepl.py --resume
+
+Input file format (from extract_for_translation.py):
+    === episode_id ===
+    Message content here...
+    
+    === multi_turn_episode ===
+    First message...
+    <<<MSG_SEP>>>
+    Second message...
 
 Requirements:
     - Create a .env file in project root with: DEEPL_API_KEY=your_key_here
@@ -41,10 +56,10 @@ except ImportError:
 DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"  # Free API endpoint
 DEEPL_API_URL_PRO = "https://api.deepl.com/v2/translate"   # Pro API endpoint
 
-INPUT_DIR = PROJECT_ROOT / "data" / "temp"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "temp"
+# Default directory (can be overridden via --dir)
+DEFAULT_DIR = PROJECT_ROOT / "data" / "temp"
 
-# Files to translate
+# Files to translate (input_en, output_de)
 FILES_TO_TRANSLATE = [
     ("user_messages_en.txt", "user_messages_de.txt"),
     ("assistant_messages_en.txt", "assistant_messages_de.txt"),
@@ -327,13 +342,36 @@ def estimate_chars(input_dir: Path) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Translate SFT goldset to German using DeepL")
+    parser = argparse.ArgumentParser(
+        description="Translate SFT goldset to German using DeepL",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Example:
+    # Default (uses data/temp/):
+    python scripts/translate_deepl.py
+    
+    # Custom directory:
+    python scripts/translate_deepl.py --dir data/sft_run2_minimal_qa
+    
+    # Resume interrupted translation:
+    python scripts/translate_deepl.py --resume
+"""
+    )
     parser.add_argument("--resume", action="store_true", help="Resume from existing translations")
+    parser.add_argument("--dir", type=str, default=None,
+                        help="Directory containing user_messages_en.txt and assistant_messages_en.txt "
+                             "(default: data/temp)")
     args = parser.parse_args()
+    
+    # Determine input/output directory
+    work_dir = Path(args.dir) if args.dir else DEFAULT_DIR
+    if not work_dir.is_absolute():
+        work_dir = PROJECT_ROOT / work_dir
     
     print("="*60)
     print("🌐 DeepL Translation Script for SFT Goldset")
     print("   English → German (DE)")
+    print(f"   Directory: {work_dir}")
     if args.resume:
         print("   Mode: RESUME (skipping already translated)")
     print("="*60)
@@ -349,7 +387,7 @@ def main():
     remaining = check_usage(api_key, api_url)
     
     # Estimate required characters
-    estimated = estimate_chars(INPUT_DIR)
+    estimated = estimate_chars(work_dir)
     print(f"\n📝 Estimated characters to translate: {estimated:,}")
     
     if remaining is not None and estimated > remaining:
@@ -365,11 +403,11 @@ def main():
     success = True
     
     for en_file, de_file in FILES_TO_TRANSLATE:
-        input_path = INPUT_DIR / en_file
-        output_path = OUTPUT_DIR / de_file
+        input_path = work_dir / en_file
+        output_path = work_dir / de_file
         
         if not input_path.exists():
-            print(f"\n⚠️  Skipping {en_file} (not found)")
+            print(f"\n⚠️  Skipping {en_file} (not found at {input_path})")
             continue
         
         if not translate_file(input_path, output_path, api_key, api_url, resume=args.resume):
@@ -382,9 +420,13 @@ def main():
         print("✅ Translation complete!")
         print(f"\nOutput files:")
         for _, de_file in FILES_TO_TRANSLATE:
-            print(f"   - {OUTPUT_DIR / de_file}")
-        print(f"\nNext step: Run merge script to create German episodes:")
-        print(f"   python scripts/recombine_translations.py")
+            print(f"   - {work_dir / de_file}")
+        print(f"\nNext step: Run recombine script to create German episodes:")
+        print(f"   python scripts/recombine_translations.py \\")
+        print(f"       --original <your_original.jsonl> \\")
+        print(f"       --user_translated {work_dir / 'user_messages_de.txt'} \\")
+        print(f"       --assistant_translated {work_dir / 'assistant_messages_de.txt'} \\")
+        print(f"       --output <output_de.jsonl>")
     else:
         print("⚠️  Translation incomplete - run with --resume to continue")
     print("="*60)
