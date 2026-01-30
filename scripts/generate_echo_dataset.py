@@ -173,8 +173,12 @@ NUMBERS_AND_CODES = [
     "3.14", "2.71", "1.41", "9.81", "0.5", "0.25", "0.1",
     "A1", "B2", "C3", "X1", "Y2", "Z3",
     "ABC123", "XYZ789", "TEST001", "CODE42",
+    "UID_042", "UID_123", "UID_404", "UID_500", "UID_200", "UID_301", "UID_100",
+    "CH-2026-01", "CH-2026-02", "CH-2026-03", "CH-2026-04",
     "12345", "67890", "11111", "00000", "99999",
     "2024", "2025", "2026", "1984", "2001",
+    "ID-001", "ID-002", "ID-003", "ID-004", "ID-005",
+
     "1 + 1", "2 + 2", "3 x 3", "10 - 5", "100 / 10",
 ]
 
@@ -221,8 +225,12 @@ SENTENCES_DE = [
 ]
 
 
-def generate_echo_pairs(n_examples: int = 500, seed: int = 42) -> List[Tuple[str, str, str]]:
-    """Generate diverse echo instruction pairs.
+def generate_echo_pairs(max_examples: int = None, seed: int = 42) -> List[Tuple[str, str, str]]:
+    """Generate ALL unique echo instruction pairs (prefix × content combinations).
+    
+    Args:
+        max_examples: Optional cap on total examples. If None, generates all combinations.
+        seed: Random seed for shuffling.
     
     Returns list of (question, answer, category) tuples.
     """
@@ -243,26 +251,26 @@ def generate_echo_pairs(n_examples: int = 500, seed: int = 42) -> List[Tuple[str
         [(s, "sentence_de") for s in SENTENCES_DE]
     )
     
-    # Generate English examples
-    en_count = int(n_examples * 0.6)  # 60% English
-    for _ in range(en_count):
-        prefix = random.choice(INSTRUCTION_PREFIXES)
-        content, cat = random.choice(en_content)
-        question = f"{prefix} {content}"
-        answer = content
-        pairs.append((question, answer, f"echo_{cat}"))
+    # Generate ALL English combinations (prefix × content)
+    for prefix in INSTRUCTION_PREFIXES:
+        for content, cat in en_content:
+            question = f"{prefix} {content}"
+            answer = content
+            pairs.append((question, answer, f"echo_{cat}"))
     
-    # Generate German examples
-    de_count = int(n_examples * 0.4)  # 40% German
-    for _ in range(de_count):
-        prefix = random.choice(GERMAN_PREFIXES)
-        content, cat = random.choice(de_content)
-        question = f"{prefix} {content}"
-        answer = content
-        pairs.append((question, answer, f"echo_{cat}"))
+    # Generate ALL German combinations (prefix × content)
+    for prefix in GERMAN_PREFIXES:
+        for content, cat in de_content:
+            question = f"{prefix} {content}"
+            answer = content
+            pairs.append((question, answer, f"echo_{cat}"))
     
     # Shuffle
     random.shuffle(pairs)
+    
+    # Optional cap
+    if max_examples and len(pairs) > max_examples:
+        pairs = pairs[:max_examples]
     
     return pairs
 
@@ -284,18 +292,18 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Generate diverse echo instruction dataset")
-    parser.add_argument("--n_examples", type=int, default=500, help="Number of examples to generate")
-    parser.add_argument("--output_dir", type=str, default="data/sft_echo_diverse", help="Output directory")
+    parser.add_argument("--max_examples", type=int, default=None, help="Optional cap on examples (default: generate all)")
+    parser.add_argument("--output_dir", type=str, default="data/sft_echo", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / "echo_diverse.jsonl"
+    output_file = output_dir / "mypt_echo_diverse.jsonl"
     
-    # Generate pairs
-    print(f"Generating {args.n_examples} echo instruction examples...")
-    pairs = generate_echo_pairs(n_examples=args.n_examples, seed=args.seed)
+    # Generate pairs (all unique combinations)
+    print(f"Generating all unique echo instruction combinations...")
+    pairs = generate_echo_pairs(max_examples=args.max_examples, seed=args.seed)
     
     # Create episodes
     episodes = []
