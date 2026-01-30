@@ -166,8 +166,10 @@ class CausalSelfAttention(nn.Module):
             v_cache[:, :, cache_pos:end_pos, :] = v
 
             # Use cache up to end_pos
-            k_used = k_cache[:, :, :end_pos, :]
-            v_used = v_cache[:, :, :end_pos, :]
+            # NOTE: slices may be non-contiguous; SDPA can behave differently
+            # Making them contiguous ensures consistent behavior with non-cache path
+            k_used = k_cache[:, :, :end_pos, :].contiguous()
+            v_used = v_cache[:, :, :end_pos, :].contiguous()
 
             # IMPORTANT:
             # With KV-cache decode, q is only the "new" token(s) and k_used contains only <= current time.
@@ -1239,12 +1241,35 @@ class GPT(nn.Module):
 
         # --- DEBUG: verify cache path matches non-cache next-token ---
         # Both paths must use same autocast context for fair comparison
-        with torch.no_grad(), ctx:
-            logits_nc, _, _ = self(idx_prompt, use_cache=False, kv_cache=None, cache_pos=0)
-            a_nc = int(torch.argmax(logits_nc[:, -1, :], dim=-1).item())
-            a_c  = int(torch.argmax(logits[:, :], dim=-1).item())
-            if a_nc != a_c:
-                print(f"[WARN] cache vs non-cache argmax mismatch: no_cache={a_nc} cache={a_c}")
+        import os
+        DEBUG_CACHE = os.environ.get('DEBUG_KV_CACHE', '0') == '1'
+        if DEBUG_CACHE:
+            with torch.no_grad(), ctx:
+                logits_nc, _, _ = self(idx_prompt, use_cache=False, kv_cache=None, cache_pos=0)
+                logits_nc_last = logits_nc[:, -1, :]
+                a_nc = int(torch.argmax(logits_nc_last, dim=-1).item())
+                a_c  = int(torch.argmax(logits, dim=-1).item())
+                
+                # Always show comparison
+                diff = (logits.float() - logits_nc_last.float()).abs()
+                max_diff = diff.max().item()
+                mean_diff = diff.mean().item()
+                
+                print(f"[DEBUG KV-CACHE]")
+                print(f"  cache argmax={a_c}, no_cache argmax={a_nc}, match={a_nc == a_c}")
+                print(f"  logit diff: max={max_diff:.6f}, mean={mean_diff:.6f}")
+                print(f"  cache logit[{a_c}]={logits[0, a_c].item():.4f}")
+                print(f"  no_cache logit[{a_nc}]={logits_nc_last[0, a_nc].item():.4f}")
+                
+                # Check if logits are close but argmax differs (precision issue)
+                if a_nc != a_c:
+                    print(f"  [!] MISMATCH - checking if close...")
+                    print(f"  cache logit[{a_nc}]={logits[0, a_nc].item():.4f} (what no_cache picked)")
+                    print(f"  no_cache logit[{a_c}]={logits_nc_last[0, a_c].item():.4f} (what cache picked)")
+                    gap_cache = logits[0, a_c].item() - logits[0, a_nc].item()
+                    gap_nc = logits_nc_last[0, a_nc].item() - logits_nc_last[0, a_c].item()
+                    print(f"  gap in cache logits: {gap_cache:.6f}")
+                    print(f"  gap in no_cache logits: {gap_nc:.6f}")
 
 
         out_ids = list(ctx_ids)
