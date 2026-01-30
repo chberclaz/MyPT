@@ -12,8 +12,12 @@ content after an instruction prefix.
 
 import json
 import random
+import sys
 from pathlib import Path
 from typing import List, Tuple
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Use canonical system prompt from core
 from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
