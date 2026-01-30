@@ -29,7 +29,9 @@
   
   "weight_decay": 0.05,
   
-  "eval_sets": null,
+  "eval_sets": {
+    "format_lock": "data/sft_format_lock_prepared"
+  },
   "eval_seed": 1337,
   "log_file": "logs/train/phase3a2_minimal_qa.jsonl"
 }

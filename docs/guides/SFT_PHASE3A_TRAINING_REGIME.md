@@ -104,29 +104,64 @@ Each run includes replay from previous stages to prevent catastrophic forgetting
 
 ## Execution Commands
 
-### Phase 3a-1
+### Phase 3a-1: Format Lock
 ```bash
+# 1. Generate dataset
 python scripts/generate_format_lock_dataset.py
+
+# 2. Prepare (tokenize)
 python scripts/prepare_chat_sft.py \
-  --input data/sft_format_lock/mypt_format_lock_v1.jsonl \
-  --output data/sft_format_lock_prepared --val_split 0.1
+  --input_file data/sft_format_lock/mypt_format_lock_v1.jsonl \
+  --output_dir data/sft_format_lock_prepared \
+  --val_split 0.1
+
+# 3. Train
 python train.py --model_name phase3a1_format_lock \
-  --init_from_model domain_v5 \
+  --init_from_model domain_v5_sft_ready \
   --config_file configs/sft1/750M_phase3a1_format_lock.json \
   --dataset_dir data/sft_format_lock_prepared
 ```
 
-### Phase 3a-2
+### Phase 3a-2: Minimal Q&A (with Run 1 Replay)
 ```bash
+# 1. Generate Run 2 dataset
 python scripts/generate_run2_minimal_qa.py
-python scripts/prepare_chat_sft.py \
+
+# 2. (Optional) Translate to German for bilingual training
+python scripts/extract_for_translation.py \
   --input data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1.jsonl \
-  --output data/sft_run2_prepared --val_split 0.1
+  --output_dir data/temp
+python scripts/translate_deepl.py
+python scripts/recombine_translations.py \
+  --original data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1.jsonl \
+  --user_translated data/temp/user_messages_de.txt \
+  --assistant_translated data/temp/assistant_messages_de.txt \
+  --output data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1_de.jsonl
+cat data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1.jsonl \
+    data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1_de.jsonl \
+    > data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1_bilingual.jsonl
+
+# 3. Mix with 20% Run 1 replay
+python scripts/mix_sft_jsonl.py \
+  --inputs data/sft_format_lock/mypt_format_lock_v1.jsonl:0.2 \
+           data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1_bilingual.jsonl:1.0 \
+  --output data/sft_run2_mixed/mypt_run2_with_replay.jsonl \
+  --shuffle
+
+# 4. Prepare mixed dataset
+python scripts/prepare_chat_sft.py \
+  --input_file data/sft_run2_mixed/mypt_run2_with_replay.jsonl \
+  --output_dir data/sft_run2_mixed_prepared \
+  --val_split 0.1
+
+# 5. Train (config includes format_lock as additional eval set)
 python train.py --model_name phase3a2_minimal_qa \
   --init_from_model phase3a1_format_lock \
   --config_file configs/sft1/750M_phase3a2_minimal_qa.json \
-  --dataset_dir data/sft_run2_prepared
+  --dataset_dir data/sft_run2_mixed_prepared
 ```
+
+**Note**: The config includes `"eval_sets": {"format_lock": "data/sft_format_lock_prepared"}` to monitor Run 1 skills during Run 2 training.
 
 ---
 
@@ -135,8 +170,10 @@ python train.py --model_name phase3a2_minimal_qa \
 After each stage, test with:
 ```bash
 python generate.py --model phase3aX_name \
-  --prompt "<myPT_system>You are MyPT.<myPT_eot>\n<myPT_user>YOUR_TEST<myPT_eot>\n<myPT_assistant>"
+  --prompt "<myPT_system>You are MyPT, a helpful assistant.</myPT_system>\n<myPT_user>YOUR_TEST</myPT_user>\n<myPT_assistant>"
 ```
+
+**Note**: Tags use opening/closing pairs (`<myPT_system>...</myPT_system>`), NOT `<myPT_eot>` after each message. The `<myPT_eot>` only appears at the very end of a complete conversation.
 
 **3a-1 Pass**: Model stops after 1-3 tokens, outputs closing tag.
 **3a-2 Pass**: Answers in 1-2 sentences, respects "10 words" constraint.
@@ -205,8 +242,12 @@ Assistant: I found several Python tutorials...
 |------|---------|
 | `scripts/generate_format_lock_dataset.py` | Generate 3a-1 data |
 | `scripts/generate_run2_minimal_qa.py` | Generate 3a-2 data |
+| `scripts/mix_sft_jsonl.py` | Mix JSONL datasets with sampling ratios (for replay) |
+| `scripts/extract_for_translation.py` | Extract messages for DeepL translation |
+| `scripts/translate_deepl.py` | Translate EN→DE via DeepL API |
+| `scripts/recombine_translations.py` | Recombine translations into JSONL |
 | `configs/sft1/750M_phase3a1_format_lock.json` | 3a-1 config |
-| `configs/sft1/750M_phase3a2_minimal_qa.json` | 3a-2 config |
+| `configs/sft1/750M_phase3a2_minimal_qa.json` | 3a-2 config (includes Run 1 eval set) |
 | `docs/sft/SFT_LOSS_MASKING.md` | Loss masking explanation |
 | `docs/sft/EPISODE_INDEXED_SFT.md` | Episode format details |
 
