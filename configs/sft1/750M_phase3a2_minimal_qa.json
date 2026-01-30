@@ -1,0 +1,35 @@
+{
+  "name": "GPT-750M-Phase3a2-Minimal-QA",
+  "description": "Phase 3a-2: Minimal Q&A obedience. 1-sentence answers, length constraints, I-don't-know responses. Includes Run 1 replay.",
+  
+  "batch_size": 12,
+  "block_size": 768,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.05,
+  "bias": false,
+  
+  "learning_rate": 5e-5,
+  "max_iters": 200,
+  "eval_interval": 25,
+  "warmup_iters": 20,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+  
+  "use_loss_mask": true,
+  
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 4502,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+  
+  "weight_decay": 0.05,
+  
+  "eval_sets": null,
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase3a2_minimal_qa.jsonl"
+}
