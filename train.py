@@ -431,12 +431,20 @@ def main():
         eval_data_loaders = {}
         for eval_name, eval_path in eval_sets_config.items():
             print(f"Loading eval set '{eval_name}' from: {eval_path}")
-            eval_loader = GPTDataLoader(
-                model.config,
-                model.tokenizer,
-                dataset_dir=eval_path,
-                eval_only=True
-            )
+            # Auto-detect dataset format for eval sets too
+            if is_episode_indexed_dataset(eval_path):
+                eval_loader = GPTEpisodeDataLoader(
+                    model.config,
+                    model.tokenizer,
+                    dataset_dir=eval_path,
+                )
+            else:
+                eval_loader = GPTDataLoader(
+                    model.config,
+                    model.tokenizer,
+                    dataset_dir=eval_path,
+                    eval_only=True
+                )
             eval_data_loaders[eval_name] = eval_loader
         print()
     

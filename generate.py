@@ -56,6 +56,11 @@ def parse_args():
                         choices=["chat", "creative", "factual", "code", "deterministic"],
                         help="Use a preset configuration (overrides individual sampling params)")
     
+    # Precision control
+    parser.add_argument("--force_fp16", action="store_true",
+                        help="Force FP16 precision even on BF16-capable GPUs. "
+                             "Fixes KV-cache numerical mismatches on some hardware.")
+    
     return parser.parse_args()
 
 
@@ -93,6 +98,8 @@ def main():
     print(f"Repetition penalty: {args.repetition_penalty}")
     if args.preset:
         print(f"Preset: {args.preset}")
+    if args.force_fp16:
+        print(f"Precision: FP16 (forced)")
     print()
     
     # Optional: Show model info without loading (fast preview)
@@ -118,16 +125,20 @@ def main():
     # Load model using convenience function
     print(f"Loading model '{args.model_name}'...")
     
+    # Determine load dtype
+    load_dtype = "fp16" if args.force_fp16 else None
+    
     # Handle legacy checkpoint parameter if specified
     if args.legacy_checkpoint:
         from core.checkpoint import CheckpointManager
         model = CheckpointManager.load_for_inference(
             args.model_name,
-            legacy_filename=args.legacy_checkpoint
+            legacy_filename=args.legacy_checkpoint,
+            load_dtype=load_dtype
         )
     else:
         # Use convenience function (cleaner API)
-        model = load_model(args.model_name)
+        model = load_model(args.model_name, load_dtype=load_dtype)
     
     # Print model info
     print(f"✅ Model loaded successfully!")
