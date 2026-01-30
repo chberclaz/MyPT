@@ -135,10 +135,14 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
             mask_parts.append("0" * len(u))  # Don't train on user messages
         
         elif role == "assistant":
-            # Include tags in training - model needs to learn the format
-            a = f"{ASSISTANT_OPEN}{content}{ASSISTANT_CLOSE}\n"
-            text_parts.append(a)
-            mask_parts.append("1" * len(a))  # Train on assistant responses!
+            # Opening tag: mask=0 (given in prompt, don't predict it)
+            # Content + closing tag: mask=1 (model learns what to say and when to stop)
+            text_parts.append(ASSISTANT_OPEN)
+            mask_parts.append("0" * len(ASSISTANT_OPEN))  # Don't train on opening tag!
+            
+            content_and_close = f"{content}{ASSISTANT_CLOSE}\n"
+            text_parts.append(content_and_close)
+            mask_parts.append("1" * len(content_and_close))  # Train on content + closing tag
     
     # End of turn marker
     text_parts.append(EOT + "\n")

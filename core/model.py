@@ -166,10 +166,8 @@ class CausalSelfAttention(nn.Module):
             v_cache[:, :, cache_pos:end_pos, :] = v
 
             # Use cache up to end_pos
-            # NOTE: slices may be non-contiguous; SDPA can behave differently
-            # Making them contiguous ensures consistent behavior with non-cache path
-            k_used = k_cache[:, :, :end_pos, :].contiguous()
-            v_used = v_cache[:, :, :end_pos, :].contiguous()
+            k_used = k_cache[:, :, :end_pos, :]
+            v_used = v_cache[:, :, :end_pos, :]
 
             # IMPORTANT:
             # With KV-cache decode, q is only the "new" token(s) and k_used contains only <= current time.
@@ -1201,10 +1199,8 @@ class GPT(nn.Module):
 
         kv_cache = []
         for _ in range(self.config.n_layer):
-            # Use zeros instead of empty to avoid uninitialized memory issues
-            # that can cause numerical mismatches between cached/non-cached paths
-            k_cache = torch.zeros((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
-            v_cache = torch.zeros((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
+            k_cache = torch.empty((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
+            v_cache = torch.empty((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
             kv_cache.append((k_cache, v_cache))
         cache_pos = 0
 
