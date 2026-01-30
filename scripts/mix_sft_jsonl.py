@@ -243,7 +243,7 @@ Examples:
     
     print(f"\n  Next step:")
     print(f"    python scripts/prepare_chat_sft.py \\")
-    print(f"        --input_file {output_path} \\")
+    print(f"        --input {output_path} \\")
     print(f"        --output_dir {output_path.parent / (output_path.stem + '_prepared')} \\")
     print(f"        --val_split 0.1")
     

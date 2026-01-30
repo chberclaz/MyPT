@@ -1199,8 +1199,10 @@ class GPT(nn.Module):
 
         kv_cache = []
         for _ in range(self.config.n_layer):
-            k_cache = torch.empty((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
-            v_cache = torch.empty((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
+            # Use zeros instead of empty to avoid uninitialized memory issues
+            # that can cause numerical mismatches between cached/non-cached paths
+            k_cache = torch.zeros((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
+            v_cache = torch.zeros((1, nh, self.config.block_size, hs), device=device, dtype=cache_dtype)
             kv_cache.append((k_cache, v_cache))
         cache_pos = 0
 

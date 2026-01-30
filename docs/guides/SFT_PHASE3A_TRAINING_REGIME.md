@@ -111,7 +111,7 @@ python scripts/generate_format_lock_dataset.py
 
 # 2. Prepare (tokenize)
 python scripts/prepare_chat_sft.py \
-  --input_file data/sft_format_lock/mypt_format_lock_v1.jsonl \
+  --input data/sft_format_lock/mypt_format_lock_v1.jsonl \
   --output_dir data/sft_format_lock_prepared \
   --val_split 0.1
 
@@ -150,7 +150,7 @@ python scripts/mix_sft_jsonl.py \
 
 # 4. Prepare mixed dataset
 python scripts/prepare_chat_sft.py \
-  --input_file data/sft_run2_mixed/mypt_run2_with_replay.jsonl \
+  --input data/sft_run2_mixed/mypt_run2_with_replay.jsonl \
   --output_dir data/sft_run2_mixed_prepared \
   --val_split 0.1
 
