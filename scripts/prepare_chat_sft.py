@@ -159,36 +159,47 @@ def char_mask_to_token_mask(
     """
     Convert character-level mask to token-level mask.
     
-    Strategy: For each token, if ANY of its characters are masked as '1',
-    the entire token is masked as 1 (trainable).
+    Strategy: Use token ID detection for robust masking.
+    - Find <myPT_assistant> token (ID 50263) - mask=0
+    - Everything after it until </myPT_assistant> (ID 50264) - mask=1
+    - </myPT_assistant> itself - mask=1 (model learns to stop)
+    - <myPT_eot> (ID 50271) - mask=0
+    
+    This avoids character/byte alignment issues with BPE tokenization.
     
     Returns:
         (token_ids, token_mask) where token_mask[i] is 1 if token i should be trained on
     """
-    assert len(text) == len(char_mask), f"Length mismatch: {len(text)} vs {len(char_mask)}"
+    # Special token IDs
+    ASSISTANT_OPEN_ID = 50263   # <myPT_assistant>
+    ASSISTANT_CLOSE_ID = 50264  # </myPT_assistant>
+    EOT_ID = 50271              # <myPT_eot>
     
-    # Encode text to get token IDs
+    # Encode full text to get token IDs
     token_ids = tokenizer.encode(text)
     
-    # Decode each token to get its character span
+    # Build mask based on token structure
     token_mask = []
-    char_pos = 0
+    in_assistant_response = False
     
-    for token_id in token_ids:
-        # Get the text for this token
-        token_text = tokenizer.decode([token_id])
-        token_len = len(token_text)
-        
-        # Check if any character in this token's span is masked as '1'
-        if char_pos + token_len <= len(char_mask):
-            span_mask = char_mask[char_pos:char_pos + token_len]
-            # If any char is '1', mark token as trainable
-            token_mask.append(1 if '1' in span_mask else 0)
-        else:
-            # Edge case: token extends beyond mask (shouldn't happen)
+    for i, token_id in enumerate(token_ids):
+        if token_id == ASSISTANT_OPEN_ID:
+            # Opening tag - don't train on it
             token_mask.append(0)
-        
-        char_pos += token_len
+            in_assistant_response = True
+        elif token_id == ASSISTANT_CLOSE_ID:
+            # Closing tag - DO train on it (model learns when to stop)
+            token_mask.append(1)
+            in_assistant_response = False
+        elif token_id == EOT_ID:
+            # End of turn - don't train
+            token_mask.append(0)
+        elif in_assistant_response:
+            # Inside assistant response - train on content
+            token_mask.append(1)
+        else:
+            # System/user content - don't train
+            token_mask.append(0)
     
     return token_ids, token_mask
 
