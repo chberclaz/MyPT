@@ -124,7 +124,12 @@ def display_episode(ep_tokens, ep_mask, tokenizer, show_all=False):
         print("(Shows where training signal starts/stops)\n")
         
         prev_mask = 0
+        last_trained_idx = None
+        
         for i, (tok_id, m) in enumerate(zip(ep_tokens, ep_mask)):
+            if m == 1:
+                last_trained_idx = i
+            
             if m != prev_mask:
                 tok_str = tokenizer.decode([int(tok_id)])
                 direction = "START training >>>" if m == 1 else "<<< END training"
@@ -140,6 +145,14 @@ def display_episode(ep_tokens, ep_mask, tokenizer, show_all=False):
                 print()
                 
             prev_mask = m
+        
+        # If training extends to last token, show that explicitly
+        if last_trained_idx is not None and ep_mask[-1] == 1:
+            tok_id = ep_tokens[last_trained_idx]
+            tok_str = tokenizer.decode([int(tok_id)])
+            print(f"  Position {last_trained_idx}: LAST trained token (end of episode)")
+            print(f"    Token: {tok_id} = {repr(tok_str)}")
+            print()
 
 
 def show_stats(dataset_dir: str):

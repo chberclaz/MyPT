@@ -21,7 +21,7 @@ import numpy as np
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.tokenizer import Tokenizer, create_tokenizer
+# No tokenizer needed - validation uses token IDs directly
 
 
 # Special token IDs
@@ -196,13 +196,7 @@ def main():
     num_episodes = len(indices)
     print(f"Loaded {num_episodes:,} episodes, {len(tokens):,} total tokens")
     
-    # Create tokenizer for decoding (optional, for verbose output)
-    tokenizer = None
-    if args.verbose:
-        try:
-            tokenizer = create_tokenizer("gpt2")
-        except:
-            pass
+    # Tokenizer not needed for validation (only token IDs are checked)
     
     # Validate each episode
     max_episodes = args.max_episodes or num_episodes
@@ -236,10 +230,9 @@ def main():
                 for issue in result["issues"]:
                     print(f"      - {issue['message']}")
                 
-                # Show context if tokenizer available
-                if tokenizer:
-                    print(f"      Tokens: {ep_tokens[:20].tolist()}...")
-                    print(f"      Masks:  {ep_masks[:20].tolist()}...")
+                # Show token context
+                print(f"      Tokens: {ep_tokens[:20].tolist()}...")
+                print(f"      Masks:  {ep_masks[:20].tolist()}...")
     
     # Summary
     print("\n" + "=" * 60)
