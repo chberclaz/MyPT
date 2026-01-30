@@ -116,7 +116,8 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
     mask_parts = []
     
     # System message (masked out) - always use centralized prompt for consistency
-    s = f"{SYSTEM_OPEN}{CONVERSATION_SYSTEM_PROMPT}{SYSTEM_CLOSE}\n"
+    # NO newlines between tags - tags alone define structure
+    s = f"{SYSTEM_OPEN}{CONVERSATION_SYSTEM_PROMPT}{SYSTEM_CLOSE}"
     text_parts.append(s)
     mask_parts.append("0" * len(s))
     
@@ -130,7 +131,7 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
         content = msg.get("content", "")
         
         if role == "user":
-            u = f"{USER_OPEN}{content}{USER_CLOSE}\n"
+            u = f"{USER_OPEN}{content}{USER_CLOSE}"
             text_parts.append(u)
             mask_parts.append("0" * len(u))  # Don't train on user messages
         
@@ -140,13 +141,13 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
             text_parts.append(ASSISTANT_OPEN)
             mask_parts.append("0" * len(ASSISTANT_OPEN))  # Don't train on opening tag!
             
-            content_and_close = f"{content}{ASSISTANT_CLOSE}\n"
+            content_and_close = f"{content}{ASSISTANT_CLOSE}"
             text_parts.append(content_and_close)
             mask_parts.append("1" * len(content_and_close))  # Train on content + closing tag
     
     # End of turn marker
-    text_parts.append(EOT + "\n")
-    mask_parts.append("0" * (len(EOT) + 1))
+    text_parts.append(EOT)
+    mask_parts.append("0" * len(EOT))
     
     return "".join(text_parts), "".join(mask_parts)
 
@@ -192,8 +193,8 @@ def char_mask_to_token_mask(
             token_mask.append(1)
             in_assistant_response = False
         elif token_id == EOT_ID:
-            # End of turn - don't train
-            token_mask.append(0)
+            # End of turn - DO train on it (future-proofing for multi-turn)
+            token_mask.append(1)
         elif in_assistant_response:
             # Inside assistant response - train on content
             token_mask.append(1)
