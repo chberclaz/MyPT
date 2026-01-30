@@ -52,39 +52,39 @@ def load_episode_dataset(dataset_dir: str, split: str = "train"):
     """Load episode-indexed dataset."""
     split_dir = Path(dataset_dir) / split
     
-    # Find shard files
-    token_files = sorted(split_dir.glob("*.tokens"))
-    mask_files = sorted(split_dir.glob("*.masks"))
-    index_files = sorted(split_dir.glob("*.index"))
+    # Standard file names
+    tokens_path = split_dir / "tokens.bin"
+    mask_path = split_dir / "mask.bin"
+    index_path = split_dir / "episodes.idx"
     
-    if not token_files:
+    if not tokens_path.exists():
         raise ValueError(f"No token files found in {split_dir}")
     
-    all_tokens = []
-    all_masks = []
-    all_indices = []
+    # Load tokens (uint32)
+    tokens = np.fromfile(tokens_path, dtype=np.uint32)
     
-    for tf, mf, idx_f in zip(token_files, mask_files, index_files):
-        tokens = np.fromfile(tf, dtype=np.uint16)
-        masks = np.fromfile(mf, dtype=np.uint8)
-        indices = np.fromfile(idx_f, dtype=np.uint32)
-        
-        all_tokens.append(tokens)
-        all_masks.append(masks)
-        all_indices.append(indices)
+    # Load mask (uint8)
+    if mask_path.exists():
+        masks = np.fromfile(mask_path, dtype=np.uint8)
+    else:
+        raise ValueError(f"No mask file found in {split_dir}")
     
-    tokens = np.concatenate(all_tokens)
-    masks = np.concatenate(all_masks)
-    indices = np.concatenate(all_indices)
+    # Load episode index (uint64 pairs: start, length)
+    if index_path.exists():
+        index_data = np.fromfile(index_path, dtype=np.uint64)
+        # Reshape to (num_episodes, 2) - [start, length]
+        indices = index_data.reshape(-1, 2)
+    else:
+        raise ValueError(f"No index file found in {split_dir}")
     
     return tokens, masks, indices
 
 
 def get_episode(tokens, masks, indices, episode_idx):
     """Get tokens and masks for a specific episode."""
-    start = indices[episode_idx]
-    end = indices[episode_idx + 1] if episode_idx + 1 < len(indices) else len(tokens)
-    return tokens[start:end], masks[start:end]
+    start, length = indices[episode_idx]
+    start, length = int(start), int(length)
+    return tokens[start:start+length], masks[start:start+length]
 
 
 def validate_episode(episode_tokens, episode_masks, episode_idx, verbose=False):
