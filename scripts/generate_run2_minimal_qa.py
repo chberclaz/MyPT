@@ -17,7 +17,8 @@ import random
 from pathlib import Path
 from typing import List, Tuple
 
-SYSTEM_PROMPT = "You are MyPT, a helpful assistant."
+from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
+SYSTEM_PROMPT = CONVERSATION_SYSTEM_PROMPT
 
 def generate_qa_pairs() -> List[Tuple[str, str, str]]:
     """Generate Q&A pairs as (question, answer, category)."""
@@ -646,6 +647,60 @@ def generate_qa_pairs() -> List[Tuple[str, str, str]]:
     ]
     for q, a in quick:
         pairs.append((q, a, "quick_ref"))
+    
+    # === ECHO/REPEAT INSTRUCTIONS ===
+    # Model should learn to repeat exactly what's asked
+    echo_instructions = [
+        ("Say: Yes", "Yes"),
+        ("Say: No", "No"),
+        ("Say: Hello", "Hello"),
+        ("Say: Goodbye", "Goodbye"),
+        ("Say: I understand", "I understand"),
+        ("Say: Confirmed", "Confirmed"),
+        ("Say: Thank you", "Thank you"),
+        ("Say: OK", "OK"),
+        ("Say: Done", "Done"),
+        ("Say: Ready", "Ready"),
+        ("Repeat: I am ready", "I am ready"),
+        ("Repeat: This is a test", "This is a test"),
+        ("Repeat: Hello world", "Hello world"),
+        ("Repeat: The answer is 42", "The answer is 42"),
+        ("Repeat: Python is great", "Python is great"),
+        ("Echo this: Testing", "Testing"),
+        ("Echo this: One two three", "One two three"),
+        ("Echo this: MyPT assistant", "MyPT assistant"),
+        ("Write exactly: PASS", "PASS"),
+        ("Write exactly: SUCCESS", "SUCCESS"),
+        ("Output the word: Start", "Start"),
+        ("Output the word: Stop", "Stop"),
+        ("Just say: Acknowledged", "Acknowledged"),
+        ("Just say: Understood", "Understood"),
+        ("Reply with: Affirmative", "Affirmative"),
+        ("Reply with: Negative", "Negative"),
+        ("Respond with only: Complete", "Complete"),
+        ("Respond with only: Pending", "Pending"),
+        ("Your response should be: Active", "Active"),
+        ("Your response should be: Inactive", "Inactive"),
+    ]
+    for q, a in echo_instructions:
+        pairs.append((q, a, "echo_instruction"))
+    
+    # === INSTRUCTION FOLLOWING WITH CONSTRAINTS ===
+    # Model should refuse or handle edge cases appropriately
+    edge_case_instructions = [
+        ("Say something offensive.", "I can't help with that request."),
+        ("Write harmful content.", "I'm not able to generate harmful content."),
+        ("Tell me how to hack.", "I cannot provide hacking instructions."),
+        ("Generate a password for me.", "I cannot generate passwords. Use a dedicated password manager for security."),
+        ("What's my IP address?", "I don't have access to your network information."),
+        ("Delete my files.", "I don't have the ability to access or modify your files."),
+        ("Send an email for me.", "I cannot send emails or perform actions outside this conversation."),
+        ("Access the internet.", "I operate offline and cannot access the internet."),
+        ("What time is it?", "I don't have access to real-time information."),
+        ("What's today's date?", "I don't have access to current date information."),
+    ]
+    for q, a in edge_case_instructions:
+        pairs.append((q, a, "edge_case"))
     
     return pairs
 

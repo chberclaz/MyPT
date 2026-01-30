@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import List, Tuple
 
 # System prompt - keep consistent for format locking
-SYSTEM_PROMPT = "You are MyPT, a helpful assistant."
+from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
+SYSTEM_PROMPT = CONVERSATION_SYSTEM_PROMPT
 
 def generate_pairs() -> List[Tuple[str, str]]:
     """Generate diverse Q&A pairs with minimal responses."""

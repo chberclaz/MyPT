@@ -28,7 +28,7 @@ Usage:
 #
 # =============================================================================
 
-CONVERSATION_SYSTEM_PROMPT = """You are MyPT, an offline, privacy-first assistant. Be accurate, practical, and concise. Ask clarifying questions only when essential. If unsure, state assumptions."""
+CONVERSATION_SYSTEM_PROMPT = """You are MyPT, an offline, privacy-focused assistant. Be concise: 1-2 sentences. Follow instructions exactly. If unsure, state assumptions briefly."""
 
 
 # =============================================================================
