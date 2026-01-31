@@ -1489,7 +1489,7 @@ class GPT(nn.Module):
         Greedy generation WITHOUT KV-cache (for debugging/verification).
         
         This is slower but guaranteed correct. Use to verify cached generation
-        produces the same results.
+        produces the same results. Uses same autocast as generate() for fair comparison.
         
         Args:
             prompt: Input text
@@ -1499,6 +1499,20 @@ class GPT(nn.Module):
             Generated text (prompt + completion)
         """
         device = self.config.device
+        device_type = 'cuda' if 'cuda' in str(device) else 'cpu'
+        
+        # Setup autocast to match generate() exactly
+        if device_type == "cuda":
+            weight_dtype = next(self.parameters()).dtype
+            if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
+                autocast_dtype = torch.bfloat16
+            elif weight_dtype == torch.float16:
+                autocast_dtype = torch.float16
+            else:
+                autocast_dtype = torch.float16
+            ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
+        else:
+            ctx = nullcontext()
         
         # Get stop tokens from tokenizer
         stop_tokens = {
@@ -1515,8 +1529,9 @@ class GPT(nn.Module):
             idx_cond = out_ids[-self.config.block_size:]
             x = torch.tensor([idx_cond], dtype=torch.long, device=device)
             
-            # Forward WITHOUT cache
-            logits, _, _ = self(x, use_cache=False)
+            # Forward WITHOUT cache (same autocast as generate())
+            with ctx:
+                logits, _, _ = self(x, use_cache=False)
             
             # Pure argmax (greedy)
             next_token = logits[0, -1, :].argmax().item()
