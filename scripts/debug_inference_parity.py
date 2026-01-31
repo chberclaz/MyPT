@@ -114,6 +114,43 @@ def tokenizer_self_test(tokenizer: Tokenizer, verbose: bool = False) -> bool:
     return all_passed
 
 
+def tokenizer_state_persistence_test(tokenizer: Tokenizer, verbose: bool = False) -> bool:
+    """Test that tokenizer state can be saved and restored with exact ID mapping."""
+    print_header("Tokenizer State Persistence Test")
+    
+    # Get current state
+    state = tokenizer.get_state()
+    
+    if verbose:
+        print(f"    State keys: {list(state.keys())}")
+        if "special_token_encoder" in state:
+            print(f"    special_token_encoder entries: {len(state['special_token_encoder'])}")
+            print(f"    special_tokens_by_name entries: {len(state.get('special_tokens_by_name', {}))}")
+    
+    # Verify state contains special token mappings (for gpt2)
+    if tokenizer.token_kind == "gpt2":
+        if "special_token_encoder" not in state:
+            print_fail("State persistence", "Missing special_token_encoder in saved state")
+            return False
+        
+        if "special_tokens_by_name" not in state:
+            print_fail("State persistence", "Missing special_tokens_by_name in saved state")
+            return False
+        
+        # Verify the saved mappings match current tokenizer
+        for tok_str, tok_id in state["special_token_encoder"].items():
+            current_id = tokenizer.special_token_encoder.get(tok_str)
+            if current_id != tok_id:
+                print_fail("State persistence", f"Mismatch for '{tok_str}': saved={tok_id}, current={current_id}")
+                return False
+        
+        if verbose:
+            print(f"    All {len(state['special_token_encoder'])} token IDs match")
+    
+    print_pass("Tokenizer state includes special token mappings")
+    return True
+
+
 def special_token_id_stability_test(tokenizer: Tokenizer, verbose: bool = False) -> bool:
     """Test that special token IDs are in expected range and consistent."""
     print_header("Special Token ID Stability Test")
@@ -553,6 +590,7 @@ def main():
     results = {}
     
     results["tokenizer_self_test"] = tokenizer_self_test(tokenizer, args.verbose)
+    results["tokenizer_state_persistence"] = tokenizer_state_persistence_test(tokenizer, args.verbose)
     results["special_token_stability"] = special_token_id_stability_test(tokenizer, args.verbose)
     results["kv_cache_prefill"] = kv_cache_parity_prefill_test(model, tokenizer, args.verbose)
     results["kv_cache_steps"] = kv_cache_parity_steps_test(model, tokenizer, steps=8, verbose=args.verbose)

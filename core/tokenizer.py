@@ -196,26 +196,66 @@ class Tokenizer():
 
     # ----- SERIALIZATION HELPERS -----
     def get_state(self):
-        return {
+        """Get tokenizer state for serialization.
+        
+        For GPT-2 tokenizers, this includes the exact special token mappings
+        to ensure ID stability across sessions (even if SPECIAL_TOKEN_STRINGS order changes).
+        """
+        state = {
             "token_kind": self.token_kind,
             "chars": self.chars,
             "base_vocab_size": self.base_vocab_size,
+            "model_vocab_size": self.model_vocab_size,
         }
+        
+        # For GPT-2, persist exact special token mappings
+        if self.token_kind == "gpt2" and self.special_token_encoder:
+            state["special_token_encoder"] = self.special_token_encoder.copy()
+            state["special_tokens_by_name"] = self.special_tokens.copy()
+            state["special_token_version"] = 1  # Bump when token set changes
+        
+        return state
     
     def set_state(self, state):
-        """Restore tokenizer state from a saved state dictionary."""
+        """Restore tokenizer state from a saved state dictionary.
+        
+        If special token mappings are saved, uses them directly instead of
+        regenerating from SPECIAL_TOKEN_STRINGS (ensures ID stability).
+        """
         self.token_kind = state["token_kind"]
         self.chars = state.get("chars", None)
         self.__set_encoding(self.token_kind)
         
-        # Re-register special tokens if GPT-2
         if self.token_kind == 'gpt2':
             self.base_vocab_size = state.get("base_vocab_size", self.enc.n_vocab)
-            self._register_special_tokens()
+            self.model_vocab_size = state.get("model_vocab_size", self.config.vocab_size)
+            
+            # If saved state has special token mappings, restore them exactly
+            if "special_token_encoder" in state:
+                self.special_token_encoder = state["special_token_encoder"].copy()
+                self.special_tokens = state.get("special_tokens_by_name", {}).copy()
+                
+                # Rebuild decoder from encoder
+                self.special_token_decoder = {v: k for k, v in self.special_token_encoder.items()}
+                
+                # Rebuild regex pattern (sorted by length for safety)
+                tokens_by_length = sorted(self.special_token_encoder.keys(), key=len, reverse=True)
+                escaped_tokens = [re.escape(tok) for tok in tokens_by_length]
+                self._special_token_pattern = re.compile('|'.join(escaped_tokens))
+                
+                # Validate
+                assert len(self.special_token_encoder) == len(self.special_token_decoder), \
+                    "Special token encoder/decoder size mismatch"
+                
+                print(f"Restored {len(self.special_tokens)} special tokens from saved state")
+            else:
+                # Legacy checkpoint without saved mappings - regenerate
+                self._register_special_tokens()
 
     @classmethod
     def from_state(cls, config, state):
+        """Create tokenizer from saved state."""
         tok = cls(config, state["token_kind"])
-        tok.chars = state.get("chars", None)
+        tok.set_state(state)
         return tok
 
