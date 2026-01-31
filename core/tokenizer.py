@@ -63,7 +63,10 @@ class Tokenizer():
         # Build regex pattern dynamically from registered tokens
         # Pattern: (<system>|</system>|<user>|</user>|...) - matches any special token
         # This automatically includes any tokens added to special_tokens.py
-        escaped_tokens = [re.escape(tok) for tok in self.special_token_encoder.keys()]
+        # IMPORTANT: Sort by descending length to prevent prefix-matching bugs
+        # (regex alternation matches left-to-right, shorter tokens could match first)
+        tokens_by_length = sorted(self.special_token_encoder.keys(), key=len, reverse=True)
+        escaped_tokens = [re.escape(tok) for tok in tokens_by_length]
         self._special_token_pattern = re.compile('|'.join(escaped_tokens))
         
         print(f"Registered {len(self.special_tokens)} special tokens (IDs {self.base_vocab_size}-{next_id-1})")
