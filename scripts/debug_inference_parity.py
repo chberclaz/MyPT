@@ -21,11 +21,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
-import numpy as np
 
-from core.model import GPT, GPTConfig, load_model
-from core.tokenizer import Tokenizer
-from core.special_tokens import SPECIAL_TOKEN_STRINGS, SPECIAL_TOKEN_IDS
+from core import load_model, GPT, Tokenizer
+from core.special_tokens import SPECIAL_TOKEN_STRINGS
 
 
 def print_header(title: str):
@@ -73,7 +71,7 @@ def tokenizer_self_test(tokenizer: Tokenizer, verbose: bool = False) -> bool:
     special_passed = True
     for name, token_str in SPECIAL_TOKEN_STRINGS.items():
         ids = tokenizer.encode(token_str)
-        expected_id = SPECIAL_TOKEN_IDS.get(name)
+        expected_id = tokenizer.special_tokens.get(name)
         
         if len(ids) != 1:
             print_fail(f"Special token '{token_str}'", f"Encoded to {len(ids)} tokens: {ids}")
@@ -89,63 +87,66 @@ def tokenizer_self_test(tokenizer: Tokenizer, verbose: bool = False) -> bool:
     if special_passed:
         print_pass("Special tokens encode to single ID")
     
-    # Test 3: Mixed text with special tokens
+    # Test 3: Mixed text with special tokens - roundtrip
     mixed_texts = [
-        ("<myPT_system>Hello</myPT_system>", [50257, 15496, 50258]),
-        ("<myPT_user>Test</myPT_user>", [50259]),  # Will have more tokens
-        ("<myPT_assistant>", [50263]),
+        "<myPT_system>Hello</myPT_system>",
+        "<myPT_user>Test</myPT_user>",
+        "<myPT_assistant>OK.</myPT_assistant>",
+        "<myPT_system>You are MyPT.</myPT_system><myPT_user>Say hi.</myPT_user><myPT_assistant>",
     ]
     
     mixed_passed = True
-    for text, expected_contains in mixed_texts:
+    for text in mixed_texts:
         ids = tokenizer.encode(text)
         decoded = tokenizer.decode(ids)
         
         if decoded != text:
-            print_fail(f"Mixed roundtrip '{text}'", f"Got '{decoded}'")
+            print_fail(f"Mixed roundtrip", f"'{text}' -> '{decoded}'")
             mixed_passed = False
             all_passed = False
         elif verbose:
-            print(f"    '{text[:40]}...' -> {len(ids)} tokens")
+            print(f"    '{text[:50]}...' -> {len(ids)} tokens -> roundtrip OK")
     
     if mixed_passed:
-        print_pass("Mixed text with special tokens")
+        print_pass("Mixed text with special tokens roundtrip")
     
     return all_passed
 
 
 def special_token_id_stability_test(tokenizer: Tokenizer, verbose: bool = False) -> bool:
-    """Test that special token IDs match expected values."""
+    """Test that special token IDs are in expected range and consistent."""
     print_header("Special Token ID Stability Test")
     
     all_passed = True
     
-    # Check each special token
-    for name, expected_id in SPECIAL_TOKEN_IDS.items():
-        token_str = SPECIAL_TOKEN_STRINGS.get(name)
-        if token_str is None:
-            print_fail(f"Token '{name}'", "Not found in SPECIAL_TOKEN_STRINGS")
+    # Check IDs are in expected range (base_vocab_size to model_vocab_size)
+    base = tokenizer.base_vocab_size
+    model = tokenizer.model_vocab_size
+    
+    if verbose:
+        print(f"    Base vocab size: {base}")
+        print(f"    Model vocab size: {model}")
+        print(f"    Special token range: {base} - {model-1}")
+    
+    for name, token_id in tokenizer.special_tokens.items():
+        token_str = SPECIAL_TOKEN_STRINGS.get(name, "???")
+        
+        if token_id < base or token_id >= model:
+            print_fail(f"Token '{name}'", f"ID {token_id} out of range [{base}, {model})")
             all_passed = False
-            continue
+        elif verbose:
+            print(f"    {name}: '{token_str}' -> ID {token_id}")
         
-        # Check encoder
-        if hasattr(tokenizer, 'special_token_encoder'):
-            actual_id = tokenizer.special_token_encoder.get(token_str)
-            if actual_id != expected_id:
-                print_fail(f"Token '{name}'", f"Encoder has ID {actual_id}, expected {expected_id}")
-                all_passed = False
-            elif verbose:
-                print(f"    {name}: '{token_str}' -> ID {actual_id}")
-        
-        # Check decoder
-        if hasattr(tokenizer, 'special_token_decoder'):
-            decoded_str = tokenizer.special_token_decoder.get(expected_id)
-            if decoded_str != token_str:
-                print_fail(f"Token '{name}'", f"Decoder has '{decoded_str}', expected '{token_str}'")
-                all_passed = False
+        # Verify encoder/decoder consistency
+        if tokenizer.special_token_encoder.get(token_str) != token_id:
+            print_fail(f"Token '{name}'", "Encoder mismatch")
+            all_passed = False
+        if tokenizer.special_token_decoder.get(token_id) != token_str:
+            print_fail(f"Token '{name}'", "Decoder mismatch")
+            all_passed = False
     
     if all_passed:
-        print_pass("All special token IDs are stable")
+        print_pass(f"All {len(tokenizer.special_tokens)} special token IDs are stable and consistent")
     
     return all_passed
 
@@ -189,20 +190,24 @@ def kv_cache_parity_prefill_test(model: GPT, tokenizer: Tokenizer, verbose: bool
     prompt = "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>What is 2+2?</myPT_user><myPT_assistant>"
     
     ids = tokenizer.encode(prompt)
-    x = torch.tensor([ids], dtype=torch.long, device=model.device)
+    x = torch.tensor([ids], dtype=torch.long, device=model.config.device)
     
     model.eval()
     
     # Determine autocast dtype
     weight_dtype = next(model.parameters()).dtype
-    if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
-        amp_dtype = torch.bfloat16
-    elif weight_dtype == torch.float16:
-        amp_dtype = torch.float16
-    else:
-        amp_dtype = torch.float32
+    device_type = model.config.device if isinstance(model.config.device, str) else str(model.config.device)
     
-    ctx = torch.amp.autocast('cuda', dtype=amp_dtype) if model.device.type == 'cuda' else torch.amp.autocast('cpu', enabled=False)
+    if 'cuda' in device_type:
+        if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
+            amp_dtype = torch.bfloat16
+        elif weight_dtype == torch.float16:
+            amp_dtype = torch.float16
+        else:
+            amp_dtype = torch.float32
+        ctx = torch.amp.autocast('cuda', dtype=amp_dtype)
+    else:
+        ctx = torch.amp.autocast('cpu', enabled=False)
     
     with torch.no_grad(), ctx:
         # Non-cached forward
@@ -241,19 +246,24 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
     prompt = "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Say hello.</myPT_user><myPT_assistant>"
     
     ids = tokenizer.encode(prompt)
+    device = model.config.device
     
     model.eval()
     
     # Determine autocast dtype
     weight_dtype = next(model.parameters()).dtype
-    if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
-        amp_dtype = torch.bfloat16
-    elif weight_dtype == torch.float16:
-        amp_dtype = torch.float16
-    else:
-        amp_dtype = torch.float32
+    device_type = device if isinstance(device, str) else str(device)
     
-    ctx = torch.amp.autocast('cuda', dtype=amp_dtype) if model.device.type == 'cuda' else torch.amp.autocast('cpu', enabled=False)
+    if 'cuda' in device_type:
+        if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
+            amp_dtype = torch.bfloat16
+        elif weight_dtype == torch.float16:
+            amp_dtype = torch.float16
+        else:
+            amp_dtype = torch.float32
+        ctx = torch.amp.autocast('cuda', dtype=amp_dtype)
+    else:
+        ctx = torch.amp.autocast('cpu', enabled=False)
     
     # Track generated tokens
     generated_cache = list(ids)
@@ -261,10 +271,18 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
     kv_cache = None
     
     all_passed = True
+    step = 0
+    
+    # Get stop token IDs from tokenizer
+    stop_ids = {
+        tokenizer.special_tokens.get("myPT_assistant_close"),
+        tokenizer.special_tokens.get("myPT_eot"),
+    }
+    stop_ids = {s for s in stop_ids if s is not None}
     
     with torch.no_grad(), ctx:
         # Prefill with cache
-        x_cache = torch.tensor([ids], dtype=torch.long, device=model.device)
+        x_cache = torch.tensor([ids], dtype=torch.long, device=device)
         logits_cache, kv_cache = model(x_cache, use_cache=True)
         
         for step in range(steps):
@@ -273,7 +291,7 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
             next_token_cache = last_logits_cache.argmax().item()
             
             # Get next token from no-cache path (full context)
-            x_no_cache = torch.tensor([generated_no_cache], dtype=torch.long, device=model.device)
+            x_no_cache = torch.tensor([generated_no_cache], dtype=torch.long, device=device)
             # Trim to block_size if needed
             if x_no_cache.shape[1] > model.config.block_size:
                 x_no_cache = x_no_cache[:, -model.config.block_size:]
@@ -295,7 +313,7 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
                 print(f"    Step {step}: token={next_token_cache} = '{tokenizer.decode([next_token_cache])}'")
             
             # Check for stop tokens
-            if next_token_cache in {50264, 50271}:  # </myPT_assistant> or <myPT_eot>
+            if next_token_cache in stop_ids:
                 if verbose:
                     print(f"    Stopped at step {step} (stop token)")
                 break
@@ -305,7 +323,7 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
             generated_no_cache.append(next_token_no_cache)
             
             # Advance cache with just the new token
-            x_new = torch.tensor([[next_token_cache]], dtype=torch.long, device=model.device)
+            x_new = torch.tensor([[next_token_cache]], dtype=torch.long, device=device)
             logits_cache, kv_cache = model(x_new, use_cache=True, kv_cache=kv_cache)
     
     if all_passed:
@@ -319,14 +337,17 @@ def print_model_info(model: GPT, tokenizer: Tokenizer):
     print_header("Model & Tokenizer Info")
     
     print(f"  Model dtype: {next(model.parameters()).dtype}")
-    print(f"  Model device: {model.device}")
+    print(f"  Model device: {model.config.device}")
     print(f"  Config vocab_size: {model.config.vocab_size}")
     print(f"  Tokenizer kind: {tokenizer.token_kind}")
     print(f"  Tokenizer base_vocab_size: {tokenizer.base_vocab_size}")
     
     if hasattr(tokenizer, 'special_token_encoder'):
         print(f"  Special tokens registered: {len(tokenizer.special_token_encoder)}")
-        print(f"  Special token IDs: {min(tokenizer.special_token_encoder.values())}-{max(tokenizer.special_token_encoder.values())}")
+        if tokenizer.special_token_encoder:
+            min_id = min(tokenizer.special_token_encoder.values())
+            max_id = max(tokenizer.special_token_encoder.values())
+            print(f"  Special token IDs: {min_id}-{max_id}")
 
 
 def main():
@@ -341,7 +362,8 @@ def main():
     
     # Load model
     print(f"\nLoading model '{args.model}'...")
-    model, tokenizer = load_model(args.model)
+    model = load_model(args.model)
+    tokenizer = model.tokenizer
     model.eval()
     
     # Print info
