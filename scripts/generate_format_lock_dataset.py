@@ -57,7 +57,10 @@ def generate_pairs() -> List[Tuple[str, str]]:
         "rejected", "accepted", "ready", "waiting", "loading", "processing",
         "saved", "deleted", "updated", "created", "found", "missing", "valid",
         "invalid", "enabled", "disabled", "active", "inactive", "online", "offline",
-        "asdfg", "Blubi", "gugududu", "as1278", "trzui", "90Adj", "mnbyx10-", "optioart", "klü.", "2yx1;", "gjkl", "opösder", "08412", "xcfsd87", "lähj31","dada", "gugu", "projolo", "79SADsa", "nmxoepr", "ssadcxyop", "ffseiopasfjvn", "fjklöasopqwü", "vvbshakl", "test",    ]
+        "asdfg", "Blubi", "gugududu", "as1278", "trzui", "90Adj", "mnbyx10-", "optioart",
+        "klü.", "2yx1;", "gjkl", "opösder", "08412", "xcfsd87", "lähj31","dada", "gugu", 
+        "projolo", "79SADsa", "nmxoepr", "ssadcxyop", "ffseiopasfjvn", "fjklöasopqwü", 
+        "vvbshakl", "test",  "ID-008", "id-903",  ]
     
     # Generate SAY combinations
     for template in SAY_TEMPLATES:
@@ -105,16 +108,16 @@ def generate_pairs() -> List[Tuple[str, str]]:
     ]
     
     COLOR_TEMPLATES = [
-        ("Name a color: {color}.", "{Color}."),
-        ("Say {color}.", "{Color}."),
-        ("What color is {color}?", "{Color}."),
-        ("Color: {color}.", "{Color}."),
+        ("Name a color: {color}.", "{color}."),
+        ("Say {color}.", "{color}."),
+        ("What color is {color}?", "{color}."),
+        ("Color: {color}.", "{color}."),
     ]
     
     for template_q, template_a in COLOR_TEMPLATES:
         for color in COLORS:
             q = template_q.format(color=color)
-            a = template_a.format(Color=color.capitalize())
+            a = template_a.format(color=color)  # TRUE ECHO - no capitalization
             pairs.append((q, a))
     
     # ==========================================================================
@@ -332,15 +335,15 @@ def generate_pairs() -> List[Tuple[str, str]]:
     ]
     
     DIRECTION_TEMPLATES = [
-        ("Which way is {dir}?", "{Dir}."),
-        ("Say {dir}.", "{Dir}."),
-        ("Direction: {dir}.", "{Dir}."),
+        ("Which way is {dir}?", "{dir}."),
+        ("Say {dir}.", "{dir}."),
+        ("Direction: {dir}.", "{dir}."),
     ]
     
     for direction in DIRECTIONS:
         for template_q, template_a in DIRECTION_TEMPLATES:
             q = template_q.format(dir=direction)
-            a = template_a.format(Dir=direction.capitalize())
+            a = template_a.format(dir=direction)  # TRUE ECHO - no capitalization
             pairs.append((q, a))
     
     # ==========================================================================
