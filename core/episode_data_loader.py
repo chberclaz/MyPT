@@ -335,7 +335,10 @@ class GPTEpisodeDataLoader:
                 )
     
     def _get_episode_sample(self, split: str, global_idx: int) -> Tuple[np.ndarray, ...]:
-        """Get padded/truncated sample from a single episode."""
+        """Get padded/truncated sample from a single episode.
+        
+        Includes defensive assertions for loss-mask alignment.
+        """
         state = self._epoch_state[split]
         shard_idx, ep_idx = state['global_episodes'][global_idx]
         shard = self._data[split]['shards'][shard_idx]
@@ -350,6 +353,9 @@ class GPTEpisodeDataLoader:
         actual_len = min(length, L)
         seq = np.array(shard['tokens'][start:start + actual_len], dtype=np.int64)
         
+        # Track original length before padding
+        original_len = len(seq)
+        
         # Pad if needed
         if len(seq) < L:
             pad_len = L - len(seq)
@@ -361,16 +367,75 @@ class GPTEpisodeDataLoader:
         
         if self.use_loss_mask and shard['mask'] is not None:
             # Slice mask
-            m = np.array(shard['mask'][start:start + actual_len], dtype=np.float32)
+            m_raw = np.array(shard['mask'][start:start + actual_len], dtype=np.float32)
+            
+            # DEFENSIVE ASSERTION 1: mask length must match tokens length
+            assert len(m_raw) == original_len, (
+                f"Mask/token length mismatch in episode {ep_idx} of shard {shard_idx}: "
+                f"tokens={original_len}, mask={len(m_raw)}"
+            )
             
             # Pad with zeros (don't train on padding)
-            if len(m) < L:
-                m = np.pad(m, (0, L - len(m)), mode='constant', constant_values=0)
+            if len(m_raw) < L:
+                m = np.pad(m_raw, (0, L - len(m_raw)), mode='constant', constant_values=0)
+            else:
+                m = m_raw
             
             mask_y = m[1:]  # Aligned with y
+            
+            # DEFENSIVE ASSERTION 2: padding positions must have mask=0
+            if original_len < L:
+                pad_start = original_len - 1  # -1 because mask_y is shifted
+                if pad_start < len(mask_y):
+                    pad_mask_values = mask_y[pad_start:]
+                    assert np.all(pad_mask_values == 0), (
+                        f"Non-zero mask in padding region of episode {ep_idx}: "
+                        f"pad_mask_values={pad_mask_values[:5]}..."
+                    )
+            
+            # Debug mode: print token/mask info if enabled
+            if getattr(self, '_debug_mask_alignment', False):
+                self._print_mask_debug(ep_idx, shard_idx, seq, m, original_len)
+            
             return x, y, mask_y
         
         return x, y
+    
+    def _print_mask_debug(self, ep_idx: int, shard_idx: int, seq: np.ndarray, mask: np.ndarray, original_len: int):
+        """Print debug info for mask alignment (first/last 10 tokens)."""
+        print(f"\n[DEBUG MASK] Episode {ep_idx} (shard {shard_idx}), original_len={original_len}")
+        print("  First 10 tokens with mask:")
+        for i in range(min(10, len(seq))):
+            tok_id = seq[i]
+            m_val = mask[i] if i < len(mask) else 0
+            tok_str = f"ID={tok_id}"
+            if hasattr(self.tokenizer, 'decode'):
+                try:
+                    tok_str = repr(self.tokenizer.decode([int(tok_id)]))
+                except:
+                    pass
+            print(f"    [{i}] {tok_str:30s} mask={m_val}")
+        
+        if original_len > 20:
+            print("  ...")
+        
+        print("  Last 10 tokens with mask:")
+        start_idx = max(0, original_len - 10)
+        for i in range(start_idx, original_len):
+            tok_id = seq[i]
+            m_val = mask[i] if i < len(mask) else 0
+            tok_str = f"ID={tok_id}"
+            if hasattr(self.tokenizer, 'decode'):
+                try:
+                    tok_str = repr(self.tokenizer.decode([int(tok_id)]))
+                except:
+                    pass
+            marker = " <- LAST ORIGINAL" if i == original_len - 1 else ""
+            print(f"    [{i}] {tok_str:30s} mask={m_val}{marker}")
+    
+    def enable_mask_debug(self, enabled: bool = True):
+        """Enable/disable mask alignment debug output."""
+        self._debug_mask_alignment = enabled
     
     def get_batch(self, split: str = 'train') -> Tuple[torch.Tensor, ...]:
         """
