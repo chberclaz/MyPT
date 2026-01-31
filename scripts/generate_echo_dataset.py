@@ -124,19 +124,39 @@ SINGLE_WORDS_EN = [
     "Book", "Pen", "Paper", "Desk", "Chair", "Door", "Window", "Floor",
 ]
 
+# Gibberish words - forces true copy/echo learning, not word memorization
+GIBBERISH_WORDS = [
+    "Blurpix", "Zanthor", "Quexling", "Flimzap", "Grobnak", "Wibblyx", "Snorfle", "Plonkus",
+    "Xyrpod", "Krazbit", "Muffnix", "Drazzle", "Skronf", "Blibber", "Zwomp", "Grindax",
+    "Fluxorp", "Qwibble", "Splonk", "Vrazzle", "Nimbux", "Glarfle", "Triznak", "Wompus",
+    "Blixtar", "Zorfnik", "Krumple", "Snazzix", "Plorfin", "Gruxoid", "Flibbix", "Quondar",
+    "asdfgh", "qwerty", "zxcvbn", "poiuyt", "lkjhgf", "mnbvcx", "rewqas", "ytrewq",
+    "Blub123", "Xyz789", "Qrs456", "Abc-xy", "Mno_pq", "Rst.uv", "Wxy;ab", "Cde:fg",
+    "fl0rpz", "gr1nkx", "bl4rpq", "zw0nky", "kr1spx", "sn0rfl", "pl0nkz", "tr1zzy",
+    "BLURP", "ZONK", "GRAX", "FLIB", "QUEX", "SNORF", "PLONK", "WIBZ",
+    "bLuRpIx", "ZaNtHoR", "QuExLiNg", "fLiMzAp", "gRoBnAk", "WiBbLyX", "sNoRfLe", "pLoNkUs",
+    "blurp-zant", "quex_flim", "grob.nak", "wibb;lyx", "snor:fle", "plon-kus", "xyr_pod", "kraz.bit",
+    "123blurp", "456zant", "789quex", "012flim", "345grob", "678wibb", "901snor", "234plon",
+    "blurp123zant", "quex456flim", "grob789nak", "wibb012lyx", "snor345fle", "plon678kus",
+]
+
 SINGLE_WORDS_DE = [
     "Ja", "Nein", "Hallo", "Tschüss", "Danke", "OK", "Fertig", "Bereit",
     "Start", "Stopp", "Los", "Warte", "Hier", "Dort", "Jetzt", "Später",
     "Wahr", "Falsch", "Bestanden", "Fehler", "Erfolg", "Ungültig", "Gültig",
     "Akzeptieren", "Ablehnen", "Bestätigen", "Abbrechen", "Senden", "Zurücksetzen",
-    "Öffnen", "Schließen", "Hochladen", "Herunterladen", "Verbinden", "Trennen",
+    "Öffnen", "Schliessen", "Hochladen", "Herunterladen", "Verbinden", "Trennen",
     "Aktivieren", "Deaktivieren", "Aktiv", "Inaktiv", "Online", "Offline",
     "Apfel", "Banane", "Orange", "Zitrone", "Kirsche", "Traube", "Melone",
-    "Rot", "Blau", "Grün", "Gelb", "Lila", "Schwarz", "Weiß",
+    "Rot", "Blau", "Grün", "Gelb", "Lila", "Schwarz", "Weiss",
     "Eins", "Zwei", "Drei", "Vier", "Fünf", "Sechs", "Sieben", "Acht",
     "Katze", "Hund", "Vogel", "Fisch", "Pferd", "Löwe", "Tiger", "Bär",
     "Sonne", "Mond", "Stern", "Wolke", "Regen", "Schnee", "Wind", "Feuer",
     "Buch", "Stift", "Papier", "Tisch", "Stuhl", "Tür", "Fenster", "Boden", "Blub",
+    # Gibberish with German-ish flavor
+    "Blörpix", "Zänthör", "Quöxling", "Flümzap", "Gröbnak", "Wübblyx", "Schnörfle", "Plönkus",
+    "Xürpöd", "Kräzbit", "Müffnix", "Dräzzle", "Skrönf", "Blübber", "Zwömp", "Gründax",
+    "äöüss", "Öäüss", "äÖüÜ", "ssäöü", "üöäss", "Äöüss", "öÄüÜ", "ÜöÄss",
 ]
 
 PHRASES_EN = [
@@ -165,7 +185,7 @@ PHRASES_DE = [
     "Nord Süd Ost West", "Erste zweite dritte", "Alpha Beta Gamma",
     "Eingabe Ausgabe", "Anfrage Antwort", "Senden Empfangen",
     "Kaffee und Tee", "Brot und Butter", "Salz und Pfeffer",
-    "Tag und Nacht", "Schwarz und weiß", "Heiß und kalt", "Auf und ab",
+    "Tag und Nacht", "Schwarz und weiss", "Heiss und kalt", "Auf und ab",
 ]
 
 NUMBERS_AND_CODES = [
@@ -200,6 +220,30 @@ SENTENCES_EN = [
     "Initialization complete.",
 ]
 
+# Gibberish sentences - forces true copy/echo, not semantic understanding
+GIBBERISH_SENTENCES = [
+    "The blurpix zanthor quexled over the flimzap.",
+    "Grobnak wibblyx snorfled the plonkus xyrpod.",
+    "When krazbit muffnixed, drazzle skronfed blibber.",
+    "Zwomp grindax fluxorped qwibble splonk vrazzle.",
+    "Nimbux glarfled triznak wompus blixtar zorfnik.",
+    "If krumple snazzixed, plorfin gruxoid flibbixed.",
+    "Quondar blurpix zanthor quexling flimzap grobnak.",
+    "asdfgh qwerty zxcvbn poiuyt lkjhgf mnbvcx.",
+    "The fl0rpz gr1nkx bl4rpq zw0nky kr1spx.",
+    "Blub123 xyz789 qrs456 abc-xy mno_pq rst.uv.",
+    "BLURP ZONK GRAX FLIB QUEX SNORF PLONK WIBZ.",
+    "bLuRpIx ZaNtHoR QuExLiNg fLiMzAp gRoBnAk WiBbLyX.",
+    "blurp-zant quex_flim grob.nak wibb;lyx snor:fle.",
+    "123blurp 456zant 789quex 012flim 345grob 678wibb.",
+    "Xyrpod krazbit muffnix drazzle skronf blibber zwomp.",
+    "Grindax fluxorp qwibble splonk vrazzle nimbux glarfle.",
+    "Triznak wompus blixtar zorfnik krumple snazzix plorfin.",
+    "qwerty123 asdf456 zxcv789 poiu012 lkjh345 mnbv678.",
+    "The gr0bnak fl1mzapped wh1le zant-hor qu3xled.",
+    "Snorfle_plonkus xyr.pod kraz;bit muff:nix drazzle!",
+]
+
 SENTENCES_DE = [
     "Dies ist ein Testsatz.",
     "MyPT ist bereit zu helfen.",
@@ -224,6 +268,22 @@ SENTENCES_DE = [
     "Gelegenheit macht Diebe",
 ]
 
+# German gibberish sentences
+GIBBERISH_SENTENCES_DE = [
+    "Der Blörpix zänthörte über den Quöxling.",
+    "Gröbnak wübblyx schnörflte den Plönkus xürpöd.",
+    "Wenn Kräzbit müffnixte, dräzzle skrönfte blübber.",
+    "Zwömp gründax flüxörpte qwübble splönk vräzzle.",
+    "äöüss qwerty zxcvbn poiuyt lkjhgf mnbvcx.",
+    "Der fl0rpz gr1nkx bl4rpq zw0nky kr1spx.",
+    "BLÖRP ZÖNK GRÄX FLÜB QUÖX SCHNÖRF PLÖNK WÜBZ.",
+    "bLöRpIx ZäNtHöR QuÖxLiNg fLüMzAp gRöBnAk WüBbLyX.",
+    "blörp-zänt quöx_flüm gröb.näk wübb;lyx schnör:fle.",
+    "123blörp 456zänt 789quöx 012flüm 345gröb 678wübb.",
+    "Xürpöd kräzbit müffnix dräzzle skrönf blübber zwömp.",
+    "Gründax flüxörp qwübble splönk vräzzle nümbux glärfle.",
+]
+
 
 def generate_echo_pairs(max_examples: int = None, seed: int = 42) -> List[Tuple[str, str, str]]:
     """Generate ALL unique echo instruction pairs (prefix × content combinations).
@@ -240,15 +300,18 @@ def generate_echo_pairs(max_examples: int = None, seed: int = 42) -> List[Tuple[
     # Combine all content pools
     en_content = (
         [(w, "word_en") for w in SINGLE_WORDS_EN] +
+        [(w, "gibberish_word") for w in GIBBERISH_WORDS] +
         [(p, "phrase_en") for p in PHRASES_EN] +
         [(n, "number") for n in NUMBERS_AND_CODES] +
-        [(s, "sentence_en") for s in SENTENCES_EN]
+        [(s, "sentence_en") for s in SENTENCES_EN] +
+        [(s, "gibberish_sentence") for s in GIBBERISH_SENTENCES]
     )
     
     de_content = (
         [(w, "word_de") for w in SINGLE_WORDS_DE] +
         [(p, "phrase_de") for p in PHRASES_DE] +
-        [(s, "sentence_de") for s in SENTENCES_DE]
+        [(s, "sentence_de") for s in SENTENCES_DE] +
+        [(s, "gibberish_sentence_de") for s in GIBBERISH_SENTENCES_DE]
     )
     
     # Generate ALL English combinations (prefix × content)
