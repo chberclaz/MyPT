@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
+from contextlib import nullcontext
 
 from core import load_model, GPT, Tokenizer
 from core.special_tokens import SPECIAL_TOKEN_STRINGS
@@ -184,38 +185,56 @@ def greedy_is_greedy_test(model: GPT, tokenizer: Tokenizer, verbose: bool = Fals
 
 
 def kv_cache_parity_prefill_test(model: GPT, tokenizer: Tokenizer, verbose: bool = False) -> bool:
-    """Test that KV-cache prefill matches non-cached forward."""
+    """Test that KV-cache prefill matches non-cached forward.
+    
+    Uses EXACT same settings as model.generate():
+    - fp16 autocast on CUDA (line 1166 in model.py)
+    - cache_dtype = model weight dtype (line 1198)
+    - FAST MODE preallocated kv_cache
+    """
     print_header("KV-Cache Parity (Prefill) Test")
     
     prompt = "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>What is 2+2?</myPT_user><myPT_assistant>"
     
     ids = tokenizer.encode(prompt)
-    x = torch.tensor([ids], dtype=torch.long, device=model.config.device)
+    device = model.config.device
+    x = torch.tensor([ids], dtype=torch.long, device=device)
     
     model.eval()
     
-    # Determine autocast dtype
-    weight_dtype = next(model.parameters()).dtype
-    device_type = model.config.device if isinstance(model.config.device, str) else str(model.config.device)
-    
-    if 'cuda' in device_type:
-        if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
-            amp_dtype = torch.bfloat16
-        elif weight_dtype == torch.float16:
-            amp_dtype = torch.float16
-        else:
-            amp_dtype = torch.float32
-        ctx = torch.amp.autocast('cuda', dtype=amp_dtype)
+    # EXACT match to generate() line 1163-1166:
+    # device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+    # ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16) if device_type == "cuda" else nullcontext()
+    device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+    if device_type == "cuda":
+        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16)
     else:
-        ctx = torch.amp.autocast('cpu', enabled=False)
+        ctx = nullcontext()
+    
+    # EXACT match to generate() line 1196-1204:
+    # cache_dtype = next(self.parameters()).dtype
+    nh = model.config.n_head
+    hs = model.config.n_embd // model.config.n_head
+    cache_dtype = next(model.parameters()).dtype
+    
+    kv_cache = []
+    for _ in range(model.config.n_layer):
+        k_cache = torch.empty((1, nh, model.config.block_size, hs), device=device, dtype=cache_dtype)
+        v_cache = torch.empty((1, nh, model.config.block_size, hs), device=device, dtype=cache_dtype)
+        kv_cache.append((k_cache, v_cache))
+    
+    if verbose:
+        print(f"    device_type: {device_type}")
+        print(f"    autocast dtype: torch.float16 (same as generate)")
+        print(f"    cache_dtype: {cache_dtype} (from model weights)")
     
     with torch.no_grad(), ctx:
-        # Non-cached forward
-        logits_no_cache, _ = model(x, use_cache=False)
+        # Non-cached forward (returns logits, loss, present_kv)
+        logits_no_cache, _, _ = model(x, use_cache=False)
         last_logits_no_cache = logits_no_cache[0, -1, :]
         
-        # Cached prefill
-        logits_cache, kv_cache = model(x, use_cache=True)
+        # Cached prefill (FAST MODE: use kv_cache parameter)
+        logits_cache, _, present = model(x, use_cache=True, kv_cache=kv_cache, cache_pos=0)
         last_logits_cache = logits_cache[0, -1, :]
     
     # Compare
@@ -240,7 +259,13 @@ def kv_cache_parity_prefill_test(model: GPT, tokenizer: Tokenizer, verbose: bool
 
 
 def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8, verbose: bool = False) -> bool:
-    """Test that KV-cache multi-step decode matches non-cached."""
+    """Test that KV-cache multi-step decode matches non-cached.
+    
+    Uses EXACT same settings as model.generate():
+    - fp16 autocast on CUDA (line 1166 in model.py)
+    - cache_dtype = model weight dtype (line 1198)
+    - FAST MODE preallocated kv_cache
+    """
     print_header(f"KV-Cache Parity (Multi-Step, {steps} steps) Test")
     
     prompt = "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Say hello.</myPT_user><myPT_assistant>"
@@ -250,40 +275,48 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
     
     model.eval()
     
-    # Determine autocast dtype
-    weight_dtype = next(model.parameters()).dtype
-    device_type = device if isinstance(device, str) else str(device)
-    
-    if 'cuda' in device_type:
-        if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
-            amp_dtype = torch.bfloat16
-        elif weight_dtype == torch.float16:
-            amp_dtype = torch.float16
-        else:
-            amp_dtype = torch.float32
-        ctx = torch.amp.autocast('cuda', dtype=amp_dtype)
+    # EXACT match to generate() line 1163-1166
+    device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+    if device_type == "cuda":
+        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16)
     else:
-        ctx = torch.amp.autocast('cpu', enabled=False)
+        ctx = nullcontext()
+    
+    # EXACT match to generate() line 1196-1204
+    nh = model.config.n_head
+    hs = model.config.n_embd // model.config.n_head
+    cache_dtype = next(model.parameters()).dtype
+    
+    kv_cache = []
+    for _ in range(model.config.n_layer):
+        k_cache = torch.empty((1, nh, model.config.block_size, hs), device=device, dtype=cache_dtype)
+        v_cache = torch.empty((1, nh, model.config.block_size, hs), device=device, dtype=cache_dtype)
+        kv_cache.append((k_cache, v_cache))
+    cache_pos = 0
     
     # Track generated tokens
-    generated_cache = list(ids)
     generated_no_cache = list(ids)
-    kv_cache = None
     
     all_passed = True
     step = 0
     
-    # Get stop token IDs from tokenizer
+    # Get stop token IDs from tokenizer (not hardcoded like generate() does!)
     stop_ids = {
         tokenizer.special_tokens.get("myPT_assistant_close"),
         tokenizer.special_tokens.get("myPT_eot"),
     }
     stop_ids = {s for s in stop_ids if s is not None}
     
+    if verbose:
+        print(f"    device_type: {device_type}")
+        print(f"    cache_dtype: {cache_dtype}")
+        print(f"    stop_ids: {stop_ids}")
+    
     with torch.no_grad(), ctx:
-        # Prefill with cache
+        # Prefill with cache (FAST MODE)
         x_cache = torch.tensor([ids], dtype=torch.long, device=device)
-        logits_cache, kv_cache = model(x_cache, use_cache=True)
+        logits_cache, _, present = model(x_cache, use_cache=True, kv_cache=kv_cache, cache_pos=cache_pos)
+        kv_cache, cache_pos = present
         
         for step in range(steps):
             # Get next token from cache path
@@ -295,7 +328,7 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
             # Trim to block_size if needed
             if x_no_cache.shape[1] > model.config.block_size:
                 x_no_cache = x_no_cache[:, -model.config.block_size:]
-            logits_no_cache, _ = model(x_no_cache, use_cache=False)
+            logits_no_cache, _, _ = model(x_no_cache, use_cache=False)
             last_logits_no_cache = logits_no_cache[0, -1, :]
             next_token_no_cache = last_logits_no_cache.argmax().item()
             
@@ -318,13 +351,13 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
                     print(f"    Stopped at step {step} (stop token)")
                 break
             
-            # Append token and continue
-            generated_cache.append(next_token_cache)
-            generated_no_cache.append(next_token_no_cache)
+            # Append token to no-cache context
+            generated_no_cache.append(next_token_cache)
             
-            # Advance cache with just the new token
+            # Advance cache with just the new token (FAST MODE)
             x_new = torch.tensor([[next_token_cache]], dtype=torch.long, device=device)
-            logits_cache, kv_cache = model(x_new, use_cache=True, kv_cache=kv_cache)
+            logits_cache, _, present = model(x_new, use_cache=True, kv_cache=kv_cache, cache_pos=cache_pos)
+            kv_cache, cache_pos = present
     
     if all_passed:
         print_pass(f"Multi-step parity ({step+1} steps)")
