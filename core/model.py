@@ -1162,8 +1162,23 @@ class GPT(nn.Module):
         device = self.config.device
         device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
 
-        # Autocast for inference: fp16 on consumer CUDA; otherwise no autocast
-        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16) if device_type == "cuda" else nullcontext()
+        # Autocast dtype should match model weights for consistency
+        # bf16 weights + bf16 supported -> bf16 autocast
+        # fp16 weights -> fp16 autocast
+        # fp32 weights on CUDA -> fp16 autocast (mixed precision)
+        # CPU -> no autocast
+        if device_type == "cuda":
+            weight_dtype = next(self.parameters()).dtype
+            if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
+                autocast_dtype = torch.bfloat16
+            elif weight_dtype == torch.float16:
+                autocast_dtype = torch.float16
+            else:
+                # fp32 weights: use fp16 for speed (standard mixed precision)
+                autocast_dtype = torch.float16
+            ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
+        else:
+            ctx = nullcontext()
 
         ctx_ids = self.encode(prompt)
         if len(ctx_ids) == 0:

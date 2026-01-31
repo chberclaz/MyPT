@@ -202,20 +202,26 @@ def kv_cache_parity_prefill_test(model: GPT, tokenizer: Tokenizer, verbose: bool
     
     model.eval()
     
-    # EXACT match to generate() line 1163-1166:
-    # device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
-    # ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16) if device_type == "cuda" else nullcontext()
+    # EXACT match to generate() autocast logic:
+    # Autocast dtype follows model weight dtype
     device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+    weight_dtype = next(model.parameters()).dtype
+    autocast_dtype = None
     if device_type == "cuda":
-        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16)
+        if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
+            autocast_dtype = torch.bfloat16
+        elif weight_dtype == torch.float16:
+            autocast_dtype = torch.float16
+        else:
+            autocast_dtype = torch.float16
+        ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
     else:
         ctx = nullcontext()
     
-    # EXACT match to generate() line 1196-1204:
-    # cache_dtype = next(self.parameters()).dtype
+    # EXACT match to generate() cache setup
     nh = model.config.n_head
     hs = model.config.n_embd // model.config.n_head
-    cache_dtype = next(model.parameters()).dtype
+    cache_dtype = weight_dtype  # cache_dtype = next(self.parameters()).dtype
     
     kv_cache = []
     for _ in range(model.config.n_layer):
@@ -225,8 +231,9 @@ def kv_cache_parity_prefill_test(model: GPT, tokenizer: Tokenizer, verbose: bool
     
     if verbose:
         print(f"    device_type: {device_type}")
-        print(f"    autocast dtype: torch.float16 (same as generate)")
-        print(f"    cache_dtype: {cache_dtype} (from model weights)")
+        print(f"    weight_dtype: {weight_dtype}")
+        print(f"    autocast dtype: {autocast_dtype}")
+        print(f"    cache_dtype: {cache_dtype}")
     
     with torch.no_grad(), ctx:
         # Non-cached forward (returns logits, loss, present_kv)
@@ -275,17 +282,26 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
     
     model.eval()
     
-    # EXACT match to generate() line 1163-1166
+    # EXACT match to generate() autocast logic:
+    # Autocast dtype follows model weight dtype
     device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+    weight_dtype = next(model.parameters()).dtype
+    autocast_dtype = None
     if device_type == "cuda":
-        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16)
+        if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
+            autocast_dtype = torch.bfloat16
+        elif weight_dtype == torch.float16:
+            autocast_dtype = torch.float16
+        else:
+            autocast_dtype = torch.float16
+        ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
     else:
         ctx = nullcontext()
     
-    # EXACT match to generate() line 1196-1204
+    # EXACT match to generate() cache setup
     nh = model.config.n_head
     hs = model.config.n_embd // model.config.n_head
-    cache_dtype = next(model.parameters()).dtype
+    cache_dtype = weight_dtype  # cache_dtype = next(self.parameters()).dtype
     
     kv_cache = []
     for _ in range(model.config.n_layer):
@@ -300,7 +316,7 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
     all_passed = True
     step = 0
     
-    # Get stop token IDs from tokenizer (not hardcoded like generate() does!)
+    # Get stop token IDs from tokenizer
     stop_ids = {
         tokenizer.special_tokens.get("myPT_assistant_close"),
         tokenizer.special_tokens.get("myPT_eot"),
@@ -390,16 +406,23 @@ def strict_greedy_test(model: GPT, tokenizer: Tokenizer, verbose: bool = False) 
     device = model.config.device
     ids = tokenizer.encode(prompt)
     
-    # Setup same as generate()
+    # EXACT match to generate() autocast logic
     device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+    weight_dtype = next(model.parameters()).dtype
     if device_type == "cuda":
-        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16)
+        if weight_dtype == torch.bfloat16 and torch.cuda.is_bf16_supported():
+            autocast_dtype = torch.bfloat16
+        elif weight_dtype == torch.float16:
+            autocast_dtype = torch.float16
+        else:
+            autocast_dtype = torch.float16
+        ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
     else:
         ctx = nullcontext()
     
     nh = model.config.n_head
     hs = model.config.n_embd // model.config.n_head
-    cache_dtype = next(model.parameters()).dtype
+    cache_dtype = weight_dtype
     
     kv_cache = []
     for _ in range(model.config.n_layer):
