@@ -355,7 +355,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Generate diverse echo instruction dataset")
-    parser.add_argument("--max_examples", type=int, default=None, help="Optional cap on examples (default: generate all)")
+    parser.add_argument("--max_examples", type=int, default=4300, help="Cap on examples (default: 4300)")
     parser.add_argument("--output_dir", type=str, default="data/sft_echo", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
@@ -364,8 +364,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / "mypt_echo_diverse.jsonl"
     
-    # Generate pairs (all unique combinations)
-    print(f"Generating all unique echo instruction combinations...")
+    # Generate pairs (capped to max_examples)
+    print(f"Generating echo instruction combinations (max: {args.max_examples})...")
     pairs = generate_echo_pairs(max_examples=args.max_examples, seed=args.seed)
     
     # Create episodes
