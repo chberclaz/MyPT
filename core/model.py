@@ -1170,9 +1170,14 @@ class GPT(nn.Module):
             ctx_ids = [0]
 
         # Stop tokens handling
-        # Default: stop on </myPT_assistant> (50264) and <myPT_eot> (50271)
+        # Default: stop on </myPT_assistant> and <myPT_eot>
         # These are the natural end-of-response tokens for MyPT conversations
-        DEFAULT_STOP_TOKENS = {50264, 50271}  # </myPT_assistant>, <myPT_eot>
+        # Use tokenizer lookup instead of hardcoded IDs for robustness
+        DEFAULT_STOP_TOKENS = {
+            self.tokenizer.special_tokens.get("myPT_assistant_close"),
+            self.tokenizer.special_tokens.get("myPT_eot"),
+        }
+        DEFAULT_STOP_TOKENS = {t for t in DEFAULT_STOP_TOKENS if t is not None}
         
         if stop_tokens is None:
             stop_tokens = DEFAULT_STOP_TOKENS if use_default_stop_tokens else set()
@@ -1311,7 +1316,7 @@ class GPT(nn.Module):
                 remove_mask.scatter_(1, sorted_indices, sorted_indices_to_remove)
                 work_logits = work_logits.masked_fill(remove_mask, float("-inf"))
             
-            no_repeat_ngram=3
+            no_repeat_ngram=0
             if no_repeat_ngram and no_repeat_ngram > 0:
                 # this expects logits shape (1, V)
                 self._ban_repeat_ngrams(work_logits, out_ids, int(no_repeat_ngram))
