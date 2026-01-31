@@ -57,13 +57,13 @@ def generate_pairs() -> List[Tuple[str, str]]:
         "rejected", "accepted", "ready", "waiting", "loading", "processing",
         "saved", "deleted", "updated", "created", "found", "missing", "valid",
         "invalid", "enabled", "disabled", "active", "inactive", "online", "offline",
-    ]
+        "asdfg", "Blubi", "gugududu", "as1278", "trzui", "90Adj", "mnbyx10-", "optioart", "klü.", "2yx1;", "gjkl", "opösder", "08412", "xcfsd87", "lähj31","dada", "gugu", "projolo", "79SADsa", "nmxoepr", "ssadcxyop", "ffseiopasfjvn", "fjklöasopqwü", "vvbshakl", "test",    ]
     
     # Generate SAY combinations
     for template in SAY_TEMPLATES:
         for word in BASIC_WORDS:
             q = template.format(word=word)
-            a = f"{word.capitalize()}."
+            a = f"{word}."
             pairs.append((q, a))
     
     # ==========================================================================

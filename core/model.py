@@ -623,6 +623,19 @@ class GPT(nn.Module):
                     state_dict[k] = v.to(target_dtype)
         
         model.load_state_dict(state_dict)
+        
+        # Verify tie_weights after loading
+        if getattr(config, 'tie_weights', False):
+            # Ensure weight tying is preserved after load
+            # When tie_weights=True, __init__ ties them, but load_state_dict may have loaded
+            # both separately. Re-tie them explicitly to ensure consistency.
+            if model.lm_head.weight is not model.token_embedding_table.weight:
+                # Weights were not tied (likely loaded from old checkpoint)
+                # Re-tie by copying embedding to lm_head (embedding is usually more trained)
+                model.lm_head.weight = model.token_embedding_table.weight
+                print("Warning: Re-tied weights after load (checkpoint may have had separate weights)")
+            else:
+                print("Weight tying verified: embedding and lm_head share weights")
 
         # Move model to device and dtype
         if effective_dtype is not None:
@@ -783,7 +796,8 @@ class GPT(nn.Module):
             eval_iters=50, checkpoint_dir=None, start_step=0, learning_rate=None,
             save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0,
             use_amp=True, amp_dtype='bf16', eval_data_loaders=None, log_file=None,
-            eval_seed=None, config_file=None, dataset_dir=None):
+            eval_seed=None, config_file=None, dataset_dir=None,
+            eval_prompts_file=None, eval_max_new_tokens=64):
         """
         Main training loop - the model trains itself!
         
@@ -834,6 +848,15 @@ class GPT(nn.Module):
         import datetime
         
         self.train()
+        
+        # Load eval prompts if provided (for training-time inference testing)
+        eval_prompts = None
+        if eval_prompts_file is not None:
+            import json as json_mod
+            with open(eval_prompts_file, 'r') as f:
+                eval_prompts_data = json_mod.load(f)
+            eval_prompts = eval_prompts_data.get('prompts', {})
+            print(f"Loaded {len(eval_prompts)} eval prompts from {eval_prompts_file}")
         
         # Determine save dtype for eval checkpoints: explicit param > config > None (model dtype)
         effective_save_dtype = save_dtype if save_dtype is not None else self.config.save_dtype
@@ -966,6 +989,51 @@ class GPT(nn.Module):
                         eval_loss = self.estimate_loss(eval_loader, eval_iters, splits=['val'])
                         eval_losses[eval_name] = float(eval_loss['val'])
                         log_entry[f"eval_{eval_name}"] = float(eval_loss['val'])
+                
+                # Run inference evaluation if eval prompts provided
+                if eval_prompts is not None:
+                    self.eval()
+                    log_entry["gen"] = {}
+                    log_entry["gen_nocache"] = {}
+                    cache_mismatches = []
+                    
+                    for prompt_name, prompt_text in eval_prompts.items():
+                        try:
+                            # Cached generation (normal path)
+                            output_cache = self.generate(
+                                prompt_text,
+                                max_new_tokens=eval_max_new_tokens,
+                                temperature=0.0,
+                                top_k=0,
+                                top_p=1.0,
+                                repetition_penalty=1.0,
+                                use_default_stop_tokens=True
+                            )
+                            generated_cache = output_cache[len(prompt_text):]
+                            log_entry["gen"][prompt_name] = generated_cache
+                            
+                            # No-cache generation (reference)
+                            output_nocache = self.generate_nocache_greedy(
+                                prompt_text,
+                                max_new_tokens=eval_max_new_tokens
+                            )
+                            generated_nocache = output_nocache[len(prompt_text):]
+                            log_entry["gen_nocache"][prompt_name] = generated_nocache
+                            
+                            # Check for mismatches
+                            if generated_cache != generated_nocache:
+                                cache_mismatches.append(prompt_name)
+                                
+                        except Exception as e:
+                            log_entry["gen"][prompt_name] = f"ERROR: {str(e)}"
+                            log_entry["gen_nocache"][prompt_name] = f"ERROR: {str(e)}"
+                    
+                    # Warn if cache/nocache diverge
+                    if cache_mismatches:
+                        print(f"  ⚠️  CACHE MISMATCH on: {cache_mismatches}")
+                        log_entry["cache_mismatches"] = cache_mismatches
+                    
+                    self.train()
                 
                 # _mem("after_estimate_before_save")
                 # gpu_mem("after_estimate_before_save")
@@ -1407,13 +1475,57 @@ class GPT(nn.Module):
 
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+            logits, _, _ = self(idx_cond)
             logits = logits[:, -1, :]
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
         
         return self.decode(idx[0].tolist())
+
+    @torch.inference_mode()
+    def generate_nocache_greedy(self, prompt: str, max_new_tokens: int) -> str:
+        """
+        Greedy generation WITHOUT KV-cache (for debugging/verification).
+        
+        This is slower but guaranteed correct. Use to verify cached generation
+        produces the same results.
+        
+        Args:
+            prompt: Input text
+            max_new_tokens: Maximum tokens to generate
+            
+        Returns:
+            Generated text (prompt + completion)
+        """
+        device = self.config.device
+        
+        # Get stop tokens from tokenizer
+        stop_tokens = {
+            self.tokenizer.special_tokens.get("myPT_assistant_close"),
+            self.tokenizer.special_tokens.get("myPT_eot"),
+        }
+        stop_tokens = {t for t in stop_tokens if t is not None}
+        
+        ctx_ids = self.encode(prompt)
+        out_ids = list(ctx_ids)
+        
+        for _ in range(max_new_tokens):
+            # Use full context (truncated to block_size)
+            idx_cond = out_ids[-self.config.block_size:]
+            x = torch.tensor([idx_cond], dtype=torch.long, device=device)
+            
+            # Forward WITHOUT cache
+            logits, _, _ = self(x, use_cache=False)
+            
+            # Pure argmax (greedy)
+            next_token = logits[0, -1, :].argmax().item()
+            out_ids.append(next_token)
+            
+            if next_token in stop_tokens:
+                break
+        
+        return self.decode(out_ids)
 
     # ---- Convenience helpers to avoid juggling tokenizer outside the model ----
     def encode(self, text: str) -> list[int]:

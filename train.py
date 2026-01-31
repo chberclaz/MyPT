@@ -85,6 +85,12 @@ def parse_args():
                         choices=["fp32", "float32", "bf16", "bfloat16", "fp16", "float16"],
                         help="Dtype for saving checkpoints (default: use model dtype)")
     
+    # Eval-time generation (for SFT training verification)
+    parser.add_argument("--eval_prompts_file", type=str, default=None,
+                        help="JSON file with eval prompts for training-time inference testing")
+    parser.add_argument("--eval_max_new_tokens", type=int, default=64,
+                        help="Max tokens to generate during eval (default: 64)")
+    
     return parser.parse_args()
 
 
@@ -475,7 +481,9 @@ def main():
         log_file=log_file,
         eval_seed=eval_seed,
         config_file=args.config_file,
-        dataset_dir=args.dataset_dir
+        dataset_dir=args.dataset_dir,
+        eval_prompts_file=args.eval_prompts_file,
+        eval_max_new_tokens=args.eval_max_new_tokens
     )
     
     print("\n========== Training Complete ==========")

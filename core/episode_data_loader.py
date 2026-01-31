@@ -338,6 +338,10 @@ class GPTEpisodeDataLoader:
         """Get padded/truncated sample from a single episode.
         
         Includes defensive assertions for loss-mask alignment.
+        
+        Truncation strategy:
+        - If episode <= L tokens: use entire episode, pad if needed
+        - If episode > L tokens: use LAST L tokens (ensures closing tags present)
         """
         state = self._epoch_state[split]
         shard_idx, ep_idx = state['global_episodes'][global_idx]
@@ -349,9 +353,17 @@ class GPTEpisodeDataLoader:
         
         L = self.config.block_size + 1  # Need L tokens for x and y
         
-        # Slice tokens
-        actual_len = min(length, L)
-        seq = np.array(shard['tokens'][start:start + actual_len], dtype=np.int64)
+        # Slice tokens - PRESERVE END for long episodes (ensures closers are present)
+        if length <= L:
+            # Episode fits: use from start
+            slice_start = start
+            actual_len = length
+        else:
+            # Episode too long: use LAST L tokens (preserves closing tags)
+            slice_start = start + (length - L)
+            actual_len = L
+        
+        seq = np.array(shard['tokens'][slice_start:slice_start + actual_len], dtype=np.int64)
         
         # Track original length before padding
         original_len = len(seq)
@@ -366,8 +378,8 @@ class GPTEpisodeDataLoader:
         y = seq[1:]   # (block_size,)
         
         if self.use_loss_mask and shard['mask'] is not None:
-            # Slice mask
-            m_raw = np.array(shard['mask'][start:start + actual_len], dtype=np.float32)
+            # Slice mask (same range as tokens)
+            m_raw = np.array(shard['mask'][slice_start:slice_start + actual_len], dtype=np.float32)
             
             # DEFENSIVE ASSERTION 1: mask length must match tokens length
             assert len(m_raw) == original_len, (

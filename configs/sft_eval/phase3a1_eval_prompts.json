@@ -1,0 +1,20 @@
+{
+  "description": "Phase 3a-1 format lock evaluation prompts. Must match training data format exactly.",
+  "system_prompt": "You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.",
+  "prompts": {
+    "say_ok": "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Say OK.</myPT_user><myPT_assistant>",
+    "say_hello": "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Say Hello.</myPT_user><myPT_assistant>",
+    "math_5_7": "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>What is 5 + 7?</myPT_user><myPT_assistant>",
+    "capital_de": "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Capital of Germany?</myPT_user><myPT_assistant>",
+    "echo_banana": "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Say Banana.</myPT_user><myPT_assistant>",
+    "copy_nonsense": "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Say Galigali.</myPT_user><myPT_assistant>"
+  },
+  "expected_outputs": {
+    "say_ok": "OK.",
+    "say_hello": "Hello.",
+    "math_5_7": "12.",
+    "capital_de": "Berlin.",
+    "echo_banana": "Banana.",
+    "copy_nonsense": "Galigali."
+  }
+}
