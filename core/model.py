@@ -1274,63 +1274,67 @@ class GPT(nn.Module):
 
 
         out_ids = list(ctx_ids)
+        
+        # STRICT_GREEDY: when temperature <= 0, skip ALL filters and do pure argmax
+        # This ensures truly deterministic output matching what model learned
+        STRICT_GREEDY = (temperature is None) or (float(temperature) <= 0.0)
 
         for _ in range(max_new_tokens):
-            base_logits = logits  # fp16/fp32 model dtype
-            work_logits = logits.float()  # fp32 for filtering/sampling stability
-
-            # temperature
-            if temperature is not None and temperature > 0 and temperature != 1.0:
-                work_logits = work_logits / float(temperature)
-
-            # repetition penalty (bounded + unique)
-            if use_rep and recent_n > 0 and recent_len > 0:
-                recent_tokens = recent[:recent_len] if recent_len < recent_n else recent
-                uniq = torch.unique(recent_tokens)
-                # operate on fp32 work_logits
-                penalty_logits = work_logits.index_select(1, uniq)
-                penalty_logits = torch.where(
-                    penalty_logits > 0,
-                    penalty_logits / float(repetition_penalty),
-                    penalty_logits * float(repetition_penalty),
-                )
-                work_logits.scatter_(1, uniq.unsqueeze(0), penalty_logits)
-
-            # top-k
-            if top_k and top_k > 0:
-                top_k_actual = min(int(top_k), work_logits.size(-1))
-                v, _ = torch.topk(work_logits, top_k_actual)
-                work_logits = work_logits.masked_fill(work_logits < v[:, [-1]], float("-inf"))
-
-            # top-p (robust mask construction)
-            if top_p is not None and float(top_p) < 1.0:
-                sorted_logits, sorted_indices = torch.sort(work_logits, descending=True)
-                probs_sorted = F.softmax(sorted_logits, dim=-1)
-                cumulative_probs = torch.cumsum(probs_sorted, dim=-1)
-
-                sorted_indices_to_remove = cumulative_probs > float(top_p)
-                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                sorted_indices_to_remove[..., 0] = 0
-
-                remove_mask = torch.zeros_like(work_logits, dtype=torch.bool)
-                remove_mask.scatter_(1, sorted_indices, sorted_indices_to_remove)
-                work_logits = work_logits.masked_fill(remove_mask, float("-inf"))
-            
-            no_repeat_ngram=0
-            if no_repeat_ngram and no_repeat_ngram > 0:
-                # this expects logits shape (1, V)
-                self._ban_repeat_ngrams(work_logits, out_ids, int(no_repeat_ngram))
-
-
-            # --- SAFETY: if everything got masked, fall back ---
-            if not torch.isfinite(work_logits).any():
-                # fall back to base logits (also fp32), no filtering
-                work_logits = base_logits.float()
-
-            # If temperature <= 0, do GREEDY decoding (deterministic)
-            if temperature is None or float(temperature) <= 0.0:
-                idx_next = torch.argmax(work_logits, dim=-1, keepdim=True)
+            # STRICT_GREEDY: pure argmax on raw logits, no filtering whatsoever
+            if STRICT_GREEDY:
+                idx_next = torch.argmax(logits, dim=-1, keepdim=True)
             else:
+                base_logits = logits  # fp16/fp32 model dtype
+                work_logits = logits.float()  # fp32 for filtering/sampling stability
+
+                # temperature
+                if temperature is not None and temperature > 0 and temperature != 1.0:
+                    work_logits = work_logits / float(temperature)
+
+                # repetition penalty (bounded + unique)
+                if use_rep and recent_n > 0 and recent_len > 0:
+                    recent_tokens = recent[:recent_len] if recent_len < recent_n else recent
+                    uniq = torch.unique(recent_tokens)
+                    # operate on fp32 work_logits
+                    penalty_logits = work_logits.index_select(1, uniq)
+                    penalty_logits = torch.where(
+                        penalty_logits > 0,
+                        penalty_logits / float(repetition_penalty),
+                        penalty_logits * float(repetition_penalty),
+                    )
+                    work_logits.scatter_(1, uniq.unsqueeze(0), penalty_logits)
+
+                # top-k
+                if top_k and top_k > 0:
+                    top_k_actual = min(int(top_k), work_logits.size(-1))
+                    v, _ = torch.topk(work_logits, top_k_actual)
+                    work_logits = work_logits.masked_fill(work_logits < v[:, [-1]], float("-inf"))
+
+                # top-p (robust mask construction)
+                if top_p is not None and float(top_p) < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(work_logits, descending=True)
+                    probs_sorted = F.softmax(sorted_logits, dim=-1)
+                    cumulative_probs = torch.cumsum(probs_sorted, dim=-1)
+
+                    sorted_indices_to_remove = cumulative_probs > float(top_p)
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = 0
+
+                    remove_mask = torch.zeros_like(work_logits, dtype=torch.bool)
+                    remove_mask.scatter_(1, sorted_indices, sorted_indices_to_remove)
+                    work_logits = work_logits.masked_fill(remove_mask, float("-inf"))
+                
+                no_repeat_ngram=0
+                if no_repeat_ngram and no_repeat_ngram > 0:
+                    # this expects logits shape (1, V)
+                    self._ban_repeat_ngrams(work_logits, out_ids, int(no_repeat_ngram))
+
+
+                # --- SAFETY: if everything got masked, fall back ---
+                if not torch.isfinite(work_logits).any():
+                    # fall back to base logits (also fp32), no filtering
+                    work_logits = base_logits.float()
+
                 # convert to probs safely
                 probs = F.softmax(work_logits, dim=-1)
 

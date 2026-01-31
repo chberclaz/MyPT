@@ -365,6 +365,130 @@ def kv_cache_parity_steps_test(model: GPT, tokenizer: Tokenizer, steps: int = 8,
     return all_passed
 
 
+def strict_greedy_test(model: GPT, tokenizer: Tokenizer, verbose: bool = False) -> bool:
+    """Test that temperature<=0 produces pure argmax (no filters applied).
+    
+    Compares model.generate(temp=0) output against manual pure argmax on raw logits.
+    If STRICT_GREEDY is working, they must match exactly.
+    """
+    print_header("Strict Greedy Test")
+    
+    prompt = "<myPT_system>You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly.</myPT_system><myPT_user>Say hello.</myPT_user><myPT_assistant>"
+    
+    # Get output from generate() with temperature=0
+    gen_output = model.generate(
+        prompt=prompt,
+        max_new_tokens=10,
+        temperature=0.0,
+        top_k=50,  # These should be IGNORED in STRICT_GREEDY
+        top_p=0.9,  # These should be IGNORED in STRICT_GREEDY
+        repetition_penalty=1.5,  # This should be IGNORED in STRICT_GREEDY
+    )
+    gen_tokens = tokenizer.encode(gen_output)[len(tokenizer.encode(prompt)):]
+    
+    # Manually compute pure argmax tokens
+    device = model.config.device
+    ids = tokenizer.encode(prompt)
+    
+    # Setup same as generate()
+    device_type = "cuda" if isinstance(device, str) and "cuda" in device else "cpu"
+    if device_type == "cuda":
+        ctx = torch.amp.autocast(device_type=device_type, dtype=torch.float16)
+    else:
+        ctx = nullcontext()
+    
+    nh = model.config.n_head
+    hs = model.config.n_embd // model.config.n_head
+    cache_dtype = next(model.parameters()).dtype
+    
+    kv_cache = []
+    for _ in range(model.config.n_layer):
+        k_cache = torch.empty((1, nh, model.config.block_size, hs), device=device, dtype=cache_dtype)
+        v_cache = torch.empty((1, nh, model.config.block_size, hs), device=device, dtype=cache_dtype)
+        kv_cache.append((k_cache, v_cache))
+    cache_pos = 0
+    
+    stop_ids = {
+        tokenizer.special_tokens.get("myPT_assistant_close"),
+        tokenizer.special_tokens.get("myPT_eot"),
+    }
+    
+    manual_tokens = []
+    model.eval()
+    
+    with torch.no_grad(), ctx:
+        x = torch.tensor([ids], dtype=torch.long, device=device)
+        logits, _, present = model(x, use_cache=True, kv_cache=kv_cache, cache_pos=cache_pos)
+        kv_cache, cache_pos = present
+        
+        for _ in range(10):
+            # Pure argmax on RAW logits (no filtering)
+            next_token = logits[0, -1, :].argmax().item()
+            manual_tokens.append(next_token)
+            
+            if next_token in stop_ids:
+                break
+            
+            x_new = torch.tensor([[next_token]], dtype=torch.long, device=device)
+            logits, _, present = model(x_new, use_cache=True, kv_cache=kv_cache, cache_pos=cache_pos)
+            kv_cache, cache_pos = present
+    
+    if verbose:
+        print(f"    generate() output: {gen_tokens}")
+        print(f"    manual argmax:     {manual_tokens}")
+        print(f"    generate() text: '{tokenizer.decode(gen_tokens)}'")
+        print(f"    manual text:     '{tokenizer.decode(manual_tokens)}'")
+    
+    # Compare
+    if gen_tokens == manual_tokens:
+        print_pass("STRICT_GREEDY: generate(temp=0) matches pure argmax")
+        return True
+    else:
+        print_fail("STRICT_GREEDY", f"generate() tokens don't match pure argmax")
+        print(f"      generate(): {gen_tokens}")
+        print(f"      manual:     {manual_tokens}")
+        return False
+
+
+def stop_token_lookup_test(model: GPT, tokenizer: Tokenizer, verbose: bool = False) -> bool:
+    """Test that generate() uses tokenizer-derived stop tokens, not hardcoded IDs."""
+    print_header("Stop Token Lookup Test")
+    
+    # Get what the tokenizer reports
+    expected_assistant_close = tokenizer.special_tokens.get("myPT_assistant_close")
+    expected_eot = tokenizer.special_tokens.get("myPT_eot")
+    
+    if verbose:
+        print(f"    Tokenizer reports:")
+        print(f"      myPT_assistant_close: {expected_assistant_close}")
+        print(f"      myPT_eot: {expected_eot}")
+    
+    # Verify these match the known correct values
+    # (This would catch if token registration order changed)
+    if expected_assistant_close != 50264:
+        print_fail("assistant_close ID", f"Expected 50264, got {expected_assistant_close}")
+        return False
+    
+    if expected_eot != 50271:
+        print_fail("eot ID", f"Expected 50271, got {expected_eot}")
+        return False
+    
+    # Test that generation actually stops on these tokens
+    prompt = "<myPT_system>Test</myPT_system><myPT_user>Say OK.</myPT_user><myPT_assistant>"
+    output = model.generate(prompt, max_new_tokens=50, temperature=0.0)
+    
+    # Check output ends with </myPT_assistant> (the stop token)
+    if "</myPT_assistant>" in output or "<myPT_eot>" in output:
+        if verbose:
+            response = output[len(prompt):]
+            print(f"    Generation stopped correctly: '{response}'")
+        print_pass("Stop tokens are correctly derived from tokenizer")
+        return True
+    else:
+        print_fail("Stop token", f"Generation didn't stop on expected tokens: '{output[len(prompt):]}'")
+        return False
+
+
 def print_model_info(model: GPT, tokenizer: Tokenizer):
     """Print model and tokenizer info."""
     print_header("Model & Tokenizer Info")
@@ -410,6 +534,8 @@ def main():
     results["kv_cache_prefill"] = kv_cache_parity_prefill_test(model, tokenizer, args.verbose)
     results["kv_cache_steps"] = kv_cache_parity_steps_test(model, tokenizer, steps=8, verbose=args.verbose)
     results["greedy_determinism"] = greedy_is_greedy_test(model, tokenizer, args.verbose)
+    results["strict_greedy"] = strict_greedy_test(model, tokenizer, args.verbose)
+    results["stop_token_lookup"] = stop_token_lookup_test(model, tokenizer, args.verbose)
     
     # Summary
     print_header("SUMMARY")
