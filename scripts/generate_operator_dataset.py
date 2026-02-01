@@ -31,59 +31,75 @@ from collections import defaultdict
 # TEMPLATE DEFINITIONS - STRICTLY SPLIT BETWEEN TRAIN AND VAL
 # =============================================================================
 
-# COPY operator templates
+# COPY operator templates (mix of with/without colons to avoid bias)
 COPY_TEMPLATES_TRAIN = [
+    # With colon
     "Repeat exactly: {X}",
     "Say this back: {X}",
     "Copy: {X}",
     "Echo: {X}",
-    "Return: {X}",
-    "Output: {X}",
-    "Repeat after me: {X}",
-    "Say: {X}",
+    # Without colon
+    "Repeat exactly {X}",
+    "Say back {X}",
+    "Copy {X}",
+    "Echo {X}",
+    "Output {X}",
+    "Just say {X}",
 ]
 
 COPY_TEMPLATES_VAL = [
+    # With colon
     "Parrot this: {X}",
     "Return verbatim: {X}",
-    "Output exactly: {X}",
-    "Reproduce: {X}",
-    "Mirror: {X}",
-    "Repeat back: {X}",
+    # Without colon
+    "Parrot {X}",
+    "Mirror {X}",
+    "Reproduce {X}",
+    "Output exactly {X}",
 ]
 
-# WRAP operator templates (wrap in square brackets)
+# WRAP operator templates (wrap in square brackets, mix with/without colons)
 WRAP_TEMPLATES_TRAIN = [
+    # With colon
     "Wrap in brackets: {X}",
     "Put square brackets around: {X}",
-    "Add brackets: {X}",
     "Surround with []: {X}",
-    "Bracket this: {X}",
-    "Enclose in brackets: {X}",
+    # Without colon
+    "Wrap in brackets {X}",
+    "Add brackets around {X}",
+    "Bracket {X}",
+    "Enclose in [] {X}",
 ]
 
 WRAP_TEMPLATES_VAL = [
+    # With colon
     "Put in square brackets: {X}",
-    "Wrap with []: {X}",
-    "Add [] around: {X}",
-    "Bracket: {X}",
+    # Without colon
+    "Wrap with [] {X}",
+    "Add [] around {X}",
+    "Put brackets around {X}",
 ]
 
-# EXTRACT operator templates (extract from quotes)
+# EXTRACT operator templates (extract from quotes, mix with/without colons)
 EXTRACT_TEMPLATES_TRAIN = [
+    # With colon
     'Return only the text between quotes: "{X}"',
     'Extract the quoted part: "{X}"',
     'Get what\'s in quotes: "{X}"',
-    'Pull out the quoted text: "{X}"',
-    'Return the quoted string: "{X}"',
-    'Extract from quotes: "{X}"',
+    # Without colon (question style)
+    'What is inside "{X}"?',
+    'Extract "{X}"',
+    'Return the content of "{X}"',
+    'Pull out "{X}"',
 ]
 
 EXTRACT_TEMPLATES_VAL = [
-    'What\'s inside the quotes: "{X}"',
+    # With colon
     'Output the quoted content: "{X}"',
-    'Return text within quotes: "{X}"',
-    'Get the quoted part: "{X}"',
+    # Without colon
+    'What\'s inside "{X}"?',
+    'Get the text from "{X}"',
+    'Return what\'s in "{X}"',
 ]
 
 # German variants (all go to train, German val uses same templates - tests language, not template)

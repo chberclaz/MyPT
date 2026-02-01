@@ -40,9 +40,11 @@ import argparse
 import os
 import sys
 import json
+import re
+import hashlib
 import numpy as np
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Set, Optional
 
 # Fix Windows console encoding for Unicode
 if sys.platform == "win32":
@@ -74,6 +76,131 @@ USER_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_user_close"]
 ASSISTANT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_assistant_open"]
 ASSISTANT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_assistant_close"]
 EOT = SPECIAL_TOKEN_STRINGS["myPT_eot"]
+
+
+# =============================================================================
+# OPERATOR DATASET VALIDATION FUNCTIONS
+# =============================================================================
+
+def extract_payload_from_conv(conv: Dict[str, Any]) -> Optional[str]:
+    """Extract payload from a conversation.
+    
+    First tries _meta.payload (reliable for operator dataset).
+    Falls back to heuristics on user message text.
+    """
+    # Try _meta.payload first (operator dataset stores this)
+    meta = conv.get("_meta", {})
+    if "payload" in meta:
+        return meta["payload"]
+    
+    # Fallback: extract from user message using heuristics
+    messages = conv.get("messages", [])
+    for msg in messages:
+        if msg.get("role") == "user":
+            return extract_payload_from_text(msg.get("content", ""))
+    
+    return None
+
+
+def extract_payload_from_text(user_msg: str) -> Optional[str]:
+    """Extract payload from user message text using heuristics."""
+    # EXTRACT operator: look for quoted text
+    quote_match = re.search(r'"([^"]+)"', user_msg)
+    if quote_match:
+        return quote_match.group(1)
+    
+    # COPY/WRAP operators: text after colon
+    colon_match = re.search(r':\s*(.+)$', user_msg)
+    if colon_match:
+        return colon_match.group(1).strip()
+    
+    return None
+
+
+def get_template_signature(user_msg: str, payload: Optional[str]) -> str:
+    """Replace payload with {PAYLOAD} to get template signature."""
+    if payload and payload in user_msg:
+        # Replace payload, handling both quoted and unquoted
+        sig = user_msg.replace(f'"{payload}"', '"{PAYLOAD}"')
+        sig = sig.replace(payload, "{PAYLOAD}")
+        # Collapse whitespace
+        return ' '.join(sig.split())
+    return ' '.join(user_msg.split())
+
+
+def get_user_message(conv: Dict[str, Any]) -> str:
+    """Extract user message from conversation."""
+    for msg in conv.get("messages", []):
+        if msg.get("role") == "user":
+            return msg.get("content", "")
+    return ""
+
+
+def file_sha256(filepath: str) -> str:
+    """Compute SHA256 hash of a file."""
+    sha256 = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+def check_train_val_separation(
+    train_convs: List[Dict],
+    val_convs: List[Dict],
+    verbose: bool = False
+) -> Tuple[int, int, List[str], List[str]]:
+    """Check for payload and template overlap between train and val.
+    
+    Returns:
+        (payload_overlap_count, template_overlap_count, payload_examples, template_examples)
+    """
+    # Extract payloads
+    train_payloads: Set[str] = set()
+    val_payloads: Set[str] = set()
+    
+    for conv in train_convs:
+        payload = extract_payload_from_conv(conv)
+        if payload:
+            train_payloads.add(payload)
+    
+    for conv in val_convs:
+        payload = extract_payload_from_conv(conv)
+        if payload:
+            val_payloads.add(payload)
+    
+    payload_overlap = train_payloads & val_payloads
+    payload_examples = list(payload_overlap)[:5]
+    
+    # Extract template signatures
+    train_templates: Set[str] = set()
+    val_templates: Set[str] = set()
+    
+    for conv in train_convs:
+        user_msg = get_user_message(conv)
+        payload = extract_payload_from_conv(conv)
+        sig = get_template_signature(user_msg, payload)
+        train_templates.add(sig)
+    
+    for conv in val_convs:
+        user_msg = get_user_message(conv)
+        payload = extract_payload_from_conv(conv)
+        sig = get_template_signature(user_msg, payload)
+        val_templates.add(sig)
+    
+    template_overlap = train_templates & val_templates
+    template_examples = list(template_overlap)[:5]
+    
+    if verbose:
+        print(f"\n  Train/Val Separation Check:")
+        print(f"    Train payloads: {len(train_payloads)}")
+        print(f"    Val payloads: {len(val_payloads)}")
+        print(f"    Payload overlap: {len(payload_overlap)}")
+        print(f"    Train templates: {len(train_templates)}")
+        print(f"    Val templates: {len(val_templates)}")
+        print(f"    Template overlap: {len(template_overlap)}")
+    
+    return len(payload_overlap), len(template_overlap), payload_examples, template_examples
 
 
 def parse_args():
@@ -333,6 +460,19 @@ def main():
             )
         sys.exit(1)
     
+    # Validate --val_file if provided
+    if args.val_file:
+        if not os.path.exists(args.val_file):
+            print(f"Error: Validation file not found: {args.val_file}")
+            sys.exit(1)
+        
+        # Mutual exclusivity: --val_file and --val_split > 0
+        if args.val_split > 0:
+            print("=" * 60)
+            print("  VAL SOURCE: Using explicit val file (no random split)")
+            print(f"  Note: --val_split={args.val_split} ignored because --val_file is provided")
+            print("=" * 60)
+    
     # Create output directories
     train_dir = os.path.join(args.output_dir, "train")
     val_dir = os.path.join(args.output_dir, "val")
@@ -389,6 +529,9 @@ def main():
         sys.exit(1)
     
     # Handle train/val split
+    payload_overlap_count = 0
+    template_overlap_count = 0
+    
     if args.val_file:
         # Separate validation file provided
         val_conversations = load_jsonl(args.val_file)
@@ -396,6 +539,39 @@ def main():
         train_conversations = conversations
         val_indices = set()  # Not used when val_file is provided
         use_separate_val = True
+        
+        # STRICT SEPARATION CHECK for explicit val files
+        print("\n" + "=" * 60)
+        print("  TRAIN/VAL SEPARATION CHECK (--val_file mode)")
+        print("=" * 60)
+        
+        payload_overlap_count, template_overlap_count, payload_examples, template_examples = \
+            check_train_val_separation(train_conversations, val_conversations, verbose=True)
+        
+        # Hard fail on payload overlap
+        if payload_overlap_count > 0:
+            print(f"\n  ❌ ERROR: Train/Val PAYLOAD overlap detected!")
+            print(f"     {payload_overlap_count} overlapping payloads found.")
+            print(f"     Examples: {payload_examples}")
+            print(f"\n     Operator benchmark INVALID - payloads must be unique.")
+            print(f"     Regenerate dataset with different seeds for train/val.")
+            sys.exit(1)
+        else:
+            print(f"\n  ✅ Payload overlap: 0 (PASS)")
+        
+        # Hard fail on template overlap
+        if template_overlap_count > 0:
+            print(f"\n  ❌ ERROR: Train/Val TEMPLATE overlap detected!")
+            print(f"     {template_overlap_count} overlapping templates found.")
+            print(f"     Examples: {template_examples}")
+            print(f"\n     Operator benchmark requires template generalization.")
+            print(f"     Val templates must differ from train templates.")
+            sys.exit(1)
+        else:
+            print(f"  ✅ Template overlap: 0 (PASS)")
+        
+        print("=" * 60 + "\n")
+        
     else:
         # Random split
         np.random.seed(args.seed)
@@ -505,7 +681,9 @@ def main():
     metadata = {
         "schema": "episode_indexed_sft_v1",
         "has_loss_mask": True,
-        "num_conversations": len(conversations),
+        "num_conversations": len(train_conversations) + len(val_conversations) if use_separate_val else len(conversations),
+        "num_train_conversations": len(train_conversations) if use_separate_val else len(conversations) - len(val_indices),
+        "num_val_conversations": len(val_conversations) if use_separate_val else len(val_indices),
         "num_train_episodes": train_writer.total_episodes,
         "num_val_episodes": val_writer.total_episodes,
         "num_train_tokens": train_writer.total_tokens,
@@ -517,9 +695,20 @@ def main():
         "tokenization": args.tokenization,
         "vocab_size": args.vocab_size,
         "tokens_per_shard": args.tokens_per_shard,
-        "val_split": args.val_split,
         "special_tokens_used": list(SPECIAL_TOKEN_STRINGS.keys()),
+        # Provenance
+        "prepare_mode": "explicit_val_file" if use_separate_val else "val_split",
+        "source_train_file": os.path.abspath(args.input),
+        "source_val_file": os.path.abspath(args.val_file) if args.val_file else None,
+        "val_split": 0.0 if use_separate_val else args.val_split,
     }
+    
+    # Add file hashes for provenance (when using explicit val file)
+    if use_separate_val:
+        metadata["source_train_sha256"] = file_sha256(args.input)
+        metadata["source_val_sha256"] = file_sha256(args.val_file)
+        metadata["payload_overlap_count"] = payload_overlap_count
+        metadata["template_overlap_count"] = template_overlap_count
     
     metadata_path = os.path.join(args.output_dir, "dataset_metadata.json")
     with open(metadata_path, 'w') as f:
