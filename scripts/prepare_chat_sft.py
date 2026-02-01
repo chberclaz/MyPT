@@ -91,7 +91,9 @@ def parse_args():
                         choices=["gpt2", "char"],
                         help="Tokenization method (default: gpt2)")
     parser.add_argument("--val_split", type=float, default=0.1,
-                        help="Validation split ratio (default: 0.1)")
+                        help="Validation split ratio (default: 0.1). Ignored if --val_file is provided.")
+    parser.add_argument("--val_file", type=str, default=None,
+                        help="Separate validation JSONL file (overrides --val_split)")
     parser.add_argument("--tokens_per_shard", type=int, default=50_000_000,
                         help="Max tokens per shard (default: 50M, for multi-shard support)")
     parser.add_argument("--vocab_size", type=int, default=50304,
@@ -345,25 +347,32 @@ def main():
     print(f"  Input: {args.input}")
     print(f"  Output: {args.output_dir}")
     print(f"  Tokenization: {args.tokenization}")
-    print(f"  Val split: {args.val_split}")
+    if args.val_file:
+        print(f"  Val file: {args.val_file} (separate file)")
+    else:
+        print(f"  Val split: {args.val_split}")
     print(f"  Tokens per shard: {args.tokens_per_shard:,}")
     print()
     
-    # Load and process conversations
-    print("Loading conversations...")
-    conversations = []
-    with open(args.input, 'r', encoding='utf-8') as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-                conversations.append(item)
-            except json.JSONDecodeError as e:
-                print(f"  Warning: Skipping line {line_num} (invalid JSON): {e}")
+    # Load conversations
+    def load_jsonl(filepath: str) -> list:
+        """Load conversations from JSONL file."""
+        convs = []
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                    convs.append(item)
+                except json.JSONDecodeError as e:
+                    print(f"  Warning: Skipping line {line_num} (invalid JSON): {e}")
+        return convs
     
-    print(f"  Loaded {len(conversations)} conversations")
+    print("Loading conversations...")
+    conversations = load_jsonl(args.input)
+    print(f"  Loaded {len(conversations)} conversations from {args.input}")
     
     if not conversations:
         error_msg = "No valid conversations found in input file"
@@ -379,14 +388,28 @@ def main():
             )
         sys.exit(1)
     
-    # Shuffle and split
-    np.random.seed(args.seed)
-    indices = np.random.permutation(len(conversations))
+    # Handle train/val split
+    if args.val_file:
+        # Separate validation file provided
+        val_conversations = load_jsonl(args.val_file)
+        print(f"  Loaded {len(val_conversations)} validation conversations from {args.val_file}")
+        train_conversations = conversations
+        val_indices = set()  # Not used when val_file is provided
+        use_separate_val = True
+    else:
+        # Random split
+        np.random.seed(args.seed)
+        indices = np.random.permutation(len(conversations))
+        val_size = int(len(conversations) * args.val_split)
+        val_indices = set(indices[:val_size])
+        train_conversations = None  # Will use conversations with val_indices
+        val_conversations = None
+        use_separate_val = False
     
-    val_size = int(len(conversations) * args.val_split)
-    val_indices = set(indices[:val_size])
-    
-    print(f"  Train: {len(conversations) - val_size}, Val: {val_size}")
+    if use_separate_val:
+        print(f"  Train: {len(train_conversations)}, Val: {len(val_conversations)}")
+    else:
+        print(f"  Train: {len(conversations) - len(val_indices)}, Val: {len(val_indices)}")
     
     # Initialize shard writers
     train_writer = EpisodeShardWriter(args.output_dir, "train", args.tokens_per_shard)
@@ -400,45 +423,63 @@ def main():
     val_mask_sum = 0
     val_mask_count = 0
     
-    for i, conv in enumerate(conversations):
-        # Serialize to text + char mask
-        text, char_mask = serialize_conversation(conv)
+    def process_conversations(convs, split_name, writer, mask_sum_ref, mask_count_ref, check_val_indices=False):
+        """Process a list of conversations into a split."""
+        nonlocal train_mask_sum, train_mask_count, val_mask_sum, val_mask_count
         
-        # Determine split for this episode
-        split = "val" if i in val_indices else "train"
-        episode_idx = val_writer.total_episodes if split == "val" else train_writer.total_episodes
-        
-        # Audit: Log episode text before tokenization (for traceability)
-        if AUDIT_AVAILABLE:
-            # Truncate text for log (first 500 chars) to avoid huge log entries
-            text_preview = text[:500] + "..." if len(text) > 500 else text
-            # Escape newlines for single-line log format
-            text_preview_escaped = text_preview.replace("\n", "\\n")
-            audit.training(
-                "episode_text",
-                dataset_type="chat_sft",
-                split=split,
-                episode_idx=episode_idx,
-                conversation_idx=i,
-                text_length=len(text),
-                num_assistant_chars=char_mask.count("1"),
-                details=text_preview_escaped
-            )
-        
-        # Convert to token-level mask
-        tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
-        
-        if i in val_indices:
-            val_writer.add_episode(tokens, mask)
-            val_mask_sum += sum(mask)
-            val_mask_count += len(mask)
-        else:
-            train_writer.add_episode(tokens, mask)
-            train_mask_sum += sum(mask)
-            train_mask_count += len(mask)
-        
-        if args.verbose and (i + 1) % 1000 == 0:
-            print(f"  Processed {i + 1}/{len(conversations)} conversations")
+        for i, conv in enumerate(convs):
+            # For random split mode, check if this index belongs to val
+            if check_val_indices:
+                actual_split = "val" if i in val_indices else "train"
+                if actual_split != split_name:
+                    continue
+            
+            # Serialize to text + char mask
+            text, char_mask = serialize_conversation(conv)
+            
+            episode_idx = writer.total_episodes
+            
+            # Audit: Log episode text before tokenization (for traceability)
+            if AUDIT_AVAILABLE:
+                # Truncate text for log (first 500 chars) to avoid huge log entries
+                text_preview = text[:500] + "..." if len(text) > 500 else text
+                # Escape newlines for single-line log format
+                text_preview_escaped = text_preview.replace("\n", "\\n")
+                audit.training(
+                    "episode_text",
+                    dataset_type="chat_sft",
+                    split=split_name,
+                    episode_idx=episode_idx,
+                    conversation_idx=i,
+                    text_length=len(text),
+                    num_assistant_chars=char_mask.count("1"),
+                    details=text_preview_escaped
+                )
+            
+            # Convert to token-level mask
+            tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
+            
+            writer.add_episode(tokens, mask)
+            if split_name == "train":
+                train_mask_sum += sum(mask)
+                train_mask_count += len(mask)
+            else:
+                val_mask_sum += sum(mask)
+                val_mask_count += len(mask)
+    
+    if use_separate_val:
+        # Process train and val from separate files
+        print("  Processing train conversations...")
+        process_conversations(train_conversations, "train", train_writer, train_mask_sum, train_mask_count)
+        print("  Processing val conversations...")
+        process_conversations(val_conversations, "val", val_writer, val_mask_sum, val_mask_count)
+    else:
+        # Process with random split
+        process_conversations(conversations, "train", train_writer, train_mask_sum, train_mask_count, check_val_indices=True)
+        process_conversations(conversations, "val", val_writer, val_mask_sum, val_mask_count, check_val_indices=True)
+    
+    if args.verbose:
+        print(f"  Processed {train_writer.total_episodes + val_writer.total_episodes} total conversations")
     
     # Finalize shards
     print("\nWriting shards...")

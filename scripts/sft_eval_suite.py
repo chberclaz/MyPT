@@ -3,7 +3,7 @@
 SFT Evaluation Suite - Mandatory gates after each training phase.
 
 Runs deterministic generation (temperature=0) on a fixed prompt set and
-evaluates pass/fail on 4 buckets:
+evaluates pass/fail on 5 buckets:
 
 A) format_strict:
    - Output must be within proper tags and stop correctly
@@ -21,6 +21,12 @@ D) regression_basic:
    - Simple math: 5+7 → 12
    - Simple fact: capital of Germany → Berlin
    - Must not collapse to constant token for all inputs
+
+E) operators (EXACT MATCH):
+   - COPY: "Parrot this: X" → "X"
+   - WRAP: "Put in square brackets: X" → "[X]"
+   - EXTRACT: 'What's inside the quotes: "X"' → "X"
+   - Tests abstract operator learning with unseen templates
 
 Usage:
     python scripts/sft_eval_suite.py --model phase3a1_alpha
@@ -90,6 +96,31 @@ REGRESSION_PROMPTS = [
     ("reg_capital_fr", make_prompt("Capital of France?"), "Paris"),
     ("reg_yes_no_water", make_prompt("Is water wet?"), "Yes"),
     ("reg_yes_no_fire", make_prompt("Is fire cold?"), "No"),
+]
+
+# Bucket E: Operators (EXACT MATCH - tests abstract operator learning)
+# Uses unseen templates (different from training) and unique payloads
+OPERATOR_PROMPTS = [
+    # COPY operator (val templates - different from train)
+    ("op_copy_1", make_prompt("Parrot this: xylophone"), "COPY", "xylophone"),
+    ("op_copy_2", make_prompt("Return verbatim: quantum"), "COPY", "quantum"),
+    ("op_copy_3", make_prompt("Output exactly: nebula"), "COPY", "nebula"),
+    ("op_copy_4", make_prompt("Reproduce: twilight"), "COPY", "twilight"),
+    ("op_copy_5", make_prompt("Mirror: cascade"), "COPY", "cascade"),
+    
+    # WRAP operator (val templates - different from train)
+    ("op_wrap_1", make_prompt("Put in square brackets: phoenix"), "WRAP", "[phoenix]"),
+    ("op_wrap_2", make_prompt("Wrap with []: marble"), "WRAP", "[marble]"),
+    ("op_wrap_3", make_prompt("Add [] around: crystal"), "WRAP", "[crystal]"),
+    ("op_wrap_4", make_prompt("Bracket: thunder"), "WRAP", "[thunder]"),
+    ("op_wrap_5", make_prompt("Enclose in []: horizon"), "WRAP", "[horizon]"),
+    
+    # EXTRACT operator (val templates - different from train)
+    ("op_extract_1", make_prompt('What\'s inside the quotes: "emerald"'), "EXTRACT", "emerald"),
+    ("op_extract_2", make_prompt('Output the quoted content: "silver"'), "EXTRACT", "silver"),
+    ("op_extract_3", make_prompt('Return text within quotes: "dragon"'), "EXTRACT", "dragon"),
+    ("op_extract_4", make_prompt('Get the quoted part: "galaxy"'), "EXTRACT", "galaxy"),
+    ("op_extract_5", make_prompt('Pull from quotes: "zenith"'), "EXTRACT", "zenith"),
 ]
 
 
@@ -198,6 +229,28 @@ def check_no_collapse(results: List[str]) -> Tuple[bool, str]:
         return False, f"Mode collapse detected: all responses are '{list(unique_responses)[0] if unique_responses else 'empty'}'"
     
     return True, f"Diverse responses: {len(unique_responses)} unique"
+
+
+def check_operator_exact(generated: str, expected: str, operator: str) -> Tuple[bool, str]:
+    """Check EXACT MATCH for operator transformations.
+    
+    This is stricter than echo - the output must match exactly (case-sensitive).
+    """
+    response = extract_response(generated)
+    
+    # Remove trailing period if model added it
+    response_clean = response.rstrip(".")
+    expected_clean = expected.rstrip(".")
+    
+    # EXACT match (case-sensitive for operators)
+    if response_clean == expected_clean:
+        return True, f"EXACT MATCH: '{response}'"
+    
+    # Also accept with trailing period
+    if response == expected or response == expected + ".":
+        return True, f"EXACT MATCH (with period): '{response}'"
+    
+    return False, f"Expected '{expected}', got '{response}'"
 
 
 # =============================================================================
@@ -326,6 +379,35 @@ def run_evaluation(
         print(f"  ⚠️  Mode collapse: {collapse_reason}")
     
     results["buckets"]["regression_basic"] = bucket_d
+    
+    # Bucket E: Operators (EXACT MATCH)
+    print("\n📋 Bucket E: Operators (EXACT MATCH)")
+    bucket_e = {"passed": 0, "failed": 0, "details": [], "by_operator": {"COPY": {"passed": 0, "failed": 0}, "WRAP": {"passed": 0, "failed": 0}, "EXTRACT": {"passed": 0, "failed": 0}}}
+    
+    for name, prompt, operator, expected in OPERATOR_PROMPTS:
+        gen = generate(prompt)
+        passed, reason = check_operator_exact(gen, expected, operator)
+        bucket_e["details"].append({"name": name, "passed": passed, "reason": reason, "operator": operator, "expected": expected, "generated": gen[:100]})
+        bucket_e["by_operator"][operator]["passed" if passed else "failed"] += 1
+        if passed:
+            bucket_e["passed"] += 1
+            if verbose:
+                print(f"  ✅ {name} [{operator}]: {reason}")
+        else:
+            bucket_e["failed"] += 1
+            print(f"  ❌ {name} [{operator}]: {reason}")
+    
+    # Per-operator summary
+    print(f"\n  Operator breakdown:")
+    for op in ["COPY", "WRAP", "EXTRACT"]:
+        op_passed = bucket_e["by_operator"][op]["passed"]
+        op_failed = bucket_e["by_operator"][op]["failed"]
+        op_total = op_passed + op_failed
+        op_pct = (op_passed / op_total * 100) if op_total > 0 else 0
+        status = "✅" if op_failed == 0 else "❌"
+        print(f"    {op}: {op_passed}/{op_total} ({op_pct:.0f}%) {status}")
+    
+    results["buckets"]["operators"] = bucket_e
     
     # Summary
     print("\n" + "="*60)
