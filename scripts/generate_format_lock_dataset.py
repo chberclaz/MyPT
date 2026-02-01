@@ -73,65 +73,93 @@ def generate_pairs(math_mode: str = "include") -> List[Tuple[str, str]]:
                 pairs.append((q, a))
     
     # ==========================================================================
-    # MATH - Combinatorial expansion (3k+ episodes when math_mode="only")
+    # MATH - Combinatorial expansion
+    # - "include" or "only": full ~10k episodes
+    # - "minimal": ~500 episodes (small ranges, 2 templates each)
     # ==========================================================================
     
-    if math_mode != "exclude":
-        # Addition templates
-        ADD_TEMPLATES = [
-            ("What is {a} + {b}?", "{r}."),
-            ("{a} plus {b}?", "{r}."),
-            ("{a} + {b}?", "{r}."),
-            ("Add {a} and {b}.", "{r}."),
-        ]
-        
-        # Subtraction templates
-        SUB_TEMPLATES = [
-            ("What is {a} - {b}?", "{r}."),
-            ("{a} minus {b}?", "{r}."),
-            ("{a} - {b}?", "{r}."),
-            ("Subtract {b} from {a}.", "{r}."),
-        ]
-        
-        # Multiplication templates
-        MUL_TEMPLATES = [
-            ("What is {a} × {b}?", "{r}."),
-            ("{a} times {b}?", "{r}."),
-            ("{a} * {b}?", "{r}."),
-            ("Multiply {a} by {b}.", "{r}."),
-        ]
-        
-        # Division templates
-        DIV_TEMPLATES = [
-            ("What is {a} ÷ {b}?", "{r}."),
-            ("{a} divided by {b}?", "{r}."),
-            ("{a} / {b}?", "{r}."),
-        ]
-        
-        # Addition (expanded range for 3k+ with math_mode="only")
-        for a in range(0, 51):
-            for b in range(0, 21):
-                for tq, ta in ADD_TEMPLATES:
-                    pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
-        
-        # Subtraction (only valid results)
-        for a in range(0, 51):
-            for b in range(0, min(a+1, 21)):
-                for tq, ta in SUB_TEMPLATES:
-                    pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
-        
-        # Multiplication (times tables extended)
-        for a in range(0, 16):
-            for b in range(0, 16):
-                for tq, ta in MUL_TEMPLATES:
-                    pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
-        
-        # Division (clean results only, expanded)
-        for a in range(0, 151):
-            for b in range(1, 16):
-                if a % b == 0:
-                    for tq, ta in DIV_TEMPLATES:
-                        pairs.append((tq.format(a=a, b=b), ta.format(r=a//b)))
+    if math_mode not in ["exclude"]:
+        if math_mode == "minimal":
+            # Minimal math: smaller ranges, fewer templates (~500 episodes)
+            ADD_TEMPLATES = [("What is {a} + {b}?", "{r}."), ("{a} plus {b}?", "{r}.")]
+            SUB_TEMPLATES = [("What is {a} - {b}?", "{r}."), ("{a} minus {b}?", "{r}.")]
+            MUL_TEMPLATES = [("What is {a} × {b}?", "{r}."), ("{a} times {b}?", "{r}.")]
+            DIV_TEMPLATES = [("What is {a} ÷ {b}?", "{r}.")]
+            
+            # Addition: 0-20 + 0-10 = ~200 pairs
+            for a in range(0, 21):
+                for b in range(0, 11):
+                    for tq, ta in ADD_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
+            
+            # Subtraction: ~100 pairs
+            for a in range(1, 21):
+                for b in range(0, min(a+1, 11)):
+                    for tq, ta in SUB_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
+            
+            # Multiplication: 0-12 × 0-12 = ~150 pairs  
+            for a in range(0, 13):
+                for b in range(0, 13):
+                    for tq, ta in MUL_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
+            
+            # Division: ~50 pairs
+            for a in range(0, 51):
+                for b in range(1, 11):
+                    if a % b == 0:
+                        for tq, ta in DIV_TEMPLATES:
+                            pairs.append((tq.format(a=a, b=b), ta.format(r=a//b)))
+        else:
+            # Full math: larger ranges, all templates (~10k episodes)
+            ADD_TEMPLATES = [
+                ("What is {a} + {b}?", "{r}."),
+                ("{a} plus {b}?", "{r}."),
+                ("{a} + {b}?", "{r}."),
+                ("Add {a} and {b}.", "{r}."),
+            ]
+            SUB_TEMPLATES = [
+                ("What is {a} - {b}?", "{r}."),
+                ("{a} minus {b}?", "{r}."),
+                ("{a} - {b}?", "{r}."),
+                ("Subtract {b} from {a}.", "{r}."),
+            ]
+            MUL_TEMPLATES = [
+                ("What is {a} × {b}?", "{r}."),
+                ("{a} times {b}?", "{r}."),
+                ("{a} * {b}?", "{r}."),
+                ("Multiply {a} by {b}.", "{r}."),
+            ]
+            DIV_TEMPLATES = [
+                ("What is {a} ÷ {b}?", "{r}."),
+                ("{a} divided by {b}?", "{r}."),
+                ("{a} / {b}?", "{r}."),
+            ]
+            
+            # Addition (expanded range)
+            for a in range(0, 51):
+                for b in range(0, 21):
+                    for tq, ta in ADD_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
+            
+            # Subtraction (only valid results)
+            for a in range(0, 51):
+                for b in range(0, min(a+1, 21)):
+                    for tq, ta in SUB_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
+            
+            # Multiplication (times tables extended)
+            for a in range(0, 16):
+                for b in range(0, 16):
+                    for tq, ta in MUL_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
+            
+            # Division (clean results only, expanded)
+            for a in range(0, 151):
+                for b in range(1, 16):
+                    if a % b == 0:
+                        for tq, ta in DIV_TEMPLATES:
+                            pairs.append((tq.format(a=a, b=b), ta.format(r=a//b)))
     
     # ==========================================================================
     # Skip other content when in "only" mode for math
@@ -831,8 +859,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Phase 3a-1 format locking dataset")
     parser.add_argument("--output_dir", type=str, default="data/sft_format_lock", help="Output directory")
     parser.add_argument("--math", type=str, default="include",
-                        choices=["include", "exclude", "only"],
-                        help="Math mode: include (all), exclude (no math), only (math only). Default: include")
+                        choices=["include", "exclude", "only", "minimal"],
+                        help="Math mode: include (full ~10k), minimal (~500), exclude (none), only (math only ~10k). Default: include")
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir)
