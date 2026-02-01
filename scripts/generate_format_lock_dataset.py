@@ -66,23 +66,45 @@ def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> Li
     ]
     
     # Words for SAY templates - MINIMAL set (both cases for key words)
+    # Target: ~50 unique words to get ~500 SAY pairs (50 words × 10 templates)
     BASIC_WORDS_MINIMAL = [
         # Core words in BOTH cases to teach case doesn't matter
         "hello", "Hello", "HELLO",
         "yes", "Yes", "YES",
         "no", "No", "NO",
         "ok", "OK", "Ok",
-        "hi", "Hi",
-        "bye", "Bye",
-        "thanks", "Thanks",
-        "done", "Done",
-        "ready", "Ready",
-        "stop", "Stop",
-        "start", "Start",
-        "true", "True",
-        "false", "False",
-        "error", "Error",
-        "success", "Success",
+        "hi", "Hi", "HI",
+        "bye", "Bye", "BYE",
+        "thanks", "Thanks", "THANKS",
+        "done", "Done", "DONE",
+        "ready", "Ready", "READY",
+        "stop", "Stop", "STOP",
+        "start", "Start", "START",
+        "true", "True", "TRUE",
+        "false", "False", "FALSE",
+        "error", "Error", "ERROR",
+        "success", "Success", "SUCCESS",
+        # Additional common words (mixed case)
+        "please", "Please",
+        "sorry", "Sorry",
+        "welcome", "Welcome",
+        "good", "Good",
+        "bad", "Bad",
+        "correct", "Correct",
+        "wrong", "Wrong",
+        "confirmed", "Confirmed",
+        "denied", "Denied",
+        "active", "Active",
+        "wait", "Wait",
+        "go", "Go",
+        "now", "Now",
+        "later", "Later",
+        "maybe", "Maybe",
+        "test", "Test",
+        "open", "Open",
+        "close", "Close",
+        "save", "Save",
+        "send", "Send",
     ]
     
     # Select word set based on mode
@@ -193,67 +215,144 @@ def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> Li
     
     # ==========================================================================
     # MINIMAL MODE: Only essential categories for format locking
+    # Target: ~1000-1200 total examples (SAY pairs + extras below)
     # ==========================================================================
     if dataset_mode == "minimal":
-        # Add minimal YES/NO facts
+        # ----- YES/NO facts (expanded) -----
         MINIMAL_YES = [
             "Is water wet?", "Is the sky blue?", "Is 2+2=4?", "Is 10 > 5?",
             "Is red a color?", "Is fire hot?", "Is ice cold?", "Is 1 odd?",
+            "Is grass green?", "Is the sun bright?", "Is snow white?", "Is 5 > 3?",
+            "Is Monday a day?", "Is Python a language?", "Is 100 > 50?", "Is 2 even?",
+            "Is sugar sweet?", "Is night dark?", "Is summer warm?", "Is 7 odd?",
         ]
         MINIMAL_NO = [
             "Is fire cold?", "Is ice hot?", "Is 2+2=5?", "Is 3 > 7?",
             "Is night bright?", "Is water dry?", "Is 1 even?", "Is 10 < 5?",
+            "Is snow black?", "Is 5 < 3?", "Is summer cold?", "Is the moon a star?",
+            "Is glass opaque?", "Is sugar salty?", "Is 100 < 50?", "Is 8 odd?",
         ]
         for fact in MINIMAL_YES:
             pairs.append((fact, "Yes."))
         for fact in MINIMAL_NO:
             pairs.append((fact, "No."))
         
-        # Minimal greetings
+        # ----- Greetings (expanded) -----
         MINIMAL_GREETINGS = [
             ("Good morning!", "Good morning!"),
+            ("Good afternoon!", "Good afternoon!"),
+            ("Good evening!", "Good evening!"),
             ("Good night!", "Good night!"),
             ("Hello!", "Hello!"),
             ("Hi!", "Hi!"),
+            ("Hey!", "Hey!"),
             ("How are you?", "Good."),
+            ("How's it going?", "Good."),
+            ("What's up?", "Hello!"),
+            ("Greetings!", "Greetings!"),
+            ("Welcome!", "Welcome!"),
         ]
         pairs.extend(MINIMAL_GREETINGS)
         
-        # Minimal status
+        # ----- Status/Acknowledgments (expanded) -----
         MINIMAL_STATUS = [
             ("Status?", "OK."),
             ("Ready?", "Ready."),
             ("All good?", "Yes."),
             ("Understood?", "Understood."),
             ("Who are you?", "MyPT."),
+            ("What is your name?", "MyPT."),
+            ("Are you there?", "Yes."),
+            ("Can you help?", "Yes."),
+            ("Working?", "Yes."),
+            ("Online?", "Yes."),
+            ("Confirm?", "Confirmed."),
+            ("Clear?", "Clear."),
+            ("Copy?", "Copy."),
+            ("Got it?", "Got it."),
         ]
         pairs.extend(MINIMAL_STATUS)
         
-        # Minimal German
-        MINIMAL_GERMAN = [
-            ("Sag Hallo.", "Hallo."),
-            ("Sag hallo.", "hallo."),
-            ("Sag Ja.", "Ja."),
-            ("Sag Nein.", "Nein."),
-            ("Sag OK.", "OK."),
-            ("Sag Danke.", "Danke."),
+        # ----- German (expanded with templates) -----
+        MINIMAL_GERMAN_SAY = [
+            "Hallo", "hallo", "HALLO",
+            "Ja", "ja", "JA",
+            "Nein", "nein", "NEIN",
+            "OK", "ok", "Ok",
+            "Danke", "danke",
+            "Bitte", "bitte",
+            "Gut", "gut",
+            "Fertig", "fertig",
+            "Bereit", "bereit",
+        ]
+        GERMAN_TEMPLATES = ["Sag {word}.", "Sage {word}.", "Antworte {word}."]
+        for template in GERMAN_TEMPLATES:
+            for word in MINIMAL_GERMAN_SAY:
+                pairs.append((template.format(word=word), f"{word}."))
+        
+        MINIMAL_GERMAN_QA = [
             ("Guten Morgen!", "Guten Morgen!"),
             ("Guten Tag!", "Guten Tag!"),
+            ("Guten Abend!", "Guten Abend!"),
+            ("Gute Nacht!", "Gute Nacht!"),
             ("Wie geht's?", "Gut."),
             ("Alles klar?", "Ja."),
             ("Verstanden?", "Verstanden."),
             ("Bereit?", "Bereit."),
+            ("Fertig?", "Fertig."),
+            ("Ist Wasser nass?", "Ja."),
+            ("Ist Feuer kalt?", "Nein."),
+            ("Ist der Himmel blau?", "Ja."),
         ]
-        pairs.extend(MINIMAL_GERMAN)
+        pairs.extend(MINIMAL_GERMAN_QA)
         
-        # Minimal colors (both cases)
-        MINIMAL_COLORS = ["red", "Red", "blue", "Blue", "green", "Green", "yellow", "Yellow"]
-        for color in MINIMAL_COLORS:
-            pairs.append((f"Say {color}.", f"{color}."))
+        # ----- Colors with multiple templates -----
+        MINIMAL_COLORS = [
+            "red", "Red", "RED", "blue", "Blue", "BLUE",
+            "green", "Green", "yellow", "Yellow",
+            "black", "Black", "white", "White",
+            "orange", "Orange", "purple", "Purple",
+        ]
+        COLOR_TEMPLATES_MIN = ["Say {color}.", "Color: {color}.", "Reply with {color}."]
+        for template in COLOR_TEMPLATES_MIN:
+            for color in MINIMAL_COLORS:
+                pairs.append((template.format(color=color), f"{color}."))
         
-        # Minimal days
-        for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
-            pairs.append((f"Say {day}.", f"{day}."))
+        # ----- Days with templates -----
+        DAYS_MIN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        DAY_TEMPLATES_MIN = ["Say {day}.", "What day is {day}?", "Day: {day}."]
+        for template in DAY_TEMPLATES_MIN:
+            for day in DAYS_MIN:
+                pairs.append((template.format(day=day), f"{day}."))
+        
+        # ----- Numbers 0-20 with templates -----
+        for num in range(0, 21):
+            pairs.append((f"Say {num}.", f"{num}."))
+            pairs.append((f"Number: {num}.", f"{num}."))
+            pairs.append((f"Reply with {num}.", f"{num}."))
+        
+        # ----- Simple opposites -----
+        MINIMAL_OPPOSITES = [
+            ("Opposite of hot?", "Cold."), ("Opposite of cold?", "Hot."),
+            ("Opposite of big?", "Small."), ("Opposite of small?", "Big."),
+            ("Opposite of fast?", "Slow."), ("Opposite of slow?", "Fast."),
+            ("Opposite of good?", "Bad."), ("Opposite of bad?", "Good."),
+            ("Opposite of yes?", "No."), ("Opposite of no?", "Yes."),
+            ("Opposite of up?", "Down."), ("Opposite of down?", "Up."),
+            ("Opposite of left?", "Right."), ("Opposite of right?", "Left."),
+            ("Opposite of open?", "Closed."), ("Opposite of closed?", "Open."),
+        ]
+        pairs.extend(MINIMAL_OPPOSITES)
+        
+        # ----- Polite responses -----
+        MINIMAL_POLITE = [
+            ("Thank you.", "You're welcome."),
+            ("Thanks!", "You're welcome!"),
+            ("Sorry.", "No problem."),
+            ("Please help.", "OK."),
+            ("Excuse me.", "Yes?"),
+        ]
+        pairs.extend(MINIMAL_POLITE)
         
         # Skip all other categories in minimal mode
         return pairs
