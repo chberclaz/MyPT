@@ -153,7 +153,10 @@ SINGLE_WORDS_DE = [
     "Katze", "Hund", "Vogel", "Fisch", "Pferd", "Löwe", "Tiger", "Bär",
     "Sonne", "Mond", "Stern", "Wolke", "Regen", "Schnee", "Wind", "Feuer",
     "Buch", "Stift", "Papier", "Tisch", "Stuhl", "Tür", "Fenster", "Boden", "Blub",
-    # Gibberish with German-ish flavor
+]
+
+# Gibberish with German-ish flavor (separate for --gibberish control)
+GIBBERISH_WORDS_DE = [
     "Blörpix", "Zänthör", "Quöxling", "Flümzap", "Gröbnak", "Wübblyx", "Schnörfle", "Plönkus",
     "Xürpöd", "Kräzbit", "Müffnix", "Dräzzle", "Skrönf", "Blübber", "Zwömp", "Gründax",
     "äöüss", "Öäüss", "äÖüÜ", "ssäöü", "üöäss", "Äöüss", "öÄüÜ", "ÜöÄss",
@@ -285,34 +288,60 @@ GIBBERISH_SENTENCES_DE = [
 ]
 
 
-def generate_echo_pairs(max_examples: int = None, seed: int = 42) -> List[Tuple[str, str, str]]:
-    """Generate ALL unique echo instruction pairs (prefix × content combinations).
+def generate_echo_pairs(max_examples: int = None, seed: int = 42, 
+                        gibberish_mode: str = "include") -> List[Tuple[str, str, str]]:
+    """Generate unique echo instruction pairs (prefix × content combinations).
     
     Args:
         max_examples: Optional cap on total examples. If None, generates all combinations.
         seed: Random seed for shuffling.
+        gibberish_mode: "include" (all), "exclude" (no gibberish), "only" (gibberish only)
     
     Returns list of (question, answer, category) tuples.
     """
     random.seed(seed)
     pairs = []
     
-    # Combine all content pools
-    en_content = (
-        [(w, "word_en") for w in SINGLE_WORDS_EN] +
-        [(w, "gibberish_word") for w in GIBBERISH_WORDS] +
-        [(p, "phrase_en") for p in PHRASES_EN] +
-        [(n, "number") for n in NUMBERS_AND_CODES] +
-        [(s, "sentence_en") for s in SENTENCES_EN] +
-        [(s, "gibberish_sentence") for s in GIBBERISH_SENTENCES]
-    )
-    
-    de_content = (
-        [(w, "word_de") for w in SINGLE_WORDS_DE] +
-        [(p, "phrase_de") for p in PHRASES_DE] +
-        [(s, "sentence_de") for s in SENTENCES_DE] +
-        [(s, "gibberish_sentence_de") for s in GIBBERISH_SENTENCES_DE]
-    )
+    # Build content pools based on gibberish mode
+    if gibberish_mode == "only":
+        # Only gibberish content
+        en_content = (
+            [(w, "gibberish_word") for w in GIBBERISH_WORDS] +
+            [(s, "gibberish_sentence") for s in GIBBERISH_SENTENCES]
+        )
+        de_content = (
+            [(w, "gibberish_word_de") for w in GIBBERISH_WORDS_DE] +
+            [(s, "gibberish_sentence_de") for s in GIBBERISH_SENTENCES_DE]
+        )
+    elif gibberish_mode == "exclude":
+        # No gibberish content
+        en_content = (
+            [(w, "word_en") for w in SINGLE_WORDS_EN] +
+            [(p, "phrase_en") for p in PHRASES_EN] +
+            [(n, "number") for n in NUMBERS_AND_CODES] +
+            [(s, "sentence_en") for s in SENTENCES_EN]
+        )
+        de_content = (
+            [(w, "word_de") for w in SINGLE_WORDS_DE] +
+            [(p, "phrase_de") for p in PHRASES_DE] +
+            [(s, "sentence_de") for s in SENTENCES_DE]
+        )
+    else:  # "include" - all content
+        en_content = (
+            [(w, "word_en") for w in SINGLE_WORDS_EN] +
+            [(w, "gibberish_word") for w in GIBBERISH_WORDS] +
+            [(p, "phrase_en") for p in PHRASES_EN] +
+            [(n, "number") for n in NUMBERS_AND_CODES] +
+            [(s, "sentence_en") for s in SENTENCES_EN] +
+            [(s, "gibberish_sentence") for s in GIBBERISH_SENTENCES]
+        )
+        de_content = (
+            [(w, "word_de") for w in SINGLE_WORDS_DE] +
+            [(w, "gibberish_word_de") for w in GIBBERISH_WORDS_DE] +
+            [(p, "phrase_de") for p in PHRASES_DE] +
+            [(s, "sentence_de") for s in SENTENCES_DE] +
+            [(s, "gibberish_sentence_de") for s in GIBBERISH_SENTENCES_DE]
+        )
     
     # Generate ALL English combinations (prefix × content)
     for prefix in INSTRUCTION_PREFIXES:
@@ -347,7 +376,7 @@ def create_episode(question: str, answer: str, episode_id: int, category: str) -
             {"role": "user", "content": question},
             {"role": "assistant", "content": answer}
         ],
-        "language": "en" if "_en" in category or "number" in category else "de"
+        "language": "de" if "_de" in category else "en"
     }
 
 
@@ -358,6 +387,9 @@ def main():
     parser.add_argument("--max_examples", type=int, default=4300, help="Cap on examples (default: 4300)")
     parser.add_argument("--output_dir", type=str, default="data/sft_echo", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--gibberish", type=str, default="exclude", 
+                        choices=["include", "exclude", "only"],
+                        help="Gibberish mode: include (all), exclude (no gibberish), only (gibberish only). Default: exclude")
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir)
@@ -365,8 +397,8 @@ def main():
     output_file = output_dir / "mypt_echo_diverse.jsonl"
     
     # Generate pairs (capped to max_examples)
-    print(f"Generating echo instruction combinations (max: {args.max_examples})...")
-    pairs = generate_echo_pairs(max_examples=args.max_examples, seed=args.seed)
+    print(f"Generating echo instruction combinations (max: {args.max_examples}, gibberish: {args.gibberish})...")
+    pairs = generate_echo_pairs(max_examples=args.max_examples, seed=args.seed, gibberish_mode=args.gibberish)
     
     # Create episodes
     episodes = []

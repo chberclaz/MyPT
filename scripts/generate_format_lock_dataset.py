@@ -25,8 +25,12 @@ from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
 SYSTEM_PROMPT = CONVERSATION_SYSTEM_PROMPT
 
 
-def generate_pairs() -> List[Tuple[str, str]]:
-    """Generate diverse Q&A pairs with minimal responses using combinatorial expansion."""
+def generate_pairs(math_mode: str = "include") -> List[Tuple[str, str]]:
+    """Generate diverse Q&A pairs with minimal responses using combinatorial expansion.
+    
+    Args:
+        math_mode: "include" (all), "exclude" (no math), "only" (math only)
+    """
     pairs = []
     
     # ==========================================================================
@@ -57,45 +61,83 @@ def generate_pairs() -> List[Tuple[str, str]]:
         "rejected", "accepted", "ready", "waiting", "loading", "processing",
         "saved", "deleted", "updated", "created", "found", "missing", "valid",
         "invalid", "enabled", "disabled", "active", "inactive", "online", "offline",
-        "asdfg", "Blubi", "gugududu", "as1278", "trzui", "90Adj", "mnbyx10-", "optioart",
-        "klü.", "2yx1;", "gjkl", "opösder", "08412", "xcfsd87", "lähj31","dada", "gugu", 
-        "projolo", "79SADsa", "nmxoepr", "ssadcxyop", "ffseiopasfjvn", "fjklöasopqwü", 
-        "vvbshakl", "test",  "ID-008", "id-903",  ]
+        "test", "ID-008", "id-903",
+    ]
     
     # Generate SAY combinations
-    for template in SAY_TEMPLATES:
-        for word in BASIC_WORDS:
-            q = template.format(word=word)
-            a = f"{word}."
-            pairs.append((q, a))
+    if math_mode != "only":
+        for template in SAY_TEMPLATES:
+            for word in BASIC_WORDS:
+                q = template.format(word=word)
+                a = f"{word}."
+                pairs.append((q, a))
     
     # ==========================================================================
-    # MATH - Combinatorial expansion
+    # MATH - Combinatorial expansion (3k+ episodes when math_mode="only")
     # ==========================================================================
     
-    # Addition (limited range to keep dataset manageable)
-    for a in range(0, 26):
-        for b in range(0, 11):
-            pairs.append((f"What is {a} + {b}?", f"{a+b}."))
-            pairs.append((f"{a} plus {b}?", f"{a+b}."))
+    if math_mode != "exclude":
+        # Addition templates
+        ADD_TEMPLATES = [
+            ("What is {a} + {b}?", "{r}."),
+            ("{a} plus {b}?", "{r}."),
+            ("{a} + {b}?", "{r}."),
+            ("Add {a} and {b}.", "{r}."),
+        ]
+        
+        # Subtraction templates
+        SUB_TEMPLATES = [
+            ("What is {a} - {b}?", "{r}."),
+            ("{a} minus {b}?", "{r}."),
+            ("{a} - {b}?", "{r}."),
+            ("Subtract {b} from {a}.", "{r}."),
+        ]
+        
+        # Multiplication templates
+        MUL_TEMPLATES = [
+            ("What is {a} × {b}?", "{r}."),
+            ("{a} times {b}?", "{r}."),
+            ("{a} * {b}?", "{r}."),
+            ("Multiply {a} by {b}.", "{r}."),
+        ]
+        
+        # Division templates
+        DIV_TEMPLATES = [
+            ("What is {a} ÷ {b}?", "{r}."),
+            ("{a} divided by {b}?", "{r}."),
+            ("{a} / {b}?", "{r}."),
+        ]
+        
+        # Addition (expanded range for 3k+ with math_mode="only")
+        for a in range(0, 51):
+            for b in range(0, 21):
+                for tq, ta in ADD_TEMPLATES:
+                    pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
+        
+        # Subtraction (only valid results)
+        for a in range(0, 51):
+            for b in range(0, min(a+1, 21)):
+                for tq, ta in SUB_TEMPLATES:
+                    pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
+        
+        # Multiplication (times tables extended)
+        for a in range(0, 16):
+            for b in range(0, 16):
+                for tq, ta in MUL_TEMPLATES:
+                    pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
+        
+        # Division (clean results only, expanded)
+        for a in range(0, 151):
+            for b in range(1, 16):
+                if a % b == 0:
+                    for tq, ta in DIV_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a//b)))
     
-    # Subtraction
-    for a in range(1, 26):
-        for b in range(0, min(a+1, 11)):
-            pairs.append((f"What is {a} - {b}?", f"{a-b}."))
-            pairs.append((f"{a} minus {b}?", f"{a-b}."))
-    
-    # Multiplication (times tables)
-    for a in range(0, 13):
-        for b in range(0, 13):
-            pairs.append((f"What is {a} × {b}?", f"{a*b}."))
-            pairs.append((f"{a} times {b}?", f"{a*b}."))
-    
-    # Division (clean results only)
-    for a in range(0, 101):
-        for b in range(1, 11):
-            if a % b == 0:
-                pairs.append((f"What is {a} ÷ {b}?", f"{a//b}."))
+    # ==========================================================================
+    # Skip other content when in "only" mode for math
+    # ==========================================================================
+    if math_mode == "only":
+        return pairs
     
     # ==========================================================================
     # COLORS - Multiple question templates
@@ -784,12 +826,22 @@ def create_episode(question: str, answer: str, episode_id: int) -> dict:
 
 
 def main():
-    output_dir = Path("data/sft_format_lock")
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generate Phase 3a-1 format locking dataset")
+    parser.add_argument("--output_dir", type=str, default="data/sft_format_lock", help="Output directory")
+    parser.add_argument("--math", type=str, default="include",
+                        choices=["include", "exclude", "only"],
+                        help="Math mode: include (all), exclude (no math), only (math only). Default: include")
+    args = parser.parse_args()
+    
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / "mypt_format_lock_v1.jsonl"
     
     # Generate pairs
-    pairs = generate_pairs()
+    print(f"Generating format lock dataset (math: {args.math})...")
+    pairs = generate_pairs(math_mode=args.math)
     
     # Remove duplicates while preserving order
     seen = set()
