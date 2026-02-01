@@ -32,7 +32,5 @@
   
   "eval_sets": null,
   "eval_seed": 1337,
-  "log_file": "logs/train/phase3a_operator.jsonl",
-  
-  "eval_prompts_file": "configs/sft_eval/phase3a_operator_eval_prompts.json"
+  "log_file": "logs/train/phase3a_operator.jsonl"
 }
