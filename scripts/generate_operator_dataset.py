@@ -493,7 +493,7 @@ def main():
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from core.tokenizer import Tokenizer
-        from core.config import GPTConfig
+        from core.model import GPTConfig
         config = GPTConfig(vocab_size=50304)
         tokenizer = Tokenizer(config, "gpt2")
         print(f"  BPE filtering enabled (max {args.max_tokens} tokens per payload)")
