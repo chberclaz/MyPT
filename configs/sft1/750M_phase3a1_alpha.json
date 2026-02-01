@@ -12,7 +12,7 @@
   "bias": false,
   "tie_weights": true,
   
-  "learning_rate": 5e-5,
+  "learning_rate": 7e-5,
   "max_iters": 600,
   "eval_interval": 50,
   "warmup_iters": 50,

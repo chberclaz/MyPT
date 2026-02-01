@@ -123,7 +123,10 @@ Examples:
     )
     
     parser.add_argument("--inputs", nargs='+', required=True,
-                        help="Input files with ratios: path.jsonl:ratio (e.g., data.jsonl:0.2)")
+                        help="Input files. Can include ratios inline (data.jsonl:0.2) or use --weights")
+    parser.add_argument("--weights", nargs='+', type=float, default=None,
+                        help="Explicit weights for each input (e.g., --weights 0.7 0.2 0.1). "
+                             "If provided, must match number of inputs. Overrides inline ratios.")
     parser.add_argument("--output", type=str, required=True,
                         help="Output JSONL file")
     parser.add_argument("--shuffle", action="store_true",
@@ -141,9 +144,22 @@ Examples:
     
     # Parse input specifications
     input_specs = []
-    for spec in args.inputs:
-        path, ratio = parse_input_spec(spec)
-        input_specs.append((Path(path), ratio))
+    
+    # Check if --weights is provided
+    if args.weights is not None:
+        if len(args.weights) != len(args.inputs):
+            print(f"\n  ERROR: --weights has {len(args.weights)} values but --inputs has {len(args.inputs)} files")
+            print("         These must match.")
+            sys.exit(1)
+        # Use explicit weights, strip any inline ratios from paths
+        for i, spec in enumerate(args.inputs):
+            path = spec.rsplit(':', 1)[0] if ':' in spec and spec.rsplit(':', 1)[1].replace('.', '').isdigit() else spec
+            input_specs.append((Path(path), args.weights[i]))
+    else:
+        # Parse inline ratios
+        for spec in args.inputs:
+            path, ratio = parse_input_spec(spec)
+            input_specs.append((Path(path), ratio))
     
     print(f"\n  Inputs ({len(input_specs)}):")
     for path, ratio in input_specs:
