@@ -66,7 +66,7 @@ def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> Li
     ]
     
     # Words for SAY templates - MINIMAL set (both cases for key words)
-    # Target: ~50 unique words to get ~500 SAY pairs (50 words × 10 templates)
+    # Target: ~60 unique words to get ~600 SAY pairs (60 words × 10 templates)
     BASIC_WORDS_MINIMAL = [
         # Core words in BOTH cases to teach case doesn't matter
         "hello", "Hello", "HELLO",
@@ -105,6 +105,13 @@ def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> Li
         "close", "Close",
         "save", "Save",
         "send", "Send",
+        # Common nouns for echo testing (both cases)
+        "apple", "Apple", "APPLE",
+        "banana", "Banana", "BANANA",
+        "cat", "Cat", "CAT",
+        "dog", "Dog", "DOG",
+        "red", "Red", "RED",
+        "blue", "Blue", "BLUE",
     ]
     
     # Select word set based on mode

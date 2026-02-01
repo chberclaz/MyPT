@@ -1,6 +1,6 @@
 {
   "name": "GPT-750M-Phase3a1-Alpha",
-  "description": "Phase 3a-1α: Core format lock. Ultra-focused ~1000 examples, high repetition. Teaches chat structure and basic copy.",
+  "description": "Phase 3a-1α: Core format lock. Ultra-focused ~1000 examples, moderate repetition. Teaches chat structure and basic copy.",
   
   "batch_size": 16,
   "block_size": 512,
@@ -12,10 +12,10 @@
   "bias": false,
   "tie_weights": true,
   
-  "learning_rate": 7e-5,
-  "max_iters": 3500,
-  "eval_interval": 100,
-  "warmup_iters": 150,
+  "learning_rate": 5e-5,
+  "max_iters": 600,
+  "eval_interval": 50,
+  "warmup_iters": 50,
   "use_amp": true,
   "amp_dtype": "bf16",
   
