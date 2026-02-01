@@ -214,7 +214,9 @@ def run_evaluation(
     Returns dict with per-bucket results and overall pass/fail.
     """
     print(f"Loading model: {model_name}")
-    model, tokenizer, config = load_model(model_name)
+    model = load_model(model_name)
+    tokenizer = model.tokenizer
+    config = model.config
     model.eval()
     
     import torch
