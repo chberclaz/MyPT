@@ -25,11 +25,12 @@ from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
 SYSTEM_PROMPT = CONVERSATION_SYSTEM_PROMPT
 
 
-def generate_pairs(math_mode: str = "include") -> List[Tuple[str, str]]:
+def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> List[Tuple[str, str]]:
     """Generate diverse Q&A pairs with minimal responses using combinatorial expansion.
     
     Args:
-        math_mode: "include" (all), "exclude" (no math), "only" (math only)
+        math_mode: "include" (all), "exclude" (no math), "only" (math only), "minimal" (~500)
+        dataset_mode: "full" (all categories), "minimal" (~1000 focused examples for format lock)
     """
     pairs = []
     
@@ -51,8 +52,8 @@ def generate_pairs(math_mode: str = "include") -> List[Tuple[str, str]]:
         "Short answer: {word}.",
     ]
     
-    # Words for SAY templates
-    BASIC_WORDS = [
+    # Words for SAY templates - FULL set
+    BASIC_WORDS_FULL = [
         "hello", "hi", "goodbye", "bye", "thanks", "please", "sorry", "welcome",
         "done", "complete", "finished", "success", "failed", "error", "correct",
         "wrong", "true", "false", "maybe", "perhaps", "definitely", "absolutely",
@@ -63,6 +64,29 @@ def generate_pairs(math_mode: str = "include") -> List[Tuple[str, str]]:
         "invalid", "enabled", "disabled", "active", "inactive", "online", "offline",
         "test", "ID-008", "id-903",
     ]
+    
+    # Words for SAY templates - MINIMAL set (both cases for key words)
+    BASIC_WORDS_MINIMAL = [
+        # Core words in BOTH cases to teach case doesn't matter
+        "hello", "Hello", "HELLO",
+        "yes", "Yes", "YES",
+        "no", "No", "NO",
+        "ok", "OK", "Ok",
+        "hi", "Hi",
+        "bye", "Bye",
+        "thanks", "Thanks",
+        "done", "Done",
+        "ready", "Ready",
+        "stop", "Stop",
+        "start", "Start",
+        "true", "True",
+        "false", "False",
+        "error", "Error",
+        "success", "Success",
+    ]
+    
+    # Select word set based on mode
+    BASIC_WORDS = BASIC_WORDS_MINIMAL if dataset_mode == "minimal" else BASIC_WORDS_FULL
     
     # Generate SAY combinations
     if math_mode != "only":
@@ -165,6 +189,73 @@ def generate_pairs(math_mode: str = "include") -> List[Tuple[str, str]]:
     # Skip other content when in "only" mode for math
     # ==========================================================================
     if math_mode == "only":
+        return pairs
+    
+    # ==========================================================================
+    # MINIMAL MODE: Only essential categories for format locking
+    # ==========================================================================
+    if dataset_mode == "minimal":
+        # Add minimal YES/NO facts
+        MINIMAL_YES = [
+            "Is water wet?", "Is the sky blue?", "Is 2+2=4?", "Is 10 > 5?",
+            "Is red a color?", "Is fire hot?", "Is ice cold?", "Is 1 odd?",
+        ]
+        MINIMAL_NO = [
+            "Is fire cold?", "Is ice hot?", "Is 2+2=5?", "Is 3 > 7?",
+            "Is night bright?", "Is water dry?", "Is 1 even?", "Is 10 < 5?",
+        ]
+        for fact in MINIMAL_YES:
+            pairs.append((fact, "Yes."))
+        for fact in MINIMAL_NO:
+            pairs.append((fact, "No."))
+        
+        # Minimal greetings
+        MINIMAL_GREETINGS = [
+            ("Good morning!", "Good morning!"),
+            ("Good night!", "Good night!"),
+            ("Hello!", "Hello!"),
+            ("Hi!", "Hi!"),
+            ("How are you?", "Good."),
+        ]
+        pairs.extend(MINIMAL_GREETINGS)
+        
+        # Minimal status
+        MINIMAL_STATUS = [
+            ("Status?", "OK."),
+            ("Ready?", "Ready."),
+            ("All good?", "Yes."),
+            ("Understood?", "Understood."),
+            ("Who are you?", "MyPT."),
+        ]
+        pairs.extend(MINIMAL_STATUS)
+        
+        # Minimal German
+        MINIMAL_GERMAN = [
+            ("Sag Hallo.", "Hallo."),
+            ("Sag hallo.", "hallo."),
+            ("Sag Ja.", "Ja."),
+            ("Sag Nein.", "Nein."),
+            ("Sag OK.", "OK."),
+            ("Sag Danke.", "Danke."),
+            ("Guten Morgen!", "Guten Morgen!"),
+            ("Guten Tag!", "Guten Tag!"),
+            ("Wie geht's?", "Gut."),
+            ("Alles klar?", "Ja."),
+            ("Verstanden?", "Verstanden."),
+            ("Bereit?", "Bereit."),
+        ]
+        pairs.extend(MINIMAL_GERMAN)
+        
+        # Minimal colors (both cases)
+        MINIMAL_COLORS = ["red", "Red", "blue", "Blue", "green", "Green", "yellow", "Yellow"]
+        for color in MINIMAL_COLORS:
+            pairs.append((f"Say {color}.", f"{color}."))
+        
+        # Minimal days
+        for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
+            pairs.append((f"Say {day}.", f"{day}."))
+        
+        # Skip all other categories in minimal mode
         return pairs
     
     # ==========================================================================
@@ -861,6 +952,9 @@ def main():
     parser.add_argument("--math", type=str, default="include",
                         choices=["include", "exclude", "only", "minimal"],
                         help="Math mode: include (full ~10k), minimal (~500), exclude (none), only (math only ~10k). Default: include")
+    parser.add_argument("--mode", type=str, default="full",
+                        choices=["full", "minimal"],
+                        help="Dataset mode: full (all categories ~2k+), minimal (~1k focused for format lock). Default: full")
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir)
@@ -868,8 +962,8 @@ def main():
     output_file = output_dir / "mypt_format_lock_v1.jsonl"
     
     # Generate pairs
-    print(f"Generating format lock dataset (math: {args.math})...")
-    pairs = generate_pairs(math_mode=args.math)
+    print(f"Generating format lock dataset (mode: {args.mode}, math: {args.math})...")
+    pairs = generate_pairs(math_mode=args.math, dataset_mode=args.mode)
     
     # Remove duplicates while preserving order
     seen = set()

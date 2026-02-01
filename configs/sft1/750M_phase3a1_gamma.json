@@ -1,0 +1,36 @@
+{
+  "name": "GPT-750M-Phase3a1-Gamma",
+  "description": "Phase 3a-1γ: Gibberish training. Teaches true copy ability with nonsense words. ~2000-3000 examples.",
+  
+  "batch_size": 16,
+  "block_size": 512,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.05,
+  "bias": false,
+  "tie_weights": true,
+  
+  "learning_rate": 5e-5,
+  "max_iters": 2500,
+  "eval_interval": 100,
+  "warmup_iters": 100,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+  
+  "use_loss_mask": true,
+  
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 4503,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+  
+  "weight_decay": 0.05,
+  
+  "eval_sets": null,
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase3a1_gamma.jsonl"
+}

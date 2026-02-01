@@ -384,7 +384,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Generate diverse echo instruction dataset")
-    parser.add_argument("--max_examples", type=int, default=4300, help="Cap on examples (default: 4300)")
+    parser.add_argument("--max_examples", type=int, default=None, help="Optional cap on examples (default: no cap, generates all)")
     parser.add_argument("--output_dir", type=str, default="data/sft_echo", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--gibberish", type=str, default="exclude", 
@@ -396,8 +396,9 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / "mypt_echo_diverse.jsonl"
     
-    # Generate pairs (capped to max_examples)
-    print(f"Generating echo instruction combinations (max: {args.max_examples}, gibberish: {args.gibberish})...")
+    # Generate pairs (no cap unless specified)
+    cap_msg = f"max: {args.max_examples}" if args.max_examples else "no cap"
+    print(f"Generating echo instruction combinations ({cap_msg}, gibberish: {args.gibberish})...")
     pairs = generate_echo_pairs(max_examples=args.max_examples, seed=args.seed, gibberish_mode=args.gibberish)
     
     # Create episodes
