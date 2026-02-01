@@ -13,9 +13,9 @@
   "tie_weights": true,
   
   "learning_rate": 5e-5,
-  "max_iters": 1000,
-  "eval_interval": 50,
-  "warmup_iters": 50,
+  "max_iters": 1700,
+  "eval_interval": 100,
+  "warmup_iters": 100,
   "use_amp": true,
   "amp_dtype": "bf16",
   
@@ -32,5 +32,7 @@
   
   "eval_sets": null,
   "eval_seed": 1337,
-  "log_file": "logs/train/phase3a_operator.jsonl"
+  "log_file": "logs/train/phase3a_operator.jsonl",
+  
+  "eval_prompts_file": "configs/sft_eval/phase3a_operator_eval_prompts.json"
 }
