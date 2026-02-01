@@ -231,20 +231,21 @@ def run_evaluation(
     
     def generate(prompt: str) -> str:
         """Generate response with deterministic settings."""
-        tokens = tokenizer.encode(prompt)
-        idx = torch.tensor([tokens], dtype=torch.long, device=device)
-        
         with torch.no_grad():
+            # model.generate expects a string prompt, returns string output
             output = model.generate(
-                idx,
+                prompt,
                 max_new_tokens=max_new_tokens,
                 temperature=0.0,  # Greedy
-                top_k=None,
+                top_k=0,  # Disabled (greedy)
                 top_p=1.0,
+                repetition_penalty=1.0,
             )
         
-        generated_tokens = output[0, len(tokens):].tolist()
-        return tokenizer.decode(generated_tokens)
+        # Output includes prompt, strip it to get just the generated part
+        if output.startswith(prompt):
+            return output[len(prompt):]
+        return output
     
     # Bucket A: Format Strict
     print("\n📋 Bucket A: Format Strict")
