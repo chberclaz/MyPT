@@ -6,6 +6,12 @@ Prepare chat SFT dataset with episode-indexed format and loss masking.
 Reads JSONL with conversations, serializes to special token format,
 and creates episode-indexed binary files with loss masks.
 
+PACKING MODE (--enable_packing):
+    For short episodes (like operator learning), packing combines multiple
+    episodes into single fixed-length sequences to maximize supervised token
+    density. This can improve mask ratio from ~13% to ~60-70%, dramatically
+    improving training efficiency.
+
 Input JSONL format:
     {"system": "...", "context": "...", "messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
 
@@ -29,11 +35,17 @@ For large datasets (>100M tokens), outputs multi-shard format:
         ...
 
 Usage:
+    # Basic (unpacked)
     python scripts/prepare_chat_sft.py --input data/chat.jsonl --output_dir data/chat_sft
     
-    # With custom settings
-    python scripts/prepare_chat_sft.py --input data/chat.jsonl --output_dir data/chat_sft \\
-        --val_split 0.1 --tokens_per_shard 50000000 --tokenization gpt2
+    # With separate val file
+    python scripts/prepare_chat_sft.py --input train.jsonl --output_dir data/sft \\
+        --val_file val.jsonl
+    
+    # PACKED (for short episodes like operator learning)
+    python scripts/prepare_chat_sft.py --input data/operator_train.jsonl --output_dir data/sft_packed \\
+        --val_file data/operator_val.jsonl \\
+        --enable_packing --pack_block_size 1024 --pack_by_field "_meta.operator"
 """
 
 import argparse
@@ -231,12 +243,39 @@ def parse_args():
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Verbose output")
     
+    # Packing options
+    parser.add_argument("--enable_packing", action="store_true",
+                        help="Enable sequence packing (fill block_size with multiple episodes)")
+    parser.add_argument("--pack_block_size", type=int, default=1024,
+                        help="Target packed sequence length (default: 1024)")
+    parser.add_argument("--pack_by_field", type=str, default=None,
+                        help="Group episodes by this metadata field before packing (e.g., '_meta.operator')")
+    parser.add_argument("--pack_shuffle", action="store_true", default=True,
+                        help="Shuffle episodes before packing (default: True)")
+    parser.add_argument("--no_pack_shuffle", action="store_false", dest="pack_shuffle",
+                        help="Don't shuffle episodes before packing")
+    
+    # System prompt options
+    parser.add_argument("--no_system_prompt", action="store_true",
+                        help="Skip system prompt (for operators/mechanical tasks to maximize mask ratio)")
+    parser.add_argument("--system_prompt", type=str, default=None,
+                        help="Override system prompt (default: use CONVERSATION_SYSTEM_PROMPT)")
+    
     return parser.parse_args()
 
 
-def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
+def serialize_conversation(
+    item: Dict[str, Any],
+    skip_system: bool = False,
+    system_prompt_override: Optional[str] = None
+) -> Tuple[str, str]:
     """
     Serialize a conversation to text + char-level mask.
+    
+    Args:
+        item: Conversation dict with 'messages' list
+        skip_system: If True, omit system prompt entirely (for operators, increases mask ratio)
+        system_prompt_override: Custom system prompt to use instead of default
     
     Returns:
         (text, char_mask) where char_mask has '1' for assistant chars, '0' otherwise
@@ -244,11 +283,13 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
     text_parts = []
     mask_parts = []
     
-    # System message (masked out) - always use centralized prompt for consistency
+    # System message (masked out) - skip for mechanical tasks to maximize mask ratio
     # NO newlines between tags - tags alone define structure
-    s = f"{SYSTEM_OPEN}{CONVERSATION_SYSTEM_PROMPT}{SYSTEM_CLOSE}"
-    text_parts.append(s)
-    mask_parts.append("0" * len(s))
+    if not skip_system:
+        prompt = system_prompt_override if system_prompt_override else CONVERSATION_SYSTEM_PROMPT
+        s = f"{SYSTEM_OPEN}{prompt}{SYSTEM_CLOSE}"
+        text_parts.append(s)
+        mask_parts.append("0" * len(s))
     
     # NOTE: We do NOT include <myPT_user_context> here!
     # The JSONL "context" field is just metadata (episode_id, language), NOT RAG context.
@@ -332,6 +373,206 @@ def char_mask_to_token_mask(
             token_mask.append(0)
     
     return token_ids, token_mask
+
+
+# =============================================================================
+# PACKING FUNCTIONS
+# =============================================================================
+
+def get_nested_field(obj: Dict, field_path: str) -> Optional[str]:
+    """
+    Get a nested field from a dictionary using dot notation.
+    
+    Example: get_nested_field({"_meta": {"operator": "COPY"}}, "_meta.operator") -> "COPY"
+    """
+    parts = field_path.split(".")
+    current = obj
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return str(current) if current is not None else None
+
+
+def group_by_field(items: List[Dict], field_path: str) -> Dict[str, List[Dict]]:
+    """
+    Group items by a nested field value.
+    
+    Returns dict mapping field_value -> list of items.
+    Items with missing field go to "_ungrouped" key.
+    """
+    groups: Dict[str, List[Dict]] = {}
+    for item in items:
+        key = get_nested_field(item, field_path)
+        if key is None:
+            key = "_ungrouped"
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(item)
+    return groups
+
+
+def greedy_bin_pack(
+    episodes: List[Tuple[List[int], List[int], Dict]],
+    block_size: int,
+    pad_token_id: int,
+) -> List[Tuple[List[int], List[int], Dict]]:
+    """
+    Pack multiple episodes into fixed-size blocks using greedy bin-packing.
+    
+    Episodes that don't fit entirely are NOT split - they go in the next block.
+    Each packed sequence is exactly block_size tokens (padded if needed).
+    
+    Args:
+        episodes: List of (tokens, mask, metadata) tuples
+        block_size: Target sequence length (e.g., 1024)
+        pad_token_id: Token ID for padding
+    
+    Returns:
+        List of packed (tokens, mask, metadata) tuples
+    
+    The metadata for packed sequences includes:
+        - _packed: True
+        - _num_episodes: count of episodes in this pack
+        - _original_categories: list of category values (if present)
+    """
+    if not episodes:
+        return []
+    
+    packed_sequences = []
+    
+    # Current pack being filled
+    current_tokens: List[int] = []
+    current_mask: List[int] = []
+    current_episode_count = 0
+    current_categories: List[str] = []
+    
+    for tokens, mask, meta in episodes:
+        ep_len = len(tokens)
+        
+        # Episode too long for block_size? Truncate (keep end to preserve closers)
+        if ep_len > block_size:
+            # Keep last block_size tokens
+            tokens = tokens[-block_size:]
+            mask = mask[-block_size:]
+            ep_len = block_size
+        
+        # Would adding this episode exceed block_size?
+        if len(current_tokens) + ep_len > block_size:
+            # Finalize current pack (if non-empty)
+            if current_tokens:
+                # Pad to block_size
+                pad_len = block_size - len(current_tokens)
+                if pad_len > 0:
+                    current_tokens.extend([pad_token_id] * pad_len)
+                    current_mask.extend([0] * pad_len)  # Don't train on padding
+                
+                packed_meta = {
+                    "_packed": True,
+                    "_num_episodes": current_episode_count,
+                    "_original_categories": current_categories,
+                }
+                packed_sequences.append((current_tokens, current_mask, packed_meta))
+            
+            # Start new pack
+            current_tokens = []
+            current_mask = []
+            current_episode_count = 0
+            current_categories = []
+        
+        # Add episode to current pack
+        current_tokens.extend(tokens)
+        current_mask.extend(mask)
+        current_episode_count += 1
+        
+        # Track category if present
+        cat = meta.get("_category")
+        if cat:
+            current_categories.append(cat)
+    
+    # Finalize last pack (if non-empty)
+    if current_tokens:
+        pad_len = block_size - len(current_tokens)
+        if pad_len > 0:
+            current_tokens.extend([pad_token_id] * pad_len)
+            current_mask.extend([0] * pad_len)
+        
+        packed_meta = {
+            "_packed": True,
+            "_num_episodes": current_episode_count,
+            "_original_categories": current_categories,
+        }
+        packed_sequences.append((current_tokens, current_mask, packed_meta))
+    
+    return packed_sequences
+
+
+def compute_packing_stats(
+    original_episodes: List[Tuple[List[int], List[int]]],
+    packed_sequences: List[Tuple[List[int], List[int], Dict]],
+    block_size: int,
+) -> Dict:
+    """
+    Compute statistics comparing unpacked vs packed datasets.
+    
+    Key insight: Without packing, each episode would be padded to block_size,
+    wasting most of the compute on padding. With packing, we fill the block
+    with multiple episodes, dramatically increasing supervised tokens per step.
+    """
+    # Original stats
+    orig_tokens = sum(len(tokens) for tokens, _ in original_episodes)
+    orig_mask_tokens = sum(sum(mask) for _, mask in original_episodes)
+    orig_mask_ratio = orig_mask_tokens / orig_tokens if orig_tokens > 0 else 0
+    avg_episode_len = orig_tokens / len(original_episodes) if original_episodes else 0
+    
+    # Packed stats
+    packed_tokens = sum(len(tokens) for tokens, _, _ in packed_sequences)
+    packed_mask_tokens = sum(sum(mask) for _, mask, _ in packed_sequences)
+    packed_mask_ratio = packed_mask_tokens / packed_tokens if packed_tokens > 0 else 0
+    
+    # Non-pad ratio (how much of packed sequences is actual content)
+    total_content_tokens = orig_tokens
+    total_packed_slots = len(packed_sequences) * block_size
+    nonpad_ratio = total_content_tokens / total_packed_slots if total_packed_slots > 0 else 0
+    
+    # Episodes per pack
+    eps_per_pack = [meta.get("_num_episodes", 1) for _, _, meta in packed_sequences]
+    avg_eps_per_pack = sum(eps_per_pack) / len(eps_per_pack) if eps_per_pack else 0
+    
+    # TRAINING EFFICIENCY: Compare supervised tokens per training step
+    # WITHOUT packing: each episode padded to block_size
+    #   effective_mask_per_step = orig_mask_ratio * (avg_episode_len / block_size)
+    # WITH packing: packed sequences at block_size
+    #   effective_mask_per_step = packed_mask_ratio
+    
+    unpacked_effective_mask = orig_mask_ratio * (avg_episode_len / block_size) if block_size > 0 else 0
+    packed_effective_mask = packed_mask_ratio
+    
+    # This is the real improvement: how many more supervised tokens per step
+    training_efficiency_gain = packed_effective_mask / unpacked_effective_mask if unpacked_effective_mask > 0 else 1.0
+    
+    return {
+        "original_episodes": len(original_episodes),
+        "original_tokens": orig_tokens,
+        "original_mask_tokens": orig_mask_tokens,
+        "original_mask_ratio": orig_mask_ratio,
+        "avg_episode_len": avg_episode_len,
+        "packed_sequences": len(packed_sequences),
+        "packed_tokens": packed_tokens,
+        "packed_mask_tokens": packed_mask_tokens,
+        "packed_mask_ratio": packed_mask_ratio,
+        "nonpad_ratio": nonpad_ratio,
+        "avg_episodes_per_pack": avg_eps_per_pack,
+        "min_episodes_per_pack": min(eps_per_pack) if eps_per_pack else 0,
+        "max_episodes_per_pack": max(eps_per_pack) if eps_per_pack else 0,
+        # Old metric (content ratio change, always ~1.0x)
+        "content_mask_change": packed_mask_ratio / orig_mask_ratio if orig_mask_ratio > 0 else 1.0,
+        # NEW: Real training efficiency gain (supervised tokens per step)
+        "unpacked_effective_mask": unpacked_effective_mask,
+        "packed_effective_mask": packed_effective_mask,
+        "training_efficiency_gain": training_efficiency_gain,
+    }
 
 
 class EpisodeShardWriter:
@@ -492,6 +733,12 @@ def main():
     else:
         print(f"  Val split: {args.val_split}")
     print(f"  Tokens per shard: {args.tokens_per_shard:,}")
+    if args.no_system_prompt:
+        print(f"  System prompt: SKIPPED (--no_system_prompt, maximizes mask ratio)")
+    elif args.system_prompt:
+        print(f"  System prompt: Custom override ({len(args.system_prompt)} chars)")
+    else:
+        print(f"  System prompt: Default (CONVERSATION_SYSTEM_PROMPT)")
     print()
     
     # Load conversations
@@ -587,75 +834,228 @@ def main():
     else:
         print(f"  Train: {len(conversations) - len(val_indices)}, Val: {len(val_indices)}")
     
+    # Get pad token ID for packing
+    pad_token_id = tokenizer.special_tokens.get('myPT_eot', 50271)
+    
     # Initialize shard writers
     train_writer = EpisodeShardWriter(args.output_dir, "train", args.tokens_per_shard)
     val_writer = EpisodeShardWriter(args.output_dir, "val", args.tokens_per_shard)
     
-    # Process conversations
-    print("\nProcessing and tokenizing...")
-    
+    # Stats tracking
     train_mask_sum = 0
     train_mask_count = 0
     val_mask_sum = 0
     val_mask_count = 0
+    packing_stats_train = None
+    packing_stats_val = None
     
-    def process_conversations(convs, split_name, writer, mask_sum_ref, mask_count_ref, check_val_indices=False):
-        """Process a list of conversations into a split."""
-        nonlocal train_mask_sum, train_mask_count, val_mask_sum, val_mask_count
+    def tokenize_conversation(conv: Dict, conv_idx: int) -> Tuple[List[int], List[int], Dict]:
+        """Tokenize a single conversation, return (tokens, mask, metadata)."""
+        text, char_mask = serialize_conversation(
+            conv,
+            skip_system=args.no_system_prompt,
+            system_prompt_override=args.system_prompt
+        )
+        tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
         
-        for i, conv in enumerate(convs):
-            # For random split mode, check if this index belongs to val
-            if check_val_indices:
-                actual_split = "val" if i in val_indices else "train"
-                if actual_split != split_name:
-                    continue
-            
-            # Serialize to text + char mask
-            text, char_mask = serialize_conversation(conv)
-            
-            episode_idx = writer.total_episodes
-            
-            # Audit: Log episode text before tokenization (for traceability)
-            if AUDIT_AVAILABLE:
-                # Truncate text for log (first 500 chars) to avoid huge log entries
-                text_preview = text[:500] + "..." if len(text) > 500 else text
-                # Escape newlines for single-line log format
-                text_preview_escaped = text_preview.replace("\n", "\\n")
-                audit.training(
-                    "episode_text",
-                    dataset_type="chat_sft",
-                    split=split_name,
-                    episode_idx=episode_idx,
-                    conversation_idx=i,
-                    text_length=len(text),
-                    num_assistant_chars=char_mask.count("1"),
-                    details=text_preview_escaped
-                )
-            
-            # Convert to token-level mask
-            tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
-            
-            writer.add_episode(tokens, mask)
-            if split_name == "train":
-                train_mask_sum += sum(mask)
-                train_mask_count += len(mask)
-            else:
-                val_mask_sum += sum(mask)
-                val_mask_count += len(mask)
+        # Build metadata for packing
+        meta = {"_conv_idx": conv_idx}
+        if args.pack_by_field:
+            category = get_nested_field(conv, args.pack_by_field)
+            if category:
+                meta["_category"] = category
+        
+        return tokens, mask, meta
     
-    if use_separate_val:
-        # Process train and val from separate files
-        print("  Processing train conversations...")
-        process_conversations(train_conversations, "train", train_writer, train_mask_sum, train_mask_count)
-        print("  Processing val conversations...")
-        process_conversations(val_conversations, "val", val_writer, val_mask_sum, val_mask_count)
+    def tokenize_all(convs: List[Dict], split_name: str) -> List[Tuple[List[int], List[int], Dict]]:
+        """Tokenize all conversations, return list of (tokens, mask, metadata)."""
+        episodes = []
+        for i, conv in enumerate(convs):
+            tokens, mask, meta = tokenize_conversation(conv, i)
+            episodes.append((tokens, mask, meta))
+            
+            if args.verbose and (i + 1) % 1000 == 0:
+                print(f"    Tokenized {i + 1}/{len(convs)} {split_name} conversations...")
+        
+        return episodes
+    
+    # ==========================================================================
+    # PACKING PATH
+    # ==========================================================================
+    if args.enable_packing:
+        print(f"\n{'='*60}")
+        print(f"  PACKING MODE ENABLED")
+        print(f"  Block size: {args.pack_block_size}")
+        print(f"  Group by: {args.pack_by_field or '(none)'}")
+        print(f"{'='*60}")
+        
+        # Prepare train/val conversation lists
+        if use_separate_val:
+            train_convs = train_conversations
+            val_convs = val_conversations
+        else:
+            train_convs = [c for i, c in enumerate(conversations) if i not in val_indices]
+            val_convs = [c for i, c in enumerate(conversations) if i in val_indices]
+        
+        # --- TOKENIZE ALL ---
+        print(f"\nTokenizing {len(train_convs)} train conversations...")
+        train_episodes = tokenize_all(train_convs, "train")
+        
+        print(f"Tokenizing {len(val_convs)} val conversations...")
+        val_episodes = tokenize_all(val_convs, "val")
+        
+        # --- PACK TRAIN ---
+        print(f"\nPacking train episodes...")
+        if args.pack_by_field:
+            # Group by category
+            train_groups = group_by_field(
+                [{"_tokens": t, "_mask": m, **meta} for t, m, meta in train_episodes],
+                "_category"
+            )
+            print(f"  Found {len(train_groups)} groups: {list(train_groups.keys())}")
+            
+            # Pack within each group
+            train_packed = []
+            for group_name, items in train_groups.items():
+                group_episodes = [(item["_tokens"], item["_mask"], item) for item in items]
+                if args.pack_shuffle:
+                    import random
+                    random.seed(args.seed)
+                    random.shuffle(group_episodes)
+                
+                packed = greedy_bin_pack(group_episodes, args.pack_block_size, pad_token_id)
+                print(f"    {group_name}: {len(group_episodes)} episodes → {len(packed)} packed sequences")
+                train_packed.extend(packed)
+        else:
+            # Pack all together
+            if args.pack_shuffle:
+                import random
+                random.seed(args.seed)
+                random.shuffle(train_episodes)
+            train_packed = greedy_bin_pack(train_episodes, args.pack_block_size, pad_token_id)
+        
+        # --- PACK VAL ---
+        print(f"\nPacking val episodes...")
+        if args.pack_by_field:
+            val_groups = group_by_field(
+                [{"_tokens": t, "_mask": m, **meta} for t, m, meta in val_episodes],
+                "_category"
+            )
+            val_packed = []
+            for group_name, items in val_groups.items():
+                group_episodes = [(item["_tokens"], item["_mask"], item) for item in items]
+                packed = greedy_bin_pack(group_episodes, args.pack_block_size, pad_token_id)
+                print(f"    {group_name}: {len(group_episodes)} episodes → {len(packed)} packed sequences")
+                val_packed.extend(packed)
+        else:
+            val_packed = greedy_bin_pack(val_episodes, args.pack_block_size, pad_token_id)
+        
+        # --- COMPUTE STATS ---
+        packing_stats_train = compute_packing_stats(
+            [(t, m) for t, m, _ in train_episodes],
+            train_packed,
+            args.pack_block_size
+        )
+        packing_stats_val = compute_packing_stats(
+            [(t, m) for t, m, _ in val_episodes],
+            val_packed,
+            args.pack_block_size
+        )
+        
+        # --- WRITE PACKED SEQUENCES ---
+        print(f"\nWriting packed sequences...")
+        for tokens, mask, _ in train_packed:
+            train_writer.add_episode(tokens, mask)
+            train_mask_sum += sum(mask)
+            train_mask_count += len(mask)
+        
+        for tokens, mask, _ in val_packed:
+            val_writer.add_episode(tokens, mask)
+            val_mask_sum += sum(mask)
+            val_mask_count += len(mask)
+        
+        # --- PACKING SUMMARY ---
+        print(f"\n{'='*60}")
+        print(f"  PACKING RESULTS")
+        print(f"{'='*60}")
+        print(f"\n  TRAIN:")
+        print(f"    Original: {packing_stats_train['original_episodes']} episodes, {packing_stats_train['original_tokens']:,} tokens")
+        print(f"    Avg episode length: {packing_stats_train['avg_episode_len']:.1f} tokens")
+        print(f"    Packed:   {packing_stats_train['packed_sequences']} sequences × {args.pack_block_size} = {packing_stats_train['packed_tokens']:,} tokens")
+        print(f"    Content utilization: {packing_stats_train['nonpad_ratio']:.1%} (was {packing_stats_train['avg_episode_len']/args.pack_block_size:.1%} without packing)")
+        print(f"    Supervised tokens/step: {packing_stats_train['unpacked_effective_mask']:.1%} → {packing_stats_train['packed_effective_mask']:.1%}")
+        print(f"    ⚡ TRAINING EFFICIENCY: {packing_stats_train['training_efficiency_gain']:.1f}x more supervised signal per step")
+        print(f"    Avg episodes/pack: {packing_stats_train['avg_episodes_per_pack']:.1f} (range: {packing_stats_train['min_episodes_per_pack']}-{packing_stats_train['max_episodes_per_pack']})")
+        
+        print(f"\n  VAL:")
+        print(f"    Original: {packing_stats_val['original_episodes']} episodes, {packing_stats_val['original_tokens']:,} tokens")
+        print(f"    Packed:   {packing_stats_val['packed_sequences']} sequences × {args.pack_block_size} = {packing_stats_val['packed_tokens']:,} tokens")
+        print(f"    ⚡ TRAINING EFFICIENCY: {packing_stats_val['training_efficiency_gain']:.1f}x")
+        print(f"{'='*60}")
+    
+    # ==========================================================================
+    # NON-PACKING PATH (original behavior)
+    # ==========================================================================
     else:
-        # Process with random split
-        process_conversations(conversations, "train", train_writer, train_mask_sum, train_mask_count, check_val_indices=True)
-        process_conversations(conversations, "val", val_writer, val_mask_sum, val_mask_count, check_val_indices=True)
+        print("\nProcessing and tokenizing...")
+        
+        def process_conversations(convs, split_name, writer, check_val_indices=False):
+            """Process a list of conversations into a split."""
+            nonlocal train_mask_sum, train_mask_count, val_mask_sum, val_mask_count
+            
+            for i, conv in enumerate(convs):
+                # For random split mode, check if this index belongs to val
+                if check_val_indices:
+                    actual_split = "val" if i in val_indices else "train"
+                    if actual_split != split_name:
+                        continue
+                
+                # Serialize to text + char mask
+                text, char_mask = serialize_conversation(
+                    conv,
+                    skip_system=args.no_system_prompt,
+                    system_prompt_override=args.system_prompt
+                )
+                
+                episode_idx = writer.total_episodes
+                
+                # Audit: Log episode text before tokenization (for traceability)
+                if AUDIT_AVAILABLE:
+                    text_preview = text[:500] + "..." if len(text) > 500 else text
+                    text_preview_escaped = text_preview.replace("\n", "\\n")
+                    audit.training(
+                        "episode_text",
+                        dataset_type="chat_sft",
+                        split=split_name,
+                        episode_idx=episode_idx,
+                        conversation_idx=i,
+                        text_length=len(text),
+                        num_assistant_chars=char_mask.count("1"),
+                        details=text_preview_escaped
+                    )
+                
+                # Convert to token-level mask
+                tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
+                
+                writer.add_episode(tokens, mask)
+                if split_name == "train":
+                    train_mask_sum += sum(mask)
+                    train_mask_count += len(mask)
+                else:
+                    val_mask_sum += sum(mask)
+                    val_mask_count += len(mask)
+        
+        if use_separate_val:
+            print("  Processing train conversations...")
+            process_conversations(train_conversations, "train", train_writer)
+            print("  Processing val conversations...")
+            process_conversations(val_conversations, "val", val_writer)
+        else:
+            process_conversations(conversations, "train", train_writer, check_val_indices=True)
+            process_conversations(conversations, "val", val_writer, check_val_indices=True)
     
     if args.verbose:
-        print(f"  Processed {train_writer.total_episodes + val_writer.total_episodes} total conversations")
+        print(f"  Processed {train_writer.total_episodes + val_writer.total_episodes} total sequences")
     
     # Finalize shards
     print("\nWriting shards...")
@@ -701,7 +1101,32 @@ def main():
         "source_train_file": os.path.abspath(args.input),
         "source_val_file": os.path.abspath(args.val_file) if args.val_file else None,
         "val_split": 0.0 if use_separate_val else args.val_split,
+        # System prompt settings
+        "skip_system_prompt": args.no_system_prompt,
+        "system_prompt_override": args.system_prompt,
     }
+    
+    # Add packing metadata
+    if args.enable_packing:
+        metadata["packing_enabled"] = True
+        metadata["pack_block_size"] = args.pack_block_size
+        metadata["pack_by_field"] = args.pack_by_field
+        metadata["num_train_mask_tokens"] = packing_stats_train["packed_mask_tokens"]
+        metadata["num_val_mask_tokens"] = packing_stats_val["packed_mask_tokens"]
+        metadata["original_train_episodes"] = packing_stats_train["original_episodes"]
+        metadata["original_val_episodes"] = packing_stats_val["original_episodes"]
+        metadata["original_train_mask_ratio"] = packing_stats_train["original_mask_ratio"]
+        metadata["avg_episode_len"] = packing_stats_train["avg_episode_len"]
+        metadata["avg_episodes_per_pack"] = packing_stats_train["avg_episodes_per_pack"]
+        metadata["nonpad_ratio"] = packing_stats_train["nonpad_ratio"]
+        # Training efficiency: how many more supervised tokens per step vs unpacked
+        metadata["training_efficiency_gain"] = packing_stats_train["training_efficiency_gain"]
+        metadata["unpacked_effective_mask"] = packing_stats_train["unpacked_effective_mask"]
+        metadata["packed_effective_mask"] = packing_stats_train["packed_effective_mask"]
+    else:
+        metadata["packing_enabled"] = False
+        metadata["num_train_mask_tokens"] = train_mask_sum
+        metadata["num_val_mask_tokens"] = val_mask_sum
     
     # Add file hashes for provenance (when using explicit val file)
     if use_separate_val:
@@ -719,9 +1144,17 @@ def main():
     print("\n" + "=" * 60)
     print(f"✅ Episode-indexed SFT dataset prepared successfully!")
     print(f"   Conversations: {len(conversations)}")
-    print(f"   Train: {train_writer.total_tokens:,} tokens, {train_writer.total_episodes} episodes ({train_shards} shard(s))")
-    print(f"   Val: {val_writer.total_tokens:,} tokens, {val_writer.total_episodes} episodes ({val_shards} shard(s))")
-    print(f"   Mask ratio: {train_mask_ratio:.1%} (assistant tokens)")
+    if args.enable_packing:
+        print(f"   Train: {train_writer.total_tokens:,} tokens, {train_writer.total_episodes} packed sequences ({train_shards} shard(s))")
+        print(f"          ({packing_stats_train['original_episodes']} original episodes packed)")
+        print(f"   Val: {val_writer.total_tokens:,} tokens, {val_writer.total_episodes} packed sequences ({val_shards} shard(s))")
+        print(f"          ({packing_stats_val['original_episodes']} original episodes packed)")
+        print(f"   Content mask ratio: {train_mask_ratio:.1%}")
+        print(f"   ⚡ Training efficiency: {packing_stats_train['training_efficiency_gain']:.1f}x more supervised tokens per step")
+    else:
+        print(f"   Train: {train_writer.total_tokens:,} tokens, {train_writer.total_episodes} episodes ({train_shards} shard(s))")
+        print(f"   Val: {val_writer.total_tokens:,} tokens, {val_writer.total_episodes} episodes ({val_shards} shard(s))")
+        print(f"   Mask ratio: {train_mask_ratio:.1%} (assistant tokens)")
     print(f"   Output: {args.output_dir}")
     print("=" * 60)
     

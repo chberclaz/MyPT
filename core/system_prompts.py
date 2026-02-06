@@ -28,7 +28,8 @@ Usage:
 #
 # =============================================================================
 
-CONVERSATION_SYSTEM_PROMPT = """You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly."""
+CONVERSATION_SYSTEM_PROMPT = """You are MyPT."""
+#CONVERSATION_SYSTEM_PROMPT = """You are MyPT. Be concise: 1-2 sentences. Follow instructions exactly."""
 
 
 # =============================================================================

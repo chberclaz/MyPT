@@ -6,6 +6,7 @@
 | ---------------------------------------------------------------------- | -------------------------------------------------------- |
 | [**guides/GETTING_STARTED.md**](guides/GETTING_STARTED.md)             | 🚀 Beginner walkthrough - your first model in 30 minutes |
 | [guides/DOMAIN_ADAPTATION_GUIDE.md](guides/DOMAIN_ADAPTATION_GUIDE.md) | Phase 1 & 2 training reproduction guide                  |
+| [**PHASE3A_SFT_COMPLETE_GUIDE.md**](PHASE3A_SFT_COMPLETE_GUIDE.md)     | 📚 **Phase 3a SFT: Dataset, Packing, Training, Operators** |
 | [guides/QUICK_REFERENCE.md](guides/QUICK_REFERENCE.md)                 | Command cheat sheet                                      |
 | [setup/INSTALL.md](setup/INSTALL.md)                                   | Detailed installation instructions                       |
 
@@ -15,7 +16,10 @@
 
 ```
 docs/
-├── README.md                    # This file
+├── README.md                        # This file
+├── PHASE3A_SFT_COMPLETE_GUIDE.md    # ★ MAIN SFT guide (dataset, packing, training)
+├── OPERATOR_TRAINING_RESULTS.md     # Operator learning experiment results
+├── positioning.md                   # Project positioning
 │
 ├── guides/                      # Step-by-Step Guides
 │   ├── GETTING_STARTED.md           # Beginner walkthrough
@@ -38,11 +42,11 @@ docs/
 │   ├── PARAMETER_CALCULATION.md     # Model sizing
 │   └── ...
 │
-├── sft/                         # Supervised Fine-Tuning
-│   ├── PHASE3A_CHAT_SFT_GUIDE.md    # Chat SFT guide
+├── sft/                         # Supervised Fine-Tuning (Reference)
 │   ├── SFT_LOSS_MASKING.md          # Loss masking explained
-│   ├── toolcall_sft.md              # Tool-calling SFT
+│   ├── toolcall_sft.md              # Tool-calling SFT (Phase 3b)
 │   ├── EPISODE_INDEXED_SFT.md       # Episode-indexed loader
+│   ├── GOLDEPISODES_REFERENCE.md    # Gold episode format
 │   └── ...
 │
 ├── model/                       # Model & Architecture
@@ -107,9 +111,10 @@ docs/
 
 ### 💬 Supervised Fine-Tuning (SFT)
 
-- [Chat SFT Guide](sft/PHASE3A_CHAT_SFT_GUIDE.md) - Conversation training
-- [Loss Masking](sft/SFT_LOSS_MASKING.md) - Assistant-only training
-- [Tool-calling SFT](sft/toolcall_sft.md) - Agentic RAG training
+- [**Phase 3a Complete Guide**](PHASE3A_SFT_COMPLETE_GUIDE.md) - **Main SFT guide** (dataset generation, packing, training, operators)
+- [Operator Training Results](OPERATOR_TRAINING_RESULTS.md) - Operator learning experiment results
+- [Loss Masking](sft/SFT_LOSS_MASKING.md) - Assistant-only training explained
+- [Tool-calling SFT](sft/toolcall_sft.md) - Agentic RAG training (Phase 3b)
 - [Episode-Indexed Loader](sft/EPISODE_INDEXED_SFT.md) - Conversation loader
 - [Gold Episodes](sft/GOLDEPISODES_REFERENCE.md) - Episode structure
 

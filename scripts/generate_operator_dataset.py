@@ -9,6 +9,7 @@ Key properties:
 2. Val/test use DIFFERENT templates than train (tests generalization)
 3. Exact-match metric: transformation either matches or doesn't
 4. Mechanical operators only: COPY, WRAP, EXTRACT
+5. Multi-word payloads (1-4 words) with configurable distribution
 
 Operators:
 - COPY: "Repeat exactly: {X}" → "{X}"
@@ -16,7 +17,14 @@ Operators:
 - EXTRACT: 'Return text between quotes: "{X}"' → "{X}"
 
 Usage:
+    # Default: multi-word payloads (35% 1-word, 30% 2-word, 20% 3-word, 15% 4-word)
     python scripts/generate_operator_dataset.py --output_dir data/sft_operator
+    
+    # Single-word only (legacy mode)
+    python scripts/generate_operator_dataset.py --output_dir data/sft_operator --max_words 1
+    
+    # Custom distribution
+    python scripts/generate_operator_dataset.py --output_dir data/sft_operator --word_dist "0.25,0.25,0.25,0.25"
 """
 
 import argparse
@@ -165,37 +173,107 @@ def generate_unique_payloads(
     seed: int, 
     exclude: Set[str] = None,
     tokenizer = None,
-    max_tokens: int = 4,
+    max_tokens: int = 12,
+    max_words: int = 4,
+    word_distribution: Tuple[float, ...] = (0.35, 0.30, 0.20, 0.15),
 ) -> List[str]:
-    """Generate unique payloads that never repeat, optionally filtered by BPE token count."""
+    """
+    Generate unique payloads that never repeat, optionally filtered by BPE token count.
+    
+    Args:
+        count: Number of payloads to generate
+        seed: Random seed for reproducibility
+        exclude: Set of payloads to exclude (for train/val separation)
+        tokenizer: Tokenizer for BPE filtering (optional)
+        max_tokens: Maximum BPE tokens per payload (default: 12 for multi-word)
+        max_words: Maximum words per payload (1-4, default: 4)
+        word_distribution: Probability for (1-word, 2-word, 3-word, 4-word) payloads
+                          Default: (0.35, 0.30, 0.20, 0.15)
+    
+    Returns:
+        List of unique payload strings
+    """
     random.seed(seed)
     exclude = exclude or set()
     payloads = []
     seen = set(exclude)
     
-    strategies = [
-        lambda: random.choice(COMMON_WORDS),  # Single common word
-        lambda: random.choice(GERMAN_WORDS),  # Single German word
-        lambda: f"{random.choice(COMMON_WORDS)} {random.choice(COMMON_WORDS)}",  # Two words
-        lambda: ''.join(random.choices(SYLLABLES, k=random.randint(2, 3))),  # Novel word
-        lambda: f"{random.choice(COMMON_WORDS)}{random.randint(10, 99)}",  # Word + number
-        lambda: f"{random.choice(SYLLABLES)}{random.choice(SYLLABLES)}-{random.choice(SYLLABLES)}",  # Hyphenated novel
-        lambda: ' '.join(random.choices(COMMON_WORDS, k=3)),  # Three words
-        lambda: f"{random.choice(COMMON_WORDS).upper()}",  # Uppercase word
-        lambda: f"{random.randint(100, 999)}",  # Just a number
-        lambda: f"{random.choice(COMMON_WORDS)} {random.randint(1, 100)}",  # Word + number phrase
-    ]
+    # Normalize word distribution to max_words
+    word_probs = list(word_distribution[:max_words])
+    total = sum(word_probs)
+    word_probs = [p / total for p in word_probs]
+    
+    # Strategy generators by word count
+    def gen_1_word():
+        """Single word strategies"""
+        strats = [
+            lambda: random.choice(COMMON_WORDS),
+            lambda: random.choice(GERMAN_WORDS),
+            lambda: ''.join(random.choices(SYLLABLES, k=random.randint(2, 3))),  # Novel word
+            lambda: f"{random.choice(COMMON_WORDS)}{random.randint(10, 99)}",  # Word + number
+            lambda: f"{random.choice(COMMON_WORDS).upper()}",  # Uppercase
+            lambda: f"{random.choice(COMMON_WORDS).capitalize()}",  # Capitalized
+            lambda: f"{random.randint(100, 9999)}",  # Just a number
+        ]
+        return random.choice(strats)()
+    
+    def gen_2_words():
+        """Two word strategies"""
+        strats = [
+            lambda: f"{random.choice(COMMON_WORDS)} {random.choice(COMMON_WORDS)}",
+            lambda: f"{random.choice(COMMON_WORDS)} {random.randint(1, 100)}",
+            lambda: f"{random.choice(GERMAN_WORDS)} {random.choice(GERMAN_WORDS)}",
+            lambda: f"{random.choice(COMMON_WORDS).upper()} {random.choice(COMMON_WORDS)}",
+            lambda: f"{random.choice(SYLLABLES)}{random.choice(SYLLABLES)} {random.choice(COMMON_WORDS)}",
+            lambda: f"the {random.choice(COMMON_WORDS)}",
+            lambda: f"{random.choice(['big', 'small', 'red', 'blue', 'old', 'new'])} {random.choice(COMMON_WORDS)}",
+        ]
+        return random.choice(strats)()
+    
+    def gen_3_words():
+        """Three word strategies"""
+        strats = [
+            lambda: ' '.join(random.choices(COMMON_WORDS, k=3)),
+            lambda: f"the {random.choice(COMMON_WORDS)} {random.choice(COMMON_WORDS)}",
+            lambda: f"{random.choice(COMMON_WORDS)} and {random.choice(COMMON_WORDS)}",
+            lambda: f"{random.choice(['big', 'small', 'red', 'blue'])} {random.choice(COMMON_WORDS)} {random.randint(1, 99)}",
+            lambda: f"{random.choice(GERMAN_WORDS)} {random.choice(GERMAN_WORDS)} {random.choice(GERMAN_WORDS)}",
+            lambda: f"a {random.choice(COMMON_WORDS)} {random.choice(['house', 'tree', 'river', 'mountain'])}",
+        ]
+        return random.choice(strats)()
+    
+    def gen_4_words():
+        """Four word strategies"""
+        strats = [
+            lambda: ' '.join(random.choices(COMMON_WORDS, k=4)),
+            lambda: f"the {random.choice(COMMON_WORDS)} {random.choice(['and', 'or', 'with'])} {random.choice(COMMON_WORDS)}",
+            lambda: f"{random.choice(COMMON_WORDS)} {random.choice(COMMON_WORDS)} {random.choice(COMMON_WORDS)} {random.randint(1, 99)}",
+            lambda: f"a {random.choice(['big', 'small', 'red', 'blue'])} {random.choice(COMMON_WORDS)} {random.choice(COMMON_WORDS)}",
+            lambda: f"{random.choice(GERMAN_WORDS)} {random.choice(GERMAN_WORDS)} und {random.choice(GERMAN_WORDS)}",
+        ]
+        return random.choice(strats)()
+    
+    word_generators = [gen_1_word, gen_2_words, gen_3_words, gen_4_words][:max_words]
     
     attempts = 0
-    max_attempts = count * 20  # More attempts since we filter
+    max_attempts = count * 30  # More attempts since we filter
     rejected_bpe = 0
+    rejected_duplicate = 0
+    
+    # Track word count distribution for reporting
+    word_count_stats = [0] * max_words
     
     while len(payloads) < count and attempts < max_attempts:
         attempts += 1
-        strategy = random.choice(strategies)
-        payload = strategy()
         
+        # Select word count based on distribution
+        word_count_idx = random.choices(range(len(word_probs)), weights=word_probs, k=1)[0]
+        generator = word_generators[word_count_idx]
+        payload = generator()
+        
+        # Skip duplicates
         if payload in seen:
+            rejected_duplicate += 1
             continue
         
         # BPE token count filter (if tokenizer provided)
@@ -207,17 +285,27 @@ def generate_unique_payloads(
         
         seen.add(payload)
         payloads.append(payload)
+        word_count_stats[word_count_idx] += 1
     
     if len(payloads) < count:
-        # Fill remaining with short random strings (guaranteed few tokens)
-        print(f"  Warning: Needed fallback strings. BPE rejected: {rejected_bpe}")
+        # Fill remaining with guaranteed-unique short strings
+        print(f"  Warning: Needed fallback strings. BPE rejected: {rejected_bpe}, duplicates: {rejected_duplicate}")
+        fallback_count = 0
         while len(payloads) < count:
-            # Short strings = fewer BPE tokens
-            payload = ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 6)))
+            # Generate unique fallback: word + unique number
+            base = random.choice(COMMON_WORDS)
+            payload = f"{base}_{fallback_count:04d}"
+            fallback_count += 1
             if payload not in seen:
                 if tokenizer is None or len(tokenizer.encode(payload)) <= max_tokens:
                     seen.add(payload)
                     payloads.append(payload)
+    
+    # Report distribution
+    total_generated = sum(word_count_stats)
+    if total_generated > 0:
+        dist_str = ", ".join([f"{i+1}w:{c}({100*c/total_generated:.0f}%)" for i, c in enumerate(word_count_stats)])
+        print(f"  Payload distribution: {dist_str}")
     
     random.shuffle(payloads)
     return payloads
@@ -297,10 +385,23 @@ def generate_dataset(
     seed_val: int = 12345,
     include_german: bool = True,
     tokenizer = None,
-    max_tokens: int = 4,
+    max_tokens: int = 12,
+    max_words: int = 4,
+    word_distribution: Tuple[float, ...] = (0.35, 0.30, 0.20, 0.15),
 ) -> Tuple[List[Dict], List[Dict], Dict]:
     """
     Generate train and val datasets with strict separation.
+    
+    Args:
+        n_train: Number of training examples
+        n_val: Number of validation examples
+        seed_train: Random seed for training data
+        seed_val: Random seed for validation data (must differ)
+        include_german: Include German language variants
+        tokenizer: Tokenizer for BPE filtering
+        max_tokens: Maximum BPE tokens per payload
+        max_words: Maximum words per payload (1-4)
+        word_distribution: Probability for (1w, 2w, 3w, 4w) payloads
     
     Returns:
         train_episodes: List of training episodes
@@ -314,15 +415,19 @@ def generate_dataset(
     n_val_per_op = n_val // n_operators
     
     # Generate UNIQUE payloads for train (BPE-filtered if tokenizer provided)
-    print(f"  Generating {n_train} unique train payloads...")
+    print(f"  Generating {n_train} unique train payloads (max {max_words} words, max {max_tokens} BPE tokens)...")
     train_payloads = generate_unique_payloads(
-        n_train, seed_train, tokenizer=tokenizer, max_tokens=max_tokens
+        n_train, seed_train, 
+        tokenizer=tokenizer, max_tokens=max_tokens,
+        max_words=max_words, word_distribution=word_distribution
     )
     
     # Generate UNIQUE payloads for val (different seed, no overlap)
     print(f"  Generating {n_val} unique val payloads...")
     val_payloads = generate_unique_payloads(
-        n_val, seed_val, exclude=set(train_payloads), tokenizer=tokenizer, max_tokens=max_tokens
+        n_val, seed_val, exclude=set(train_payloads), 
+        tokenizer=tokenizer, max_tokens=max_tokens,
+        max_words=max_words, word_distribution=word_distribution
     )
     
     # Verify no overlap
@@ -393,7 +498,8 @@ def generate_dataset(
         n_german = n_train // 10  # 10% German
         german_payloads = generate_unique_payloads(
             n_german * 3, seed_train + 1000, exclude=train_set | val_set,
-            tokenizer=tokenizer, max_tokens=max_tokens
+            tokenizer=tokenizer, max_tokens=max_tokens,
+            max_words=max_words, word_distribution=word_distribution
         )
         
         n_per_op = n_german
@@ -465,6 +571,9 @@ def generate_dataset(
         "payload_overlap": False,
         "seed_train": seed_train,
         "seed_val": seed_val,
+        "max_tokens": max_tokens,
+        "max_words": max_words,
+        "word_distribution": word_distribution,
     }
     
     return train_episodes, val_episodes, metadata
@@ -488,11 +597,21 @@ def main():
                         help="Random seed for validation data (MUST differ from train)")
     parser.add_argument("--no_german", action="store_true",
                         help="Exclude German examples")
-    parser.add_argument("--max_tokens", type=int, default=4,
-                        help="Max BPE tokens per payload (default: 4)")
+    parser.add_argument("--max_tokens", type=int, default=12,
+                        help="Max BPE tokens per payload (default: 12, for multi-word support)")
+    parser.add_argument("--max_words", type=int, default=4, choices=[1, 2, 3, 4],
+                        help="Max words per payload (1-4, default: 4)")
+    parser.add_argument("--word_dist", type=str, default="0.35,0.30,0.20,0.15",
+                        help="Word count distribution (comma-separated, default: 0.35,0.30,0.20,0.15 for 1w,2w,3w,4w)")
     parser.add_argument("--no_bpe_filter", action="store_true",
                         help="Disable BPE token filtering (not recommended)")
     args = parser.parse_args()
+    
+    # Parse word distribution
+    word_distribution = tuple(float(x) for x in args.word_dist.split(","))
+    if len(word_distribution) < args.max_words:
+        # Pad with zeros
+        word_distribution = word_distribution + (0.0,) * (args.max_words - len(word_distribution))
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -523,6 +642,8 @@ def main():
     print(f"  Val seed: {args.seed_val}")
     print(f"  Include German: {not args.no_german}")
     print(f"  Max BPE tokens: {args.max_tokens}")
+    print(f"  Max words: {args.max_words}")
+    print(f"  Word distribution: {word_distribution[:args.max_words]}")
     print()
     
     # Generate dataset
@@ -534,6 +655,8 @@ def main():
         include_german=not args.no_german,
         tokenizer=tokenizer,
         max_tokens=args.max_tokens,
+        max_words=args.max_words,
+        word_distribution=word_distribution,
     )
     
     # Write train file
