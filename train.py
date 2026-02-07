@@ -120,7 +120,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "freeze_layers", "freeze_embeddings"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
@@ -201,6 +201,8 @@ def main():
     print(f"Gradient clip: {effective_grad_clip}")
     print(f"Warmup: {effective_warmup_iters}")
     print(f"Mixed precision: {effective_amp_dtype.upper() if effective_use_amp else 'disabled'}")
+    if config_training.get('freeze_layers', 0) > 0:
+        print(f"Freeze layers: {config_training['freeze_layers']} (of {config_training.get('n_layer', '?')})")
     if args.init_from_model:
         print(f"Initializing from: {args.init_from_model}")
     print()
@@ -260,6 +262,57 @@ def main():
         dataset_tokenizer_state=dataset_tokenizer_state
     )
     model = model.to(config.device)
+    
+    # ---- Layer Freezing (for SFT generalization) ----
+    # Freezes the first N transformer blocks to preserve pre-trained capabilities
+    # (e.g., induction heads for copying). Only the last (n_layer - freeze_layers)
+    # blocks + ln_f + lm_head are trained, dramatically reducing trainable params
+    # and preventing memorization.
+    effective_freeze_layers = config_training.get('freeze_layers', 0)
+    effective_freeze_embeddings = config_training.get('freeze_embeddings', False)
+    
+    if effective_freeze_layers > 0 or effective_freeze_embeddings:
+        n_layer = model.config.n_layer
+        
+        if effective_freeze_layers > n_layer:
+            print(f"WARNING: freeze_layers={effective_freeze_layers} > n_layer={n_layer}, clamping to {n_layer}")
+            effective_freeze_layers = n_layer
+        
+        # Freeze embedding layers if requested
+        if effective_freeze_embeddings:
+            for param in model.token_embedding_table.parameters():
+                param.requires_grad = False
+            for param in model.position_embedding_table.parameters():
+                param.requires_grad = False
+            # If tie_weights is on, freezing embeddings also freezes lm_head (shared weight)
+            if getattr(model.config, 'tie_weights', False):
+                print("  WARNING: tie_weights=True and freeze_embeddings=True means lm_head is also frozen!")
+                print("  Consider setting freeze_embeddings=False with tie_weights=True.")
+        
+        # Freeze first N transformer blocks
+        for i in range(effective_freeze_layers):
+            for param in model.blocks[i].parameters():
+                param.requires_grad = False
+        
+        # Recreate optimizer with only trainable parameters
+        optimizer = model.configure_optimizer(effective_learning_rate, effective_weight_decay)
+        
+        # Report
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        frozen = total - trainable
+        
+        print(f"\n========== Layer Freezing ==========")
+        print(f"Frozen blocks: {effective_freeze_layers}/{n_layer} (blocks 0-{effective_freeze_layers - 1})")
+        print(f"Trainable blocks: {n_layer - effective_freeze_layers} (blocks {effective_freeze_layers}-{n_layer - 1})")
+        if effective_freeze_embeddings:
+            print(f"Embeddings: FROZEN")
+        else:
+            print(f"Embeddings: trainable")
+        print(f"ln_f + lm_head: trainable")
+        print(f"Parameters: {trainable:,} trainable / {total:,} total ({100*trainable/total:.1f}%)")
+        print(f"Frozen: {frozen:,} ({100*frozen/total:.1f}%)")
+        print()
     
     # Smart dtype selection based on GPU capability
     # - A100/H100 (compute 8.0+): Native bf16 support, use bf16 throughout

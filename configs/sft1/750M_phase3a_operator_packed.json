@@ -1,6 +1,6 @@
 {
   "name": "GPT-750M-Phase3a-Operator-Packed",
-  "description": "Operator learning with packed sequences (100k episodes, 37% mask ratio, 57x efficiency). Lower LR for richer gradients.",
+  "description": "Operator learning with packed sequences (100k episodes, 37% mask ratio, 57x efficiency). Layer freezing to preserve pre-trained induction heads and prevent memorization.",
   
   "batch_size": 16,
   "block_size": 1024,
@@ -20,6 +20,9 @@
   "amp_dtype": "bf16",
   
   "use_loss_mask": true,
+  
+  "freeze_layers": 28,
+  "freeze_embeddings": false,
   
   "batch_sampling_mode": "epoch",
   "pad_token_id": null,
