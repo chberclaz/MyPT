@@ -251,6 +251,11 @@ def main():
             )
     
     # Initialize model (handles resume / init_from / fresh)
+    # Layer freezing is applied inside initialize_for_training, BEFORE the
+    # optimizer is created, so saved optimizer state can be restored on resume.
+    effective_freeze_layers = config_training.get('freeze_layers', 0)
+    effective_freeze_embeddings = config_training.get('freeze_embeddings', False)
+    
     print("\nInitializing model...")
     model, optimizer, start_step = ckpt_manager.initialize_for_training(
         config=config,
@@ -259,45 +264,22 @@ def main():
         learning_rate=effective_learning_rate,
         init_from_model=args.init_from_model,
         weight_decay=effective_weight_decay,
-        dataset_tokenizer_state=dataset_tokenizer_state
+        dataset_tokenizer_state=dataset_tokenizer_state,
+        freeze_layers=effective_freeze_layers,
+        freeze_embeddings=effective_freeze_embeddings,
     )
     model = model.to(config.device)
     
-    # ---- Layer Freezing (for SFT generalization) ----
-    # Freezes the first N transformer blocks to preserve pre-trained capabilities
-    # (e.g., induction heads for copying). Only the last (n_layer - freeze_layers)
-    # blocks + ln_f + lm_head are trained, dramatically reducing trainable params
-    # and preventing memorization.
-    effective_freeze_layers = config_training.get('freeze_layers', 0)
-    effective_freeze_embeddings = config_training.get('freeze_embeddings', False)
-    
+    # ---- Layer Freezing Report ----
     if effective_freeze_layers > 0 or effective_freeze_embeddings:
         n_layer = model.config.n_layer
+        effective_freeze_layers = min(effective_freeze_layers, n_layer)
         
-        if effective_freeze_layers > n_layer:
-            print(f"WARNING: freeze_layers={effective_freeze_layers} > n_layer={n_layer}, clamping to {n_layer}")
-            effective_freeze_layers = n_layer
+        # Warn about tie_weights + freeze_embeddings conflict
+        if effective_freeze_embeddings and getattr(model.config, 'tie_weights', False):
+            print("  WARNING: tie_weights=True and freeze_embeddings=True means lm_head is also frozen!")
+            print("  Consider setting freeze_embeddings=False with tie_weights=True.")
         
-        # Freeze embedding layers if requested
-        if effective_freeze_embeddings:
-            for param in model.token_embedding_table.parameters():
-                param.requires_grad = False
-            for param in model.position_embedding_table.parameters():
-                param.requires_grad = False
-            # If tie_weights is on, freezing embeddings also freezes lm_head (shared weight)
-            if getattr(model.config, 'tie_weights', False):
-                print("  WARNING: tie_weights=True and freeze_embeddings=True means lm_head is also frozen!")
-                print("  Consider setting freeze_embeddings=False with tie_weights=True.")
-        
-        # Freeze first N transformer blocks
-        for i in range(effective_freeze_layers):
-            for param in model.blocks[i].parameters():
-                param.requires_grad = False
-        
-        # Recreate optimizer with only trainable parameters
-        optimizer = model.configure_optimizer(effective_learning_rate, effective_weight_decay)
-        
-        # Report
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total = sum(p.numel() for p in model.parameters())
         frozen = total - trainable

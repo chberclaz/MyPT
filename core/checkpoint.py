@@ -38,7 +38,8 @@ class CheckpointManager:
     
     def initialize_for_training(self, config, tokenization, input_text, 
                                 learning_rate, init_from_model=None,
-                                dataset_tokenizer_state=None, weight_decay=0.1):
+                                dataset_tokenizer_state=None, weight_decay=0.1,
+                                freeze_layers=0, freeze_embeddings=False):
         """
         Initialize model for training. Handles 3 cases:
         1. Resume from this model's checkpoint
@@ -55,6 +56,8 @@ class CheckpointManager:
             init_from_model: Optional model name to initialize from
             dataset_tokenizer_state: Optional tokenizer state from dataset directory (sharded mode)
             weight_decay: Weight decay for AdamW optimizer (default: 0.1)
+            freeze_layers: Number of transformer blocks to freeze (0 = none)
+            freeze_embeddings: Whether to freeze embedding layers
         
         Returns: (model, optimizer, start_step)
         """
@@ -64,6 +67,7 @@ class CheckpointManager:
         if self.exists_new_format():
             print(f"Found checkpoint in new format at {self.checkpoint_dir}, resuming training.")
             model, _, start_step, optim_state = GPT.load(self.checkpoint_dir, map_location=device)
+            self._apply_layer_freezing(model, freeze_layers, freeze_embeddings)
             optimizer = model.configure_optimizer(learning_rate, weight_decay, optim_state)
             return model, optimizer, start_step or 0
         
@@ -72,6 +76,7 @@ class CheckpointManager:
             print("Note: Will save in new JSON format on next checkpoint.")
             legacy_path = self.get_path("latest.pt")
             model, _, start_step, optim_state = GPT.load_legacy(legacy_path, map_location=device)
+            self._apply_layer_freezing(model, freeze_layers, freeze_embeddings)
             optimizer = model.configure_optimizer(learning_rate, weight_decay, optim_state)
             return model, optimizer, start_step or 0
         
@@ -140,6 +145,7 @@ class CheckpointManager:
             print(f"  batch_size: {model.config.batch_size}")
             print(f"  tie_weights: {model.config.tie_weights}")
             
+            self._apply_layer_freezing(model, freeze_layers, freeze_embeddings)
             optimizer = model.configure_optimizer(learning_rate, weight_decay)
             return model, optimizer, 0  # start from step 0 for new training
         
@@ -172,6 +178,30 @@ class CheckpointManager:
             model = GPT(config, tokenizer=tokenizer).to(device)
             optimizer = model.configure_optimizer(learning_rate, weight_decay)
             return model, optimizer, 0
+    
+    @staticmethod
+    def _apply_layer_freezing(model, freeze_layers: int, freeze_embeddings: bool):
+        """Apply layer freezing to model before optimizer creation.
+        
+        Freezes the first N transformer blocks (and optionally embeddings)
+        by setting requires_grad=False. This must be called BEFORE
+        configure_optimizer() so the optimizer only tracks trainable params.
+        """
+        if freeze_layers <= 0 and not freeze_embeddings:
+            return
+        
+        n_layer = model.config.n_layer
+        freeze_layers = min(freeze_layers, n_layer)
+        
+        if freeze_embeddings:
+            for param in model.token_embedding_table.parameters():
+                param.requires_grad = False
+            for param in model.position_embedding_table.parameters():
+                param.requires_grad = False
+        
+        for i in range(freeze_layers):
+            for param in model.blocks[i].parameters():
+                param.requires_grad = False
     
     def _validate_tokenization(self, base_tok_state, requested_tokenization, 
                                init_from_model, model, config):

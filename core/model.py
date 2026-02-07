@@ -754,7 +754,11 @@ class GPT(nn.Module):
         
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95))
         if optimizer_state is not None:
-            optimizer.load_state_dict(optimizer_state)
+            try:
+                optimizer.load_state_dict(optimizer_state)
+            except (ValueError, RuntimeError) as e:
+                print(f"  Warning: Could not restore optimizer state: {e}")
+                print(f"  Starting with fresh optimizer (normal when freeze_layers changed)")
         return optimizer
     
     @torch.no_grad()
