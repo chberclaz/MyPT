@@ -1,19 +1,19 @@
 {
-  "description": "Operator evaluation for packed training (no system prompt). Uses VAL templates + multi-word payloads.",
-  "notes": "Prompts have NO system prompt to match --no_system_prompt training. Tests single and multi-word payloads.",
+  "description": "Operator evaluation with VARIED DELIMITERS for payload boundaries.",
+  "notes": "Uses mix of backticks, single quotes, and pipes. Model must learn abstract 'delimited content' concept.",
   
   "prompts": {
-    "copy_parrot_single": "<myPT_user>Parrot this: diamond</myPT_user><myPT_assistant>",
-    "copy_verbatim_single": "<myPT_user>Return verbatim: crystal</myPT_user><myPT_assistant>",
-    "copy_mirror_single": "<myPT_user>Mirror: sapphire</myPT_user><myPT_assistant>",
-    "copy_parrot_multi": "<myPT_user>Parrot this: blue ocean wave</myPT_user><myPT_assistant>",
-    "copy_verbatim_multi": "<myPT_user>Return verbatim: dark forest night</myPT_user><myPT_assistant>",
+    "copy_parrot_single": "<myPT_user>Parrot this: `diamond`</myPT_user><myPT_assistant>",
+    "copy_verbatim_single": "<myPT_user>Return verbatim: 'crystal'</myPT_user><myPT_assistant>",
+    "copy_mirror_single": "<myPT_user>Mirror |sapphire|</myPT_user><myPT_assistant>",
+    "copy_parrot_multi": "<myPT_user>Parrot this: `blue ocean wave`</myPT_user><myPT_assistant>",
+    "copy_verbatim_multi": "<myPT_user>Return verbatim: 'dark forest night'</myPT_user><myPT_assistant>",
     
-    "wrap_brackets_single": "<myPT_user>Put in square brackets: ruby</myPT_user><myPT_assistant>",
-    "wrap_add_single": "<myPT_user>Add [] around: emerald</myPT_user><myPT_assistant>",
-    "wrap_surround_single": "<myPT_user>Surround with brackets: onyx</myPT_user><myPT_assistant>",
-    "wrap_brackets_multi": "<myPT_user>Put in square brackets: golden sunset sky</myPT_user><myPT_assistant>",
-    "wrap_add_multi": "<myPT_user>Add [] around: silver moonlight</myPT_user><myPT_assistant>",
+    "wrap_brackets_single": "<myPT_user>Put in square brackets: `ruby`</myPT_user><myPT_assistant>",
+    "wrap_add_single": "<myPT_user>Add [] around 'emerald'</myPT_user><myPT_assistant>",
+    "wrap_surround_single": "<myPT_user>Surround with []: |onyx|</myPT_user><myPT_assistant>",
+    "wrap_brackets_multi": "<myPT_user>Put in square brackets: `golden sunset sky`</myPT_user><myPT_assistant>",
+    "wrap_add_multi": "<myPT_user>Add [] around 'silver moonlight'</myPT_user><myPT_assistant>",
     
     "extract_inside_single": "<myPT_user>What's inside the quotes: \"topaz\"</myPT_user><myPT_assistant>",
     "extract_quoted_single": "<myPT_user>Get the quoted part: \"pearl\"</myPT_user><myPT_assistant>",

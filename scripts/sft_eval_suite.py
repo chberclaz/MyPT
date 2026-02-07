@@ -144,36 +144,35 @@ def build_operator_prompts(use_val_templates: bool = False):
     
     if use_val_templates:
         # =====================================================================
-        # VAL TEMPLATES - from generate_operator_dataset.py validation set
-        # These are different from TRAIN but closer to training distribution
-        # Use to diagnose: is failure due to extreme novelty or true abstraction failure?
+        # VAL TEMPLATES - VARIED DELIMITERS (backticks, quotes, pipes)
+        # Tests if model learned abstract "delimited content" concept
         # =====================================================================
         
-        # COPY - VAL templates
-        prompts.append(("op_copy_1w_1", make_prompt("Parrot this: xylophone"), "COPY", "xylophone"))
-        prompts.append(("op_copy_1w_2", make_prompt("Return verbatim: quantum"), "COPY", "quantum"))
-        prompts.append(("op_copy_1w_3", make_prompt("Mirror nebula"), "COPY", "nebula"))
-        prompts.append(("op_copy_1w_4", make_prompt("Reproduce twilight"), "COPY", "twilight"))
-        prompts.append(("op_copy_1w_5", make_prompt("Output exactly cascade"), "COPY", "cascade"))
-        prompts.append(("op_copy_2w_1", make_prompt("Parrot this: blue ocean"), "COPY", "blue ocean"))
-        prompts.append(("op_copy_2w_2", make_prompt("Mirror dark forest"), "COPY", "dark forest"))
-        prompts.append(("op_copy_3w_1", make_prompt("Return verbatim: red mountain peak"), "COPY", "red mountain peak"))
-        prompts.append(("op_copy_3w_2", make_prompt("Reproduce golden sunset sky"), "COPY", "golden sunset sky"))
-        prompts.append(("op_copy_4w_1", make_prompt("Output exactly the river and valley"), "COPY", "the river and valley"))
+        # COPY - VAL templates (varied delimiters)
+        prompts.append(("op_copy_1w_1", make_prompt("Parrot this: `xylophone`"), "COPY", "xylophone"))
+        prompts.append(("op_copy_1w_2", make_prompt("Return verbatim: 'quantum'"), "COPY", "quantum"))
+        prompts.append(("op_copy_1w_3", make_prompt("Parrot |nebula|"), "COPY", "nebula"))
+        prompts.append(("op_copy_1w_4", make_prompt("Mirror `twilight`"), "COPY", "twilight"))
+        prompts.append(("op_copy_1w_5", make_prompt("Reproduce 'cascade'"), "COPY", "cascade"))
+        prompts.append(("op_copy_2w_1", make_prompt("Parrot this: `blue ocean`"), "COPY", "blue ocean"))
+        prompts.append(("op_copy_2w_2", make_prompt("Mirror |dark forest|"), "COPY", "dark forest"))
+        prompts.append(("op_copy_3w_1", make_prompt("Return verbatim: 'red mountain peak'"), "COPY", "red mountain peak"))
+        prompts.append(("op_copy_3w_2", make_prompt("Reproduce `golden sunset sky`"), "COPY", "golden sunset sky"))
+        prompts.append(("op_copy_4w_1", make_prompt("Output exactly |the river and valley|"), "COPY", "the river and valley"))
         
-        # WRAP - VAL templates
-        prompts.append(("op_wrap_1w_1", make_prompt("Put in square brackets: phoenix"), "WRAP", "[phoenix]"))
-        prompts.append(("op_wrap_1w_2", make_prompt("Wrap with [] marble"), "WRAP", "[marble]"))
-        prompts.append(("op_wrap_1w_3", make_prompt("Add [] around crystal"), "WRAP", "[crystal]"))
-        prompts.append(("op_wrap_1w_4", make_prompt("Put brackets around thunder"), "WRAP", "[thunder]"))
-        prompts.append(("op_wrap_1w_5", make_prompt("Put in square brackets: horizon"), "WRAP", "[horizon]"))
-        prompts.append(("op_wrap_2w_1", make_prompt("Add [] around silver moonlight"), "WRAP", "[silver moonlight]"))
-        prompts.append(("op_wrap_2w_2", make_prompt("Put brackets around wild river"), "WRAP", "[wild river]"))
-        prompts.append(("op_wrap_3w_1", make_prompt("Put in square brackets: ancient stone bridge"), "WRAP", "[ancient stone bridge]"))
-        prompts.append(("op_wrap_3w_2", make_prompt("Wrap with [] cold winter night"), "WRAP", "[cold winter night]"))
-        prompts.append(("op_wrap_4w_1", make_prompt("Add [] around the forest and lake"), "WRAP", "[the forest and lake]"))
+        # WRAP - VAL templates (varied delimiters)
+        prompts.append(("op_wrap_1w_1", make_prompt("Put in square brackets: `phoenix`"), "WRAP", "[phoenix]"))
+        prompts.append(("op_wrap_1w_2", make_prompt("Wrap with []: 'marble'"), "WRAP", "[marble]"))
+        prompts.append(("op_wrap_1w_3", make_prompt("Add [] around |crystal|"), "WRAP", "[crystal]"))
+        prompts.append(("op_wrap_1w_4", make_prompt("Put brackets around `thunder`"), "WRAP", "[thunder]"))
+        prompts.append(("op_wrap_1w_5", make_prompt("Put in square brackets: 'horizon'"), "WRAP", "[horizon]"))
+        prompts.append(("op_wrap_2w_1", make_prompt("Add [] around `silver moonlight`"), "WRAP", "[silver moonlight]"))
+        prompts.append(("op_wrap_2w_2", make_prompt("Put brackets around |wild river|"), "WRAP", "[wild river]"))
+        prompts.append(("op_wrap_3w_1", make_prompt("Put in square brackets: 'ancient stone bridge'"), "WRAP", "[ancient stone bridge]"))
+        prompts.append(("op_wrap_3w_2", make_prompt("Wrap with []: `cold winter night`"), "WRAP", "[cold winter night]"))
+        prompts.append(("op_wrap_4w_1", make_prompt("Add [] around |the forest and lake|"), "WRAP", "[the forest and lake]"))
         
-        # EXTRACT - VAL templates
+        # EXTRACT - VAL templates (quotes already provide boundaries)
         prompts.append(("op_extract_1w_1", make_prompt('What\'s inside "emerald"?'), "EXTRACT", "emerald"))
         prompts.append(("op_extract_1w_2", make_prompt('Output the quoted content: "silver"'), "EXTRACT", "silver"))
         prompts.append(("op_extract_1w_3", make_prompt('Get the text from "dragon"'), "EXTRACT", "dragon"))
@@ -188,38 +187,38 @@ def build_operator_prompts(use_val_templates: bool = False):
     else:
         # =====================================================================
         # NOVEL TEMPLATES - completely new phrasings never seen in train OR val
-        # These test TRUE abstraction - can the model generalize to any phrasing?
+        # VARIED DELIMITERS - tests if model learned abstract "delimited content"
         # =====================================================================
         
-        # COPY - single word (novel templates)
-        prompts.append(("op_copy_1w_1", make_prompt("Give back: xylophone"), "COPY", "xylophone"))
-        prompts.append(("op_copy_1w_2", make_prompt("Send this unchanged: quantum"), "COPY", "quantum"))
-        prompts.append(("op_copy_1w_3", make_prompt("What I say is nebula"), "COPY", "nebula"))
-        prompts.append(("op_copy_1w_4", make_prompt("Relay: twilight"), "COPY", "twilight"))
-        prompts.append(("op_copy_1w_5", make_prompt("Pass through cascade"), "COPY", "cascade"))
+        # COPY - single word (novel templates, varied delimiters)
+        prompts.append(("op_copy_1w_1", make_prompt("Give back: `xylophone`"), "COPY", "xylophone"))
+        prompts.append(("op_copy_1w_2", make_prompt("Send this unchanged: 'quantum'"), "COPY", "quantum"))
+        prompts.append(("op_copy_1w_3", make_prompt("What I say is |nebula|"), "COPY", "nebula"))
+        prompts.append(("op_copy_1w_4", make_prompt("Relay: `twilight`"), "COPY", "twilight"))
+        prompts.append(("op_copy_1w_5", make_prompt("Pass through 'cascade'"), "COPY", "cascade"))
         
-        # COPY - multi-word (novel templates)
-        prompts.append(("op_copy_2w_1", make_prompt("Transmit exactly: blue ocean"), "COPY", "blue ocean"))
-        prompts.append(("op_copy_2w_2", make_prompt("Feed back dark forest"), "COPY", "dark forest"))
-        prompts.append(("op_copy_3w_1", make_prompt("Bounce back: red mountain peak"), "COPY", "red mountain peak"))
-        prompts.append(("op_copy_3w_2", make_prompt("Return unchanged golden sunset sky"), "COPY", "golden sunset sky"))
-        prompts.append(("op_copy_4w_1", make_prompt("Spit out the river and valley"), "COPY", "the river and valley"))
+        # COPY - multi-word (novel templates, varied delimiters)
+        prompts.append(("op_copy_2w_1", make_prompt("Transmit exactly: `blue ocean`"), "COPY", "blue ocean"))
+        prompts.append(("op_copy_2w_2", make_prompt("Feed back |dark forest|"), "COPY", "dark forest"))
+        prompts.append(("op_copy_3w_1", make_prompt("Bounce back: 'red mountain peak'"), "COPY", "red mountain peak"))
+        prompts.append(("op_copy_3w_2", make_prompt("Return unchanged `golden sunset sky`"), "COPY", "golden sunset sky"))
+        prompts.append(("op_copy_4w_1", make_prompt("Spit out |the river and valley|"), "COPY", "the river and valley"))
         
-        # WRAP - single word (novel templates)
-        prompts.append(("op_wrap_1w_1", make_prompt("Frame with brackets: phoenix"), "WRAP", "[phoenix]"))
-        prompts.append(("op_wrap_1w_2", make_prompt("Box this in []: marble"), "WRAP", "[marble]"))
-        prompts.append(("op_wrap_1w_3", make_prompt("Sandwich between [ and ]: crystal"), "WRAP", "[crystal]"))
-        prompts.append(("op_wrap_1w_4", make_prompt("Place brackets on thunder"), "WRAP", "[thunder]"))
-        prompts.append(("op_wrap_1w_5", make_prompt("Give me horizon with [] around it"), "WRAP", "[horizon]"))
+        # WRAP - single word (novel templates, varied delimiters)
+        prompts.append(("op_wrap_1w_1", make_prompt("Frame with brackets: `phoenix`"), "WRAP", "[phoenix]"))
+        prompts.append(("op_wrap_1w_2", make_prompt("Box this in []: 'marble'"), "WRAP", "[marble]"))
+        prompts.append(("op_wrap_1w_3", make_prompt("Sandwich between [ and ]: |crystal|"), "WRAP", "[crystal]"))
+        prompts.append(("op_wrap_1w_4", make_prompt("Place brackets on `thunder`"), "WRAP", "[thunder]"))
+        prompts.append(("op_wrap_1w_5", make_prompt("Give me 'horizon' with [] around it"), "WRAP", "[horizon]"))
         
-        # WRAP - multi-word (novel templates)
-        prompts.append(("op_wrap_2w_1", make_prompt("Package in brackets silver moonlight"), "WRAP", "[silver moonlight]"))
-        prompts.append(("op_wrap_2w_2", make_prompt("Return wild river inside []"), "WRAP", "[wild river]"))
-        prompts.append(("op_wrap_3w_1", make_prompt("Bookend with []: ancient stone bridge"), "WRAP", "[ancient stone bridge]"))
-        prompts.append(("op_wrap_3w_2", make_prompt("cold winter night but in brackets"), "WRAP", "[cold winter night]"))
-        prompts.append(("op_wrap_4w_1", make_prompt("I need the forest and lake wrapped in []"), "WRAP", "[the forest and lake]"))
+        # WRAP - multi-word (novel templates, varied delimiters)
+        prompts.append(("op_wrap_2w_1", make_prompt("Package in brackets `silver moonlight`"), "WRAP", "[silver moonlight]"))
+        prompts.append(("op_wrap_2w_2", make_prompt("Return |wild river| inside []"), "WRAP", "[wild river]"))
+        prompts.append(("op_wrap_3w_1", make_prompt("Bookend with []: 'ancient stone bridge'"), "WRAP", "[ancient stone bridge]"))
+        prompts.append(("op_wrap_3w_2", make_prompt("`cold winter night` but in brackets"), "WRAP", "[cold winter night]"))
+        prompts.append(("op_wrap_4w_1", make_prompt("I need |the forest and lake| wrapped in []"), "WRAP", "[the forest and lake]"))
         
-        # EXTRACT - single word (novel templates)
+        # EXTRACT - single word (novel templates - quotes already provide boundaries)
         prompts.append(("op_extract_1w_1", make_prompt('Strip the quotes from "emerald"'), "EXTRACT", "emerald"))
         prompts.append(("op_extract_1w_2", make_prompt('Unquote: "silver"'), "EXTRACT", "silver"))
         prompts.append(("op_extract_1w_3", make_prompt('Remove quotation marks from "dragon"'), "EXTRACT", "dragon"))

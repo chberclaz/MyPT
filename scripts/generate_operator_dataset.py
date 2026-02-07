@@ -39,53 +39,57 @@ from collections import defaultdict
 # TEMPLATE DEFINITIONS - STRICTLY SPLIT BETWEEN TRAIN AND VAL
 # =============================================================================
 
-# COPY operator templates (mix of with/without colons to avoid bias)
+# COPY operator templates - USE VARIED DELIMITERS to teach abstract "delimited content"
+# Mix of: backticks `, single quotes ', pipes |, curly braces {}, asterisks *
 COPY_TEMPLATES_TRAIN = [
-    # With colon
-    "Repeat exactly: {X}",
-    "Say this back: {X}",
-    "Copy: {X}",
-    "Echo: {X}",
-    # Without colon
-    "Repeat exactly {X}",
-    "Say back {X}",
-    "Copy {X}",
-    "Echo {X}",
-    "Output {X}",
-    "Just say {X}",
+    # Backticks
+    "Repeat exactly: `{X}`",
+    "Copy: `{X}`",
+    "Echo `{X}`",
+    # Single quotes
+    "Say this back: '{X}'",
+    "Output: '{X}'",
+    "Just say '{X}'",
+    # Pipes
+    "Repeat exactly |{X}|",
+    "Copy |{X}|",
+    # Curly braces (different from template placeholder - these are literal)
+    "Echo: {{{X}}}",
+    "Say back {{{X}}}",
 ]
 
 COPY_TEMPLATES_VAL = [
-    # With colon
-    "Parrot this: {X}",
-    "Return verbatim: {X}",
-    # Without colon
-    "Parrot {X}",
-    "Mirror {X}",
-    "Reproduce {X}",
-    "Output exactly {X}",
+    # Mix delimiters in val too
+    "Parrot this: `{X}`",
+    "Return verbatim: '{X}'",
+    "Parrot |{X}|",
+    "Mirror `{X}`",
+    "Reproduce '{X}'",
+    "Output exactly |{X}|",
 ]
 
-# WRAP operator templates (wrap in square brackets, mix with/without colons)
+# WRAP operator templates - USE VARIED DELIMITERS
 WRAP_TEMPLATES_TRAIN = [
-    # With colon
-    "Wrap in brackets: {X}",
-    "Put square brackets around: {X}",
-    "Surround with []: {X}",
-    # Without colon
-    "Wrap in brackets {X}",
-    "Add brackets around {X}",
-    "Bracket {X}",
-    "Enclose in [] {X}",
+    # Backticks
+    "Wrap in brackets: `{X}`",
+    "Surround with []: `{X}`",
+    "Bracket `{X}`",
+    # Single quotes
+    "Put square brackets around: '{X}'",
+    "Add brackets around '{X}'",
+    # Pipes
+    "Wrap in brackets |{X}|",
+    "Add [] to |{X}|",
+    # Curly braces
+    "Enclose in []: {{{X}}}",
 ]
 
 WRAP_TEMPLATES_VAL = [
-    # With colon
-    "Put in square brackets: {X}",
-    # Without colon
-    "Wrap with [] {X}",
-    "Add [] around {X}",
-    "Put brackets around {X}",
+    # Mix delimiters
+    "Put in square brackets: `{X}`",
+    "Wrap with []: '{X}'",
+    "Add [] around |{X}|",
+    "Put brackets around `{X}`",
 ]
 
 # EXTRACT operator templates (extract from quotes, mix with/without colons)
@@ -110,18 +114,18 @@ EXTRACT_TEMPLATES_VAL = [
     'Return what\'s in "{X}"',
 ]
 
-# German variants (all go to train, German val uses same templates - tests language, not template)
+# German variants - also use varied delimiters
 COPY_TEMPLATES_TRAIN_DE = [
-    "Wiederhole genau: {X}",
-    "Sage das zurueck: {X}",
-    "Kopiere: {X}",
-    "Gib aus: {X}",
+    "Wiederhole genau: `{X}`",
+    "Sage das zurueck: '{X}'",
+    "Kopiere: |{X}|",
+    "Gib aus: `{X}`",
 ]
 
 WRAP_TEMPLATES_TRAIN_DE = [
-    "Setze in Klammern: {X}",
-    "Umgib mit []: {X}",
-    "Klammere: {X}",
+    "Setze in Klammern: `{X}`",
+    "Umgib mit []: '{X}'",
+    "Klammere: |{X}|",
 ]
 
 EXTRACT_TEMPLATES_TRAIN_DE = [
