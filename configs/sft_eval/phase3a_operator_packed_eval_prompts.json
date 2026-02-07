@@ -1,0 +1,50 @@
+{
+  "description": "Operator evaluation for packed training (no system prompt). Uses VAL templates + multi-word payloads.",
+  "notes": "Prompts have NO system prompt to match --no_system_prompt training. Tests single and multi-word payloads.",
+  
+  "prompts": {
+    "copy_parrot_single": "<myPT_user>Parrot this: diamond</myPT_user><myPT_assistant>",
+    "copy_verbatim_single": "<myPT_user>Return verbatim: crystal</myPT_user><myPT_assistant>",
+    "copy_mirror_single": "<myPT_user>Mirror: sapphire</myPT_user><myPT_assistant>",
+    "copy_parrot_multi": "<myPT_user>Parrot this: blue ocean wave</myPT_user><myPT_assistant>",
+    "copy_verbatim_multi": "<myPT_user>Return verbatim: dark forest night</myPT_user><myPT_assistant>",
+    
+    "wrap_brackets_single": "<myPT_user>Put in square brackets: ruby</myPT_user><myPT_assistant>",
+    "wrap_add_single": "<myPT_user>Add [] around: emerald</myPT_user><myPT_assistant>",
+    "wrap_surround_single": "<myPT_user>Surround with brackets: onyx</myPT_user><myPT_assistant>",
+    "wrap_brackets_multi": "<myPT_user>Put in square brackets: golden sunset sky</myPT_user><myPT_assistant>",
+    "wrap_add_multi": "<myPT_user>Add [] around: silver moonlight</myPT_user><myPT_assistant>",
+    
+    "extract_inside_single": "<myPT_user>What's inside the quotes: \"topaz\"</myPT_user><myPT_assistant>",
+    "extract_quoted_single": "<myPT_user>Get the quoted part: \"pearl\"</myPT_user><myPT_assistant>",
+    "extract_content_single": "<myPT_user>Output quoted content: \"amber\"</myPT_user><myPT_assistant>",
+    "extract_inside_multi": "<myPT_user>What's inside the quotes: \"red mountain peak\"</myPT_user><myPT_assistant>",
+    "extract_quoted_multi": "<myPT_user>Get the quoted part: \"wild river flow\"</myPT_user><myPT_assistant>"
+  },
+  
+  "expected_outputs": {
+    "copy_parrot_single": "diamond",
+    "copy_verbatim_single": "crystal",
+    "copy_mirror_single": "sapphire",
+    "copy_parrot_multi": "blue ocean wave",
+    "copy_verbatim_multi": "dark forest night",
+    
+    "wrap_brackets_single": "[ruby]",
+    "wrap_add_single": "[emerald]",
+    "wrap_surround_single": "[onyx]",
+    "wrap_brackets_multi": "[golden sunset sky]",
+    "wrap_add_multi": "[silver moonlight]",
+    
+    "extract_inside_single": "topaz",
+    "extract_quoted_single": "pearl",
+    "extract_content_single": "amber",
+    "extract_inside_multi": "red mountain peak",
+    "extract_quoted_multi": "wild river flow"
+  },
+  
+  "categories": {
+    "COPY": ["copy_parrot_single", "copy_verbatim_single", "copy_mirror_single", "copy_parrot_multi", "copy_verbatim_multi"],
+    "WRAP": ["wrap_brackets_single", "wrap_add_single", "wrap_surround_single", "wrap_brackets_multi", "wrap_add_multi"],
+    "EXTRACT": ["extract_inside_single", "extract_quoted_single", "extract_content_single", "extract_inside_multi", "extract_quoted_multi"]
+  }
+}
