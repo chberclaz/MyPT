@@ -131,11 +131,11 @@ def main():
         for batch_idx in range(args.num_batches):
             batch = loader.get_batch(args.split)
 
-            if not isinstance(batch, (tuple, list)) or len(batch) != 3:
-                print(f"    ERROR: Expected (X, Y, mask) tuple, got {type(batch)} len={len(batch)}")
+            if not isinstance(batch, (tuple, list)) or len(batch) < 3:
+                print(f"    ERROR: Expected (X, Y, mask[, segment_ids]) tuple, got {type(batch)} len={len(batch)}")
                 sys.exit(1)
 
-            X, Y, mask = batch  # (B, block_size)
+            X, Y, mask = batch[0], batch[1], batch[2]  # (B, block_size)
 
             # Forward pass
             with ctx:

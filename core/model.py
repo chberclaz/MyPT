@@ -123,6 +123,7 @@ class CausalSelfAttention(nn.Module):
         use_cache: bool = False,
         kv_cache=None,
         cache_pos: int = 0,
+        attn_mask=None,
     ):
         """
         Supports two cache modes:
@@ -135,6 +136,11 @@ class CausalSelfAttention(nn.Module):
             kv_cache = (k_cache, v_cache) where k_cache/v_cache are (B, nh, block_size, hs)
             cache_pos = int start position to write current tokens
             -> writes into cache in-place, returns present=("kv_cache", new_cache_pos)
+
+        attn_mask: Optional (B, 1, T, T) boolean mask for segment-isolated attention.
+            When provided, replaces is_causal with explicit mask. Used for packed
+            sequences where each episode must only attend within its own segment.
+            True = attend, False = mask out.
         """
         B, T, C = x.shape
 
@@ -169,10 +175,7 @@ class CausalSelfAttention(nn.Module):
             k_used = k_cache[:, :, :end_pos, :]
             v_used = v_cache[:, :, :end_pos, :]
 
-            # IMPORTANT:
-            # With KV-cache decode, q is only the "new" token(s) and k_used contains only <= current time.
-            # Using is_causal=True when q_len != k_len can mis-mask and break quality.
-            # So: causal for prefill (cache_pos==0 and T>1), non-causal for incremental decode.
+            # IMPORTANT: KV cache path never uses segment masks (inference only)
             use_causal = (cache_pos == 0 and T > 1)
 
             y = F.scaled_dot_product_attention(
@@ -197,16 +200,26 @@ class CausalSelfAttention(nn.Module):
             k = torch.cat([pk, k], dim=2)
             v = torch.cat([pv, v], dim=2)
 
-        # Same issue: during decode with cache, q_len is often 1 while k_len is past+1.
-        # Causal masking can misbehave in that rectangular case, so disable it when past exists.
-        use_causal = (past_kv is None)
-
-        y = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=None,
-            dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=use_causal,
-        )
+        # Attention: use explicit segment mask if provided, otherwise standard causal
+        if attn_mask is not None:
+            # Segment-isolated attention for packed sequences
+            # attn_mask is (B, 1, T, T) boolean: True = attend, False = mask out
+            # Must use is_causal=False when providing explicit mask
+            y = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=attn_mask,
+                dropout_p=self.dropout_p if self.training else 0.0,
+                is_causal=False,
+            )
+        else:
+            # Standard causal attention (inference or non-packed training)
+            use_causal = (past_kv is None)
+            y = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=None,
+                dropout_p=self.dropout_p if self.training else 0.0,
+                is_causal=use_causal,
+            )
 
 
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -248,11 +261,14 @@ class Block(nn.Module):
         use_cache: bool = False,
         kv_cache=None,
         cache_pos: int = 0,
+        attn_mask=None,
     ):
         # Training checkpoint path (no cache)
         if self.training and self.use_checkpoint and (past_kv is None) and (not use_cache) and (kv_cache is None):
+            # Capture attn_mask in closure for checkpointing
+            _attn_mask = attn_mask
             def sa_fn(inp):
-                y, _ = self.sa(self.ln1(inp), past_kv=None, use_cache=False)
+                y, _ = self.sa(self.ln1(inp), past_kv=None, use_cache=False, attn_mask=_attn_mask)
                 return y
 
             def ff_fn(inp):
@@ -269,6 +285,7 @@ class Block(nn.Module):
             use_cache=use_cache,
             kv_cache=kv_cache,
             cache_pos=cache_pos,
+            attn_mask=attn_mask,
         )
         x = x + attn_out
         x = x + self.fwd(self.ln2(x))
@@ -312,6 +329,81 @@ class GPT(nn.Module):
             self.lm_head.weight = self.token_embedding_table.weight
             print("Weight tying enabled: embedding and lm_head share weights")
 
+    def _build_segment_attention_mask(self, segment_ids):
+        """Build attention mask for packed sequences with segment isolation.
+        
+        Each token can only attend to tokens in the same segment (episode)
+        within the packed sequence, maintaining causal ordering.
+        
+        Invariants:
+          A. No real-to-padding attention: real segments (1+) != padding segment (0),
+             so (seg_q == seg_k) is False for any real query attending to padding key.
+             Padding-to-padding IS allowed (harmless, prevents NaN from empty softmax).
+          B. No cross-episode attention: (seg_q == seg_k) enforces hard barrier.
+          C. Causality within episode: tril mask enforces j <= i.
+          D. Segment IDs are constant within each episode (guaranteed by greedy_bin_pack).
+        
+        Args:
+            segment_ids: (B, T) tensor of segment IDs (0=padding, 1+=episode)
+        
+        Returns:
+            attn_mask: (B, 1, T, T) boolean mask for scaled_dot_product_attention
+                True = attend, False = mask out
+        """
+        B, T = segment_ids.shape
+        device = segment_ids.device
+        
+        # Same segment check: (B, T, 1) vs (B, 1, T) -> (B, T, T)
+        # This naturally isolates episodes AND allows padding-to-padding (preventing NaN).
+        # No need for (seg_k > 0): real segments are 1+ and padding is 0, so
+        # seg_q == seg_k is already False for real↔padding pairs.
+        seg_q = segment_ids.unsqueeze(2)  # (B, T, 1) - query positions
+        seg_k = segment_ids.unsqueeze(1)  # (B, 1, T) - key positions
+        same_segment = (seg_q == seg_k)   # Same segment (incl. padding-to-padding)
+        
+        # Causal mask: can only attend to earlier or same position
+        causal = torch.tril(torch.ones(T, T, device=device, dtype=torch.bool))
+        
+        # Combine: same segment AND causal
+        attn_mask = same_segment & causal  # (B, T, T)
+        
+        # Add head dimension for broadcasting: (B, 1, T, T)
+        return attn_mask.unsqueeze(1)
+    
+    def _compute_segment_positions(self, segment_ids):
+        """Compute per-segment position IDs (reset at each episode boundary).
+        
+        Each episode within a packed sequence gets positions starting from 0,
+        matching what the model expects from pre-training (position 0 = start
+        of document).
+        
+        Args:
+            segment_ids: (B, T) tensor of segment IDs (0=padding, 1+=episode)
+        
+        Returns:
+            position_ids: (B, T) tensor of local positions within each segment
+        """
+        B, T = segment_ids.shape
+        device = segment_ids.device
+        
+        # Detect segment boundaries (where segment_id changes)
+        boundaries = torch.ones(B, T, device=device, dtype=torch.bool)
+        boundaries[:, 1:] = segment_ids[:, 1:] != segment_ids[:, :-1]
+        
+        # Compute position within each segment using cumsum trick:
+        # cumsum counts global position (1-indexed), cummax of boundary cumsums
+        # gives the cumsum value at the start of each segment.
+        # position_within_segment = cumsum - cumsum_at_segment_start
+        ones = torch.ones(B, T, device=device, dtype=torch.long)
+        cumsum = torch.cumsum(ones, dim=1)  # [1, 2, 3, 4, ...]
+        
+        boundary_cumsum = boundaries.long() * cumsum  # Non-zero only at boundaries
+        segment_starts, _ = torch.cummax(boundary_cumsum, dim=1)  # Forward-fill
+        
+        position_ids = cumsum - segment_starts  # 0-indexed within each segment
+        
+        return position_ids
+
     def forward(
         self,
         idx,
@@ -321,6 +413,7 @@ class GPT(nn.Module):
         use_cache: bool = False,
         kv_cache=None,
         cache_pos: int = 0,
+        segment_ids=None,
     ):
         """
         Cache modes:
@@ -334,32 +427,51 @@ class GPT(nn.Module):
                      where caches are (B, nh, block_size, hs)
             cache_pos: int position to write current tokens
             returns present_kv: (kv_cache, new_cache_pos)
+
+        segment_ids: Optional (B, T) tensor for packed sequences.
+            segment_id 0 = padding, 1+ = episode index within pack.
+            When provided:
+            - Builds segment-isolated attention mask (no cross-episode attention)
+            - Resets position embeddings at each episode boundary
+            When None: standard causal attention with global positions (backward compatible).
         """
         B, T = idx.shape
         device = idx.device
 
         tok_emb = self.token_embedding_table(idx)  # (B,T,C)
 
-        # Position handling:
-        # - fast cache mode uses cache_pos
-        # - cat cache mode uses past_len inferred from past_kv
-        # - no cache uses 0..T-1
-        if kv_cache is not None and use_cache:
+        # Position handling
+        if segment_ids is not None:
+            # PACKED MODE: reset positions at each episode boundary
+            pos_ids = self._compute_segment_positions(segment_ids)  # (B, T)
+            pos_emb = self.position_embedding_table(pos_ids)  # (B, T, C)
+        elif kv_cache is not None and use_cache:
             pos_start = cache_pos
+            pos = torch.arange(pos_start, pos_start + T, device=device)
+            pos_emb = self.position_embedding_table(pos)  # (T, C)
         else:
             pos_start = 0
             if past_kv is not None and len(past_kv) > 0 and past_kv[0] is not None:
                 pos_start = past_kv[0][0].size(2)
-
-        pos = torch.arange(pos_start, pos_start + T, device=device)
-        pos_emb = self.position_embedding_table(pos)  # (T,C)
+            pos = torch.arange(pos_start, pos_start + T, device=device)
+            pos_emb = self.position_embedding_table(pos)  # (T, C)
 
         x = tok_emb + pos_emb
+
+        # Build segment-isolated attention mask if segment_ids provided
+        attn_mask = None
+        if segment_ids is not None:
+            attn_mask = self._build_segment_attention_mask(segment_ids)  # (B, 1, T, T)
+            if not getattr(self, '_segment_attn_logged', False):
+                n_segments = segment_ids.max().item()
+                print(f"  🔒 Segment-isolated attention ACTIVE: {n_segments} segments/pack, "
+                      f"mask shape {attn_mask.shape}, positions reset per episode")
+                self._segment_attn_logged = True
 
         # Run blocks
         if use_cache:
             if kv_cache is not None:
-                # FAST MODE: preallocated caches; same cache_pos for all layers
+                # FAST MODE: preallocated caches (inference - no segment mask)
                 for i, block in enumerate(self.blocks):
                     x, _ = block(
                         x,
@@ -371,16 +483,17 @@ class GPT(nn.Module):
                 present_kv = (kv_cache, cache_pos + T)
 
             else:
-                # OLD MODE: cat-based caches
+                # OLD MODE: cat-based caches (inference - no segment mask)
                 present_kv = []
                 for i, block in enumerate(self.blocks):
                     layer_past = None if past_kv is None else past_kv[i]
                     x, pkv = block(x, past_kv=layer_past, use_cache=True, kv_cache=None, cache_pos=0)
                     present_kv.append(pkv)
         else:
-            # No cache
+            # No cache (training or eval) - pass attn_mask if available
             for block in self.blocks:
-                x, _ = block(x, past_kv=None, use_cache=False, kv_cache=None, cache_pos=0)
+                x, _ = block(x, past_kv=None, use_cache=False, kv_cache=None, cache_pos=0,
+                             attn_mask=attn_mask)
             present_kv = None
 
         x = self.ln_f(x)
@@ -783,8 +896,11 @@ class GPT(nn.Module):
             for k in range(eval_iters):
                 batch = data_loader.get_batch(split)
                 
-                # Handle both (X, Y) and (X, Y, loss_mask) formats
-                if isinstance(batch, (tuple, list)) and len(batch) == 3:
+                # Handle (X, Y), (X, Y, loss_mask), and (X, Y, loss_mask, segment_ids) formats
+                if isinstance(batch, (tuple, list)) and len(batch) == 4:
+                    X, Y, loss_mask, segment_ids = batch
+                    _, loss, _ = self(X, Y, loss_mask=loss_mask, segment_ids=segment_ids)
+                elif isinstance(batch, (tuple, list)) and len(batch) == 3:
                     X, Y, loss_mask = batch
                     _, loss, _ = self(X, Y, loss_mask=loss_mask)
                 else:
@@ -1077,9 +1193,12 @@ class GPT(nn.Module):
             batch = data_loader.get_batch('train')
             
             #gpu_mem("after_zero_grad")
-            # Handle both (X, Y) and (X, Y, loss_mask) formats
+            # Handle (X, Y), (X, Y, loss_mask), and (X, Y, loss_mask, segment_ids) formats
             with ctx:
-                if isinstance(batch, (tuple, list)) and len(batch) == 3:
+                if isinstance(batch, (tuple, list)) and len(batch) == 4:
+                    xb, yb, loss_mask, segment_ids = batch
+                    _, loss, _ = self(xb, yb, loss_mask=loss_mask, segment_ids=segment_ids)
+                elif isinstance(batch, (tuple, list)) and len(batch) == 3:
                     xb, yb, loss_mask = batch
                     _, loss, _ = self(xb, yb, loss_mask=loss_mask)
                 else:

@@ -417,12 +417,18 @@ def greedy_bin_pack(
     episodes: List[Tuple[List[int], List[int], Dict]],
     block_size: int,
     pad_token_id: int,
-) -> List[Tuple[List[int], List[int], Dict]]:
+) -> List[Tuple[List[int], List[int], List[int], Dict]]:
     """
     Pack multiple episodes into fixed-size blocks using greedy bin-packing.
     
     Episodes that don't fit entirely are NOT split - they go in the next block.
     Each packed sequence is exactly block_size tokens (padded if needed).
+    
+    Also produces per-token segment_ids for segment-isolated attention:
+    - segment_id 0 = padding (not attended to)
+    - segment_id 1, 2, 3, ... = episodes within the packed sequence
+    This enables the model to build an attention mask that prevents
+    cross-episode attention bleeding in packed sequences.
     
     Args:
         episodes: List of (tokens, mask, metadata) tuples
@@ -430,7 +436,7 @@ def greedy_bin_pack(
         pad_token_id: Token ID for padding
     
     Returns:
-        List of packed (tokens, mask, metadata) tuples
+        List of packed (tokens, mask, segment_ids, metadata) tuples
     
     The metadata for packed sequences includes:
         - _packed: True
@@ -445,6 +451,7 @@ def greedy_bin_pack(
     # Current pack being filled
     current_tokens: List[int] = []
     current_mask: List[int] = []
+    current_segment_ids: List[int] = []
     current_episode_count = 0
     current_categories: List[str] = []
     
@@ -467,24 +474,27 @@ def greedy_bin_pack(
                 if pad_len > 0:
                     current_tokens.extend([pad_token_id] * pad_len)
                     current_mask.extend([0] * pad_len)  # Don't train on padding
+                    current_segment_ids.extend([0] * pad_len)  # segment 0 = padding
                 
                 packed_meta = {
                     "_packed": True,
                     "_num_episodes": current_episode_count,
                     "_original_categories": current_categories,
                 }
-                packed_sequences.append((current_tokens, current_mask, packed_meta))
+                packed_sequences.append((current_tokens, current_mask, current_segment_ids, packed_meta))
             
             # Start new pack
             current_tokens = []
             current_mask = []
+            current_segment_ids = []
             current_episode_count = 0
             current_categories = []
         
         # Add episode to current pack
+        current_episode_count += 1
         current_tokens.extend(tokens)
         current_mask.extend(mask)
-        current_episode_count += 1
+        current_segment_ids.extend([current_episode_count] * ep_len)  # 1-indexed segment ID
         
         # Track category if present
         cat = meta.get("_category")
@@ -497,20 +507,21 @@ def greedy_bin_pack(
         if pad_len > 0:
             current_tokens.extend([pad_token_id] * pad_len)
             current_mask.extend([0] * pad_len)
+            current_segment_ids.extend([0] * pad_len)
         
         packed_meta = {
             "_packed": True,
             "_num_episodes": current_episode_count,
             "_original_categories": current_categories,
         }
-        packed_sequences.append((current_tokens, current_mask, packed_meta))
+        packed_sequences.append((current_tokens, current_mask, current_segment_ids, packed_meta))
     
     return packed_sequences
 
 
 def compute_packing_stats(
     original_episodes: List[Tuple[List[int], List[int]]],
-    packed_sequences: List[Tuple[List[int], List[int], Dict]],
+    packed_sequences: list,
     block_size: int,
 ) -> Dict:
     """
@@ -526,9 +537,9 @@ def compute_packing_stats(
     orig_mask_ratio = orig_mask_tokens / orig_tokens if orig_tokens > 0 else 0
     avg_episode_len = orig_tokens / len(original_episodes) if original_episodes else 0
     
-    # Packed stats
-    packed_tokens = sum(len(tokens) for tokens, _, _ in packed_sequences)
-    packed_mask_tokens = sum(sum(mask) for _, mask, _ in packed_sequences)
+    # Packed stats (tuples are (tokens, mask, segment_ids, meta))
+    packed_tokens = sum(len(p[0]) for p in packed_sequences)
+    packed_mask_tokens = sum(sum(p[1]) for p in packed_sequences)
     packed_mask_ratio = packed_mask_tokens / packed_tokens if packed_tokens > 0 else 0
     
     # Non-pad ratio (how much of packed sequences is actual content)
@@ -536,8 +547,8 @@ def compute_packing_stats(
     total_packed_slots = len(packed_sequences) * block_size
     nonpad_ratio = total_content_tokens / total_packed_slots if total_packed_slots > 0 else 0
     
-    # Episodes per pack
-    eps_per_pack = [meta.get("_num_episodes", 1) for _, _, meta in packed_sequences]
+    # Episodes per pack (metadata is last element)
+    eps_per_pack = [p[-1].get("_num_episodes", 1) for p in packed_sequences]
     avg_eps_per_pack = sum(eps_per_pack) / len(eps_per_pack) if eps_per_pack else 0
     
     # TRAINING EFFICIENCY: Compare supervised tokens per training step
@@ -599,8 +610,17 @@ class EpisodeShardWriter:
         self.total_episodes = 0
         self.shards_written = 0
     
-    def add_episode(self, token_ids: List[int], mask: List[int]):
-        """Add an episode to the current shard."""
+    def add_episode(self, token_ids: List[int], mask: List[int],
+                    segment_ids: Optional[List[int]] = None):
+        """Add an episode to the current shard.
+        
+        Args:
+            token_ids: Token IDs for this episode/packed sequence
+            mask: Loss mask values (0/1) aligned with token_ids
+            segment_ids: Optional per-token segment IDs for packed sequences.
+                segment 0 = padding, 1+ = episode within pack.
+                If provided, written to segment_ids.bin for segment-isolated attention.
+        """
         episode_len = len(token_ids)
         
         # Check if we need to start a new shard
@@ -614,6 +634,12 @@ class EpisodeShardWriter:
         # Append data
         self.tokens.extend(token_ids)
         self.masks.extend(mask)
+        
+        # Segment IDs (for packed sequences with segment-isolated attention)
+        if segment_ids is not None:
+            if not hasattr(self, 'segment_ids'):
+                self.segment_ids = []
+            self.segment_ids.extend(segment_ids)
         
         self.total_tokens += episode_len
         self.total_episodes += 1
@@ -648,19 +674,30 @@ class EpisodeShardWriter:
         mask_path = os.path.join(shard_dir, "mask.bin")
         masks_arr.tofile(mask_path)
         
+        # Write segment_ids.bin (uint8) if segment IDs were provided
+        # This enables segment-isolated attention for packed sequences
+        has_segments = hasattr(self, 'segment_ids') and len(self.segment_ids) > 0
+        if has_segments:
+            seg_arr = np.array(self.segment_ids, dtype=np.uint8)
+            seg_path = os.path.join(shard_dir, "segment_ids.bin")
+            seg_arr.tofile(seg_path)
+        
         # Write episodes.idx (uint64 pairs: start, length)
         # Format: each episode is 16 bytes (2 × uint64)
         episodes_arr = np.array(self.episodes, dtype=np.uint64)
         episodes_path = os.path.join(shard_dir, "episodes.idx")
         episodes_arr.tofile(episodes_path)
         
+        seg_info = " (with segment_ids)" if has_segments else ""
         print(f"  Written {self.split}/shard_{self.shard_idx:05d}: "
-              f"{len(self.tokens):,} tokens, {len(self.episodes)} episodes")
+              f"{len(self.tokens):,} tokens, {len(self.episodes)} episodes{seg_info}")
         
         # Reset for next shard
         self.tokens = []
         self.masks = []
         self.episodes = []
+        if hasattr(self, 'segment_ids'):
+            self.segment_ids = []
         self.shard_idx += 1
         self.shards_written += 1
     
@@ -964,13 +1001,15 @@ def main():
         
         # --- WRITE PACKED SEQUENCES ---
         print(f"\nWriting packed sequences...")
-        for tokens, mask, _ in train_packed:
-            train_writer.add_episode(tokens, mask)
+        for pack in train_packed:
+            tokens, mask, segment_ids = pack[0], pack[1], pack[2]
+            train_writer.add_episode(tokens, mask, segment_ids=segment_ids)
             train_mask_sum += sum(mask)
             train_mask_count += len(mask)
         
-        for tokens, mask, _ in val_packed:
-            val_writer.add_episode(tokens, mask)
+        for pack in val_packed:
+            tokens, mask, segment_ids = pack[0], pack[1], pack[2]
+            val_writer.add_episode(tokens, mask, segment_ids=segment_ids)
             val_mask_sum += sum(mask)
             val_mask_count += len(mask)
         

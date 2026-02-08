@@ -211,6 +211,14 @@ class GPTEpisodeDataLoader:
             else:
                 print(f"   Using loss masking (assistant-only training)")
         
+        # Check for segment_ids (packed sequences with segment-isolated attention)
+        has_segment_ids = all(
+            s.get('segment_ids') is not None
+            for s in self._data['train']['shards']
+        )
+        if has_segment_ids:
+            print(f"   🔒 Segment IDs detected: enabling segment-isolated attention for packed sequences")
+        
         # Audit: Dataset loaded
         if AUDIT_AVAILABLE:
             train_episodes = sum(len(s['valid_ids']) for s in self._data['train']['shards'])
@@ -234,10 +242,11 @@ class GPTEpisodeDataLoader:
             )
     
     def _load_shard(self, shard_dir: str) -> Optional[dict]:
-        """Load a single shard (tokens, mask, episodes index)."""
+        """Load a single shard (tokens, mask, segment_ids, episodes index)."""
         tokens_path = os.path.join(shard_dir, "tokens.bin")
         episodes_path = os.path.join(shard_dir, "episodes.idx")
         mask_path = os.path.join(shard_dir, "mask.bin")
+        segment_ids_path = os.path.join(shard_dir, "segment_ids.bin")
         
         if not os.path.exists(tokens_path):
             return None
@@ -263,9 +272,15 @@ class GPTEpisodeDataLoader:
         if os.path.exists(mask_path):
             mask = np.memmap(mask_path, dtype=np.uint8, mode='r')
         
+        # Memory-map segment_ids if available (for packed sequences with segment isolation)
+        segment_ids = None
+        if os.path.exists(segment_ids_path):
+            segment_ids = np.memmap(segment_ids_path, dtype=np.uint8, mode='r')
+        
         return {
             'tokens': tokens,
             'mask': mask,
+            'segment_ids': segment_ids,
             'episodes': episodes,
             'valid_ids': np.array(valid_ids, dtype=np.int64),
             'path': shard_dir
@@ -342,6 +357,11 @@ class GPTEpisodeDataLoader:
         Truncation strategy:
         - If episode <= L tokens: use entire episode, pad if needed
         - If episode > L tokens: use LAST L tokens (ensures closing tags present)
+        
+        Returns:
+            - (x, y) if no loss mask
+            - (x, y, mask_y) if loss mask, no segment_ids
+            - (x, y, mask_y, seg_x) if loss mask AND segment_ids available
         """
         state = self._epoch_state[split]
         shard_idx, ep_idx = state['global_episodes'][global_idx]
@@ -377,6 +397,15 @@ class GPTEpisodeDataLoader:
         x = seq[:-1]  # (block_size,)
         y = seq[1:]   # (block_size,)
         
+        # Segment IDs for packed sequences (segment-isolated attention)
+        has_segment_ids = shard.get('segment_ids') is not None
+        seg_x = None
+        if has_segment_ids:
+            seg_raw = np.array(shard['segment_ids'][slice_start:slice_start + actual_len], dtype=np.int64)
+            if len(seg_raw) < L:
+                seg_raw = np.pad(seg_raw, (0, L - len(seg_raw)), mode='constant', constant_values=0)
+            seg_x = seg_raw[:-1]  # Aligned with x (block_size,)
+        
         if self.use_loss_mask and shard['mask'] is not None:
             # Slice mask (same range as tokens)
             m_raw = np.array(shard['mask'][slice_start:slice_start + actual_len], dtype=np.float32)
@@ -409,6 +438,8 @@ class GPTEpisodeDataLoader:
             if getattr(self, '_debug_mask_alignment', False):
                 self._print_mask_debug(ep_idx, shard_idx, seq, m, original_len)
             
+            if seg_x is not None:
+                return x, y, mask_y, seg_x
             return x, y, mask_y
         
         return x, y
@@ -454,8 +485,9 @@ class GPTEpisodeDataLoader:
         Get a batch of episode samples.
         
         Returns:
-            - (x, y) if use_loss_mask=False
-            - (x, y, mask) if use_loss_mask=True
+            - (x, y) if use_loss_mask=False, no segment_ids
+            - (x, y, mask) if use_loss_mask=True, no segment_ids
+            - (x, y, mask, segment_ids) if use_loss_mask=True AND segment_ids available
             
             All tensors have shape (batch_size, block_size)
         """
@@ -508,13 +540,19 @@ class GPTEpisodeDataLoader:
         batch_x = []
         batch_y = []
         batch_mask = [] if self.use_loss_mask else None
+        batch_segment_ids = None  # Will be set if first sample has segment_ids
         
-        for idx in indices:
+        for i, idx in enumerate(indices):
             sample = self._get_episode_sample(split, idx)
             batch_x.append(sample[0])
             batch_y.append(sample[1])
             if self.use_loss_mask:
                 batch_mask.append(sample[2])
+                # Check if this sample has segment_ids (4th element)
+                if len(sample) == 4:
+                    if batch_segment_ids is None:
+                        batch_segment_ids = []
+                    batch_segment_ids.append(sample[3])
         
         # Stack and convert to tensors
         x = torch.from_numpy(np.stack(batch_x)).to(self.config.device)
@@ -522,6 +560,9 @@ class GPTEpisodeDataLoader:
         
         if self.use_loss_mask:
             mask = torch.from_numpy(np.stack(batch_mask)).to(self.config.device)
+            if batch_segment_ids is not None:
+                segment_ids = torch.from_numpy(np.stack(batch_segment_ids)).to(self.config.device)
+                return x, y, mask, segment_ids
             return x, y, mask
         
         return x, y
