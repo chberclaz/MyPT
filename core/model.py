@@ -991,6 +991,19 @@ class GPT(nn.Module):
         else:
             warmup_steps = int(warmup_iters)
         
+        # Track best validation loss for "gold" checkpoint
+        # Gold is only saved when val loss is genuinely improving, not during overfitting.
+        # Two guards prevent degenerate gold saves:
+        #   1. Overfit ratio: val_loss / train_loss > threshold → memorizing, not generalizing
+        #   2. Trend guard: val loss rose 2+ consecutive evals → past the sweet spot,
+        #      any new "best" is likely noise/flapping, not genuine improvement
+        best_val_loss = float('inf')
+        gold_step = None
+        gold_dir = f"{checkpoint_dir}_gold" if checkpoint_dir else None
+        val_loss_history = []
+        GOLD_OVERFIT_RATIO = 5.0      # val/train ratio above this = overfitting
+        GOLD_CONSEC_RISES = 2         # consecutive val increases before blocking gold
+        
         if warmup_steps > 0:
             print(f"Learning rate warmup: {warmup_steps} steps ({warmup_steps/max_iters*100:.1f}% of training)")
             print(f"  LR will ramp from 0 → {target_lr:.2e} over first {warmup_steps} iterations")
@@ -1180,6 +1193,49 @@ class GPT(nn.Module):
                         training_config=training_config,
                         save_dtype=effective_save_dtype
                     )
+                    
+                    # Save "gold" checkpoint if val loss is best AND model is not overfitting
+                    current_val_loss = losses['val']
+                    val_loss_history.append(current_val_loss)
+                    
+                    if current_val_loss < best_val_loss:
+                        gold_blocked = False
+                        block_reason = ""
+                        
+                        # Guard 1: Overfit ratio - train/val gap too large
+                        train_loss_current = losses.get('train', 0)
+                        if train_loss_current > 1e-6:
+                            overfit_ratio = current_val_loss / train_loss_current
+                            if overfit_ratio > GOLD_OVERFIT_RATIO:
+                                gold_blocked = True
+                                block_reason = f"overfit (val/train={overfit_ratio:.1f}x, threshold={GOLD_OVERFIT_RATIO}x)"
+                        
+                        # Guard 2: Trend - val loss rose N+ consecutive evals before this dip
+                        # If we've been climbing and now dip, it's likely noise, not improvement
+                        if not gold_blocked and len(val_loss_history) >= 3:
+                            consecutive_up = 0
+                            for i in range(len(val_loss_history) - 2, 0, -1):
+                                if val_loss_history[i] > val_loss_history[i - 1]:
+                                    consecutive_up += 1
+                                else:
+                                    break
+                            if consecutive_up >= GOLD_CONSEC_RISES:
+                                gold_blocked = True
+                                block_reason = f"flapping (val loss rose {consecutive_up} consecutive evals before this dip)"
+                        
+                        if not gold_blocked:
+                            best_val_loss = current_val_loss
+                            gold_step = iter
+                            self.save_checkpoint_bundle(
+                                gold_dir,
+                                step=iter,
+                                optimizer_state=optimizer.state_dict(),
+                                training_config=training_config,
+                                save_dtype=effective_save_dtype
+                            )
+                            print(f"  🏆 New GOLD checkpoint! val_loss={current_val_loss:.4f} at step {iter}")
+                        else:
+                            print(f"  ⚠️  GOLD blocked: val {current_val_loss:.4f} < best {best_val_loss:.4f} but {block_reason}")
                 # _mem("after_save")
                 # gpu_mem("after_save")
 
@@ -1259,6 +1315,8 @@ class GPT(nn.Module):
             print(f"  Resume training from: {checkpoint_dir}")
             if final_save_dtype:
                 print(f"  Deploy inference from: {deploy_dir}")
+            if gold_step is not None:
+                print(f"  🏆 Best (GOLD) checkpoint: {gold_dir} (step {gold_step}, val_loss={best_val_loss:.4f})")
         
         return final_losses
     

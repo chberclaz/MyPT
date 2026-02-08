@@ -524,6 +524,8 @@ python generate.py --model <model_name> \
 
 Use `inspect_sft_dataset.py` to get recommended max_iters.
 
+> **Tip:** Training automatically saves a **Gold Checkpoint** (best val loss with overfit guards). See [Training Config: Gold Checkpoint](training/TRAINING_CONFIG.md#gold-checkpoint-best-of-run) for details.
+
 ---
 
 ## Quick Reference

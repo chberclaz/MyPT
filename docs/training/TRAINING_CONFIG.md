@@ -360,6 +360,74 @@ checkpoints/my_model/
 
 ---
 
+## Gold Checkpoint (Best-of-Run)
+
+Training automatically saves a **Gold checkpoint** -- the best model by validation loss -- alongside the regular (latest) checkpoint. This ensures you always have the optimal model from a run, even if training continues past the sweet spot into overfitting. Works for both base training and SFT.
+
+### Checkpoint Layout After Training
+
+```
+checkpoints/
+├── my_model/          # Last step (resume training)
+├── my_model_gold/     # Best val loss step (evaluation / deployment)
+└── my_model_fp16/     # Last step in fp16 (lightweight deployment)
+```
+
+| Directory | Contents | Purpose |
+|-----------|----------|---------|
+| `<model_name>/` | Last step | Resume training |
+| `<model_name>_gold/` | Best val loss step | Evaluation / deployment |
+| `<model_name>_fp16/` | Last step in fp16 | Lightweight deployment |
+
+### Overfit Guards
+
+Gold is **not** blindly saved on every new val-loss minimum. Two guards prevent degenerate gold saves where an overfitting model flukes a low val loss:
+
+1. **Overfit ratio guard** -- If `val_loss / train_loss > 5x`, the model is memorizing, not generalizing. Gold is blocked.
+2. **Trend guard (anti-flapping)** -- If val loss has been rising for 2+ consecutive evals before a dip, we've passed the sweet spot. The dip is likely noise, not genuine improvement. Gold is blocked.
+
+Both guards are checked independently. Either one blocking is sufficient to prevent a gold save.
+
+### Training Log Output
+
+During training:
+```
+step 200: val 0.6326 | lr 7.00e-05
+  🏆 New GOLD checkpoint! val_loss=0.6326 at step 200
+
+step 300: val 0.5173 | lr 7.00e-05
+  🏆 New GOLD checkpoint! val_loss=0.5173 at step 300
+
+step 600: val 0.4900 | lr 7.00e-05
+  ⚠️  GOLD blocked: val 0.4900 < best 0.5173 but overfit (val/train=490.0x, threshold=5x)
+```
+
+End-of-training summary:
+```
+Training finished!
+  Resume training from: checkpoints/my_model
+  Deploy inference from: checkpoints/my_model_fp16
+  🏆 Best (GOLD) checkpoint: checkpoints/my_model_gold (step 300, val_loss=0.5173)
+```
+
+### When to Use the Gold Checkpoint
+
+- **Always evaluate gold**, not just the final checkpoint
+- If gold was never blocked → gold = final (healthy training, no overfitting detected)
+- If gold was blocked early → LR is too high or dataset coverage is too high -- reduce and re-run
+- Gold includes optimizer state, so you can resume training from the best point if needed
+
+### Configuration
+
+The guard thresholds are defined in `core/model.py` inside the `fit()` method:
+
+| Constant | Default | Meaning |
+|----------|---------|---------|
+| `GOLD_OVERFIT_RATIO` | 5.0 | Max val/train ratio before gold is blocked |
+| `GOLD_CONSEC_RISES` | 2 | Consecutive val increases before trend guard triggers |
+
+---
+
 ## Dual Evaluation for Domain Adaptation
 
 When performing domain adaptation (Phase 2 training), you can evaluate on multiple datasets:
