@@ -136,10 +136,11 @@ def main():
                 sys.exit(1)
 
             X, Y, mask = batch[0], batch[1], batch[2]  # (B, block_size)
+            segment_ids = batch[3] if len(batch) >= 4 else None
 
-            # Forward pass
+            # Forward pass (pass segment_ids for segment-isolated attention if available)
             with ctx:
-                logits, _, _ = model(X, Y, loss_mask=None)  # Get logits without built-in loss
+                logits, _, _ = model(X, Y, loss_mask=None, segment_ids=segment_ids)  # Get logits without built-in loss
 
             # Per-token cross-entropy (no reduction)
             B, T, V = logits.shape
