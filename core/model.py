@@ -1004,9 +1004,11 @@ class GPT(nn.Module):
         GOLD_OVERFIT_RATIO = 5.0      # val/train ratio above this = overfitting
         GOLD_CONSEC_RISES = 2         # consecutive val increases before blocking gold
         
-        if warmup_steps > 0:
-            print(f"Learning rate warmup: {warmup_steps} steps ({warmup_steps/max_iters*100:.1f}% of training)")
-            print(f"  LR will ramp from 0 → {target_lr:.2e} over first {warmup_steps} iterations")
+        min_lr = target_lr * 0.1
+        print(f"LR schedule: linear warmup + cosine decay")
+        print(f"  Warmup:  0 → {target_lr:.2e} over {warmup_steps} steps ({warmup_steps/max_iters*100:.1f}% of training)")
+        print(f"  Decay:   {target_lr:.2e} → {min_lr:.2e} (cosine) over remaining {max_iters - warmup_steps} steps")
+        print(f"  Min LR:  {min_lr:.2e} (10% of peak)")
         
         # Setup automatic mixed precision (AMP)
         device_type = 'cuda' if 'cuda' in str(self.config.device) else 'cpu'
@@ -1055,11 +1057,29 @@ class GPT(nn.Module):
         }
         
         def get_lr(step):
-            """Calculate learning rate with linear warmup."""
+            """Calculate learning rate with linear warmup + cosine decay.
+            
+            Schedule:
+                1. Linear warmup: 0 → target_lr over warmup_steps
+                2. Cosine decay: target_lr → min_lr over remaining steps
+                
+            This is the standard schedule used by GPT-3, LLaMA, PaLM, etc.
+            min_lr defaults to target_lr / 10 (industry standard).
+            """
+            import math
+            min_lr = target_lr * 0.1  # Floor at 10% of peak LR
+            
+            # Phase 1: Linear warmup
             if step < warmup_steps:
-                # Linear warmup: scale from 0 to target_lr
                 return target_lr * (step + 1) / warmup_steps
-            return target_lr
+            
+            # Phase 2: Cosine decay from target_lr to min_lr
+            decay_steps = max(1, max_iters - warmup_steps)
+            progress = (step - warmup_steps) / decay_steps  # 0.0 → 1.0
+            progress = min(progress, 1.0)  # Clamp in case step > max_iters
+            
+            # Cosine annealing: starts at target_lr, ends at min_lr
+            return min_lr + 0.5 * (target_lr - min_lr) * (1.0 + math.cos(math.pi * progress))
 
         def _mem(tag):
             if torch.cuda.is_available():
@@ -1170,7 +1190,7 @@ class GPT(nn.Module):
                 
                 # _mem("after_estimate_before_save")
                 # gpu_mem("after_estimate_before_save")
-                lr_info = f" | lr {current_lr:.2e}" if warmup_steps > 0 else ""
+                lr_info = f" | lr {current_lr:.2e}"
 
                 # Console output: iter N | val X.XX | eval_name Y.YY | ...
                 eval_parts = " | ".join([f"eval_{k} {v:.4f}" for k, v in eval_losses.items()])

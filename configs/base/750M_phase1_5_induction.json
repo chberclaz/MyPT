@@ -1,0 +1,31 @@
+{
+  "name": "GPT-750M-1024-Phase1.5-Induction",
+  "description": "Phase 1.5 induction strengthening config. Continue from domain_v5 with ~4B tokens of repetition-rich data (code, dialogue, structured text) to develop robust induction heads. LR same as Phase 2 continuation (3e-5), long warmup to stabilize. ~500k iters for ~1.5 epochs over ~4B mixed tokens (batch_size=12, block_size=1024). Gold checkpoint enabled.",
+
+  "batch_size": 12,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.1,
+  "bias": false,
+  "tie_weights": true,
+
+  "learning_rate": 3e-5,
+  "max_iters": 500000,
+  "eval_interval": 2000,
+  "eval_iters": 150,
+  "warmup_iters": 5000,
+  "grad_clip": 1.0,
+  "weight_decay": 0.1,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+
+  "eval_sets": {
+    "general": "data/multilingual_1.5B_wiki90",
+    "domain": "data/domain_161M_corpus_tokenized"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase1_5_induction_eval.jsonl"
+}
