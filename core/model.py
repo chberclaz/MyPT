@@ -993,16 +993,19 @@ class GPT(nn.Module):
         
         # Track best validation loss for "gold" checkpoint
         # Gold is only saved when val loss is genuinely improving, not during overfitting.
-        # Two guards prevent degenerate gold saves:
+        # Three guards prevent degenerate gold saves:
         #   1. Overfit ratio: val_loss / train_loss > threshold → memorizing, not generalizing
         #   2. Trend guard: val loss rose 2+ consecutive evals → past the sweet spot,
         #      any new "best" is likely noise/flapping, not genuine improvement
+        #   3. Eval set regression: any eval set degraded >20% from its baseline → catastrophic forgetting
         best_val_loss = float('inf')
         gold_step = None
         gold_dir = f"{checkpoint_dir}_gold" if checkpoint_dir else None
         val_loss_history = []
+        eval_baselines = {}           # step-0 eval losses, set on first eval
         GOLD_OVERFIT_RATIO = 5.0      # val/train ratio above this = overfitting
         GOLD_CONSEC_RISES = 2         # consecutive val increases before blocking gold
+        GOLD_EVAL_REGRESSION = 0.20   # eval set may degrade at most 20% from baseline
         
         min_lr = target_lr * 0.1
         print(f"LR schedule: linear warmup + cosine decay")
@@ -1218,6 +1221,11 @@ class GPT(nn.Module):
                     current_val_loss = losses['val']
                     val_loss_history.append(current_val_loss)
                     
+                    # Capture eval set baselines on first evaluation
+                    if not eval_baselines and eval_losses:
+                        eval_baselines = {k: v for k, v in eval_losses.items()}
+                        print(f"  📊 GOLD eval baselines: {' | '.join(f'{k}={v:.4f}' for k, v in eval_baselines.items())}")
+                    
                     if current_val_loss < best_val_loss:
                         gold_blocked = False
                         block_reason = ""
@@ -1242,6 +1250,22 @@ class GPT(nn.Module):
                             if consecutive_up >= GOLD_CONSEC_RISES:
                                 gold_blocked = True
                                 block_reason = f"flapping (val loss rose {consecutive_up} consecutive evals before this dip)"
+                        
+                        # Guard 3: Eval set regression - any eval set degraded too much from baseline
+                        # Prevents saving a "best val" checkpoint that has catastrophically forgotten
+                        if not gold_blocked and eval_baselines and eval_losses:
+                            for eval_name, eval_val in eval_losses.items():
+                                baseline = eval_baselines.get(eval_name)
+                                if baseline is not None and baseline > 1e-6:
+                                    regression = (eval_val - baseline) / baseline
+                                    if regression > GOLD_EVAL_REGRESSION:
+                                        gold_blocked = True
+                                        block_reason = (
+                                            f"eval regression: {eval_name} "
+                                            f"{baseline:.4f}→{eval_val:.4f} "
+                                            f"(+{regression*100:.1f}%, threshold={GOLD_EVAL_REGRESSION*100:.0f}%)"
+                                        )
+                                        break
                         
                         if not gold_blocked:
                             best_val_loss = current_val_loss
