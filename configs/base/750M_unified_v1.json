@@ -1,0 +1,32 @@
+{
+  "name": "GPT-750M-1024-Unified-v1",
+  "description": "From-scratch training on ~6B token unified dataset (v3 dual-retrieval). RAG-optimized mix: 23% code (induction), 20% retrieval (13% StackExchange + 7% NQ/TriviaQA), 45% general (FineWeb+Wiki+Reddit), 7% domain, 5% structured. Two complementary retrieval sources. LR 1.5e-4. tie_weights=true from step 0. 600k iters = ~1.2 epochs. GOLD checkpoint with 3-guard system.",
+
+  "batch_size": 12,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.1,
+  "bias": false,
+  "tie_weights": true,
+
+  "learning_rate": 1.5e-4,
+  "max_iters": 600000,
+  "eval_interval": 2000,
+  "eval_iters": 200,
+  "warmup_iters": 30000,
+  "grad_clip": 1.0,
+  "weight_decay": 0.1,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+
+  "eval_sets": {
+    "general": "data/multilingual_1.5B_wiki90",
+    "domain": "data/domain_161M_corpus_tokenized",
+    "code": "data/code_eval_tokenized"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/unified_v1_eval.jsonl"
+}
