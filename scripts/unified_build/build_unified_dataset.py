@@ -20,12 +20,12 @@ Prerequisites:
     pip install datasets tiktoken numpy
 
 Usage:
-    python scripts/build_unified_dataset.py                    # run all steps
-    python scripts/build_unified_dataset.py --step download    # download only
-    python scripts/build_unified_dataset.py --step holdback    # code eval holdback only
-    python scripts/build_unified_dataset.py --step tokenize    # tokenize only
-    python scripts/build_unified_dataset.py --step mix         # mix only
-    python scripts/build_unified_dataset.py --step tokenize --only code_python  # single source
+    python scripts/unified_build/build_unified_dataset.py                    # run all steps
+    python scripts/unified_build/build_unified_dataset.py --step download    # download only
+    python scripts/unified_build/build_unified_dataset.py --step holdback    # code eval holdback only
+    python scripts/unified_build/build_unified_dataset.py --step tokenize    # tokenize only
+    python scripts/unified_build/build_unified_dataset.py --step mix         # mix only
+    python scripts/unified_build/build_unified_dataset.py --step tokenize --only code_python  # single source
 """
 
 import argparse
@@ -43,7 +43,7 @@ from pathlib import Path
 # Configuration
 # ---------------------------------------------------------------------------
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 PYTHON = sys.executable  # use the same Python that's running this script
 
 # Where stripped text sources live
@@ -62,9 +62,9 @@ MIX_OUTPUT = PROJECT_ROOT / "data" / "unified_6B"
 
 # Tokenizer script
 TOKENIZE_SCRIPT = PROJECT_ROOT / "scripts" / "prepare_weighted_dataset.py"
-DOWNLOAD_SCRIPT = PROJECT_ROOT / "scripts" / "download_unified_sources.py"
-DOWNLOAD_NQ_SCRIPT = PROJECT_ROOT / "scripts" / "download_nq_triviaqa.py"
-MIX_SCRIPT = PROJECT_ROOT / "scripts" / "mix_multi_source.py"
+DOWNLOAD_SCRIPT = PROJECT_ROOT / "scripts" / "unified_build" / "download_unified_sources.py"
+DOWNLOAD_NQ_SCRIPT = PROJECT_ROOT / "scripts" / "unified_build" / "download_nq_triviaqa.py"
+MIX_SCRIPT = PROJECT_ROOT / "scripts" / "unified_build" / "mix_multi_source.py"
 
 # Source definitions: name -> tokenization config
 # Each entry has: sources (list of name:glob pairs), weights, target_tokens, description

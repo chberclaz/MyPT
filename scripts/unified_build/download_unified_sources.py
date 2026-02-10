@@ -15,18 +15,18 @@ Sources:
 
 Usage:
     # Download both sources
-    python scripts/download_unified_sources.py \
+    python scripts/unified_build/download_unified_sources.py \
         --output_dir data/unified_clean \
         --fineweb_tokens 1500000000 \
         --pes2o_tokens 300000000
 
     # Download only FineWeb-Edu
-    python scripts/download_unified_sources.py \
+    python scripts/unified_build/download_unified_sources.py \
         --output_dir data/unified_clean \
         --sources fineweb_edu
 
     # Download only peS2o
-    python scripts/download_unified_sources.py \
+    python scripts/unified_build/download_unified_sources.py \
         --output_dir data/unified_clean \
         --sources pes2o
 """
@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 # ---------------------------------------------------------------------------

@@ -26,13 +26,13 @@ Target: ~420M tokens (7% of 6B mix)
 
 Usage:
     # Download and format both
-    python scripts/download_nq_triviaqa.py --output_dir data/unified_clean
+    python scripts/unified_build/download_nq_triviaqa.py --output_dir data/unified_clean
 
     # Download only NQ
-    python scripts/download_nq_triviaqa.py --output_dir data/unified_clean --sources nq
+    python scripts/unified_build/download_nq_triviaqa.py --output_dir data/unified_clean --sources nq
 
     # Download only TriviaQA
-    python scripts/download_nq_triviaqa.py --output_dir data/unified_clean --sources triviaqa
+    python scripts/unified_build/download_nq_triviaqa.py --output_dir data/unified_clean --sources triviaqa
 """
 
 import argparse
@@ -45,7 +45,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 # ---------------------------------------------------------------------------

@@ -13,12 +13,12 @@ at precise proportions:
 - Most sources are used as-is
 
 Usage:
-    python scripts/mix_multi_source.py \
+    python scripts/unified_build/mix_multi_source.py \
         --config data/sources/unified_from_scratch.json \
         --output_dir data/unified_6B
 
     # Dry run to check proportions
-    python scripts/mix_multi_source.py \
+    python scripts/unified_build/mix_multi_source.py \
         --config data/sources/unified_from_scratch.json \
         --output_dir data/unified_6B \
         --dry_run
@@ -34,7 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.banner import print_banner
 
