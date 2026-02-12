@@ -25,8 +25,27 @@
   "eval_sets": {
     "general": "data/multilingual_1.5B_wiki90",
     "domain": "data/domain_161M_corpus_tokenized",
-    "code": "data/code_eval_tokenized"
+    "code": "data/code_eval_tokenized",
+    "retrieval": "data/retrieval_eval_tokenized"
   },
   "eval_seed": 1337,
-  "log_file": "logs/train/unified_v1_eval.jsonl"
+  "log_file": "logs/train/unified_v1_eval.jsonl",
+
+  "curriculum": {
+    "description": "Two-stage training: circuit formation then balanced. LR schedule is continuous (single cosine over max_iters). Only the data loader switches at the phase boundary.",
+    "phases": [
+      {
+        "name": "circuit_formation",
+        "dataset_dir": "data/unified_phase1_circuit",
+        "until_iter": 73000,
+        "description": "40% code + 30% retrieval: maximize induction/retrieval head formation during the critical early window (~0.9B tokens)"
+      },
+      {
+        "name": "balanced",
+        "dataset_dir": "data/unified_6B",
+        "until_iter": null,
+        "description": "Normal v3 mix for broad capability and refinement (~5.1B tokens)"
+      }
+    ]
+  }
 }

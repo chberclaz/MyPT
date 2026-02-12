@@ -4,27 +4,33 @@ Build Unified 6B Token From-Scratch Dataset (local tokenization)
 =================================================================
 Runs the full data preparation pipeline locally on Windows/Linux/Mac:
   1. Downloads FineWeb-Edu and peS2o (new sources)
-  2. Holds back code shards for eval set (never seen during training)
-  3. Tokenizes all 7 text sources individually
-  4. Mixes all 9 sources into unified ~6B dataset
+  2. Holds back code + retrieval shards for eval sets (never seen during training)
+  3. Tokenizes all text sources individually
+  4. Mixes all sources into unified ~6B dataset (Phase 2)
+  5. Mixes circuit-formation ~0.9B dataset (Phase 1)
 
-After completion, upload data/unified_6B/ (and data/code_eval_tokenized/)
-to RunPod for training.
+After completion, upload data/unified_6B/, data/unified_phase1_circuit/,
+data/code_eval_tokenized/, and data/retrieval_eval_tokenized/ to RunPod.
 
 v3 mix (dual retrieval sources):
   - 27% FineWeb-Edu, 15% Wiki, 15% Python code, 8% JS/Java code
   - 13% StackExchange, 7% NQ/TriviaQA, 3% Reddit, 7% Domain, 3% peS2o, 2% README
   - OpenSubtitles REMOVED (quality audit)
 
+Two-stage curriculum training:
+  - Phase 1 (circuit formation): 0.9B tokens, 40% code + 30% retrieval
+  - Phase 2 (balanced): 5.1B tokens, normal v3 mix
+
 Prerequisites:
     pip install datasets tiktoken numpy
 
 Usage:
-    python scripts/unified_build/build_unified_dataset.py                    # run all steps
-    python scripts/unified_build/build_unified_dataset.py --step download    # download only
-    python scripts/unified_build/build_unified_dataset.py --step holdback    # code eval holdback only
-    python scripts/unified_build/build_unified_dataset.py --step tokenize    # tokenize only
-    python scripts/unified_build/build_unified_dataset.py --step mix         # mix only
+    python scripts/unified_build/build_unified_dataset.py                       # run all steps
+    python scripts/unified_build/build_unified_dataset.py --step download       # download only
+    python scripts/unified_build/build_unified_dataset.py --step holdback       # eval holdback only
+    python scripts/unified_build/build_unified_dataset.py --step tokenize       # tokenize only
+    python scripts/unified_build/build_unified_dataset.py --step mix            # mix balanced only
+    python scripts/unified_build/build_unified_dataset.py --step mix_phase1     # mix phase1 only
     python scripts/unified_build/build_unified_dataset.py --step tokenize --only code_python  # single source
 """
 
@@ -56,9 +62,17 @@ TOKENIZED_DIR = PROJECT_ROOT / "data" / "unified_tokenized"
 CODE_EVAL_CLEAN = PROJECT_ROOT / "data" / "code_eval_clean"
 CODE_EVAL_TOKENIZED = PROJECT_ROOT / "data" / "code_eval_tokenized"
 
-# Final mixed output
+# Retrieval eval holdback
+RETRIEVAL_EVAL_CLEAN = PROJECT_ROOT / "data" / "retrieval_eval_clean"
+RETRIEVAL_EVAL_TOKENIZED = PROJECT_ROOT / "data" / "retrieval_eval_tokenized"
+
+# Final mixed output (Phase 2: balanced)
 MIX_CONFIG = PROJECT_ROOT / "data" / "sources" / "unified_from_scratch.json"
 MIX_OUTPUT = PROJECT_ROOT / "data" / "unified_6B"
+
+# Phase 1: circuit formation mix
+PHASE1_CONFIG = PROJECT_ROOT / "data" / "sources" / "unified_phase1_circuit.json"
+PHASE1_OUTPUT = PROJECT_ROOT / "data" / "unified_phase1_circuit"
 
 # Tokenizer script
 TOKENIZE_SCRIPT = PROJECT_ROOT / "scripts" / "prepare_weighted_dataset.py"
@@ -219,38 +233,42 @@ def step_download():
 # ---------------------------------------------------------------------------
 
 def step_holdback():
-    banner("STEP 2: Hold Back Code Shards for Eval Set")
+    banner("STEP 2: Hold Back Eval Shards (Code + Retrieval)")
 
+    # --- Code eval holdback ---
+    print("  --- Code Eval Holdback ---")
     if CODE_EVAL_CLEAN.exists() and list(CODE_EVAL_CLEAN.glob("*.txt")):
         n = len(list(CODE_EVAL_CLEAN.glob("*.txt")))
         print(f"  Code eval clean dir already has {n} shards -- skipping holdback")
         print(f"  (Delete {CODE_EVAL_CLEAN} to re-run)")
         _tokenize_eval_holdback()
-        return
+    else:
+        CODE_EVAL_CLEAN.mkdir(parents=True, exist_ok=True)
 
-    CODE_EVAL_CLEAN.mkdir(parents=True, exist_ok=True)
+        # Hold back last 3 codeparrot shards
+        cp_shards = sorted(glob.glob(str(CLEAN_DIR / "codeparrot" / "shard_*.txt")))
+        cp_holdback = cp_shards[-3:] if len(cp_shards) >= 3 else cp_shards[-1:]
+        for shard in cp_holdback:
+            dest = CODE_EVAL_CLEAN / Path(shard).name
+            print(f"    Moving: {shard} -> {dest}")
+            shutil.move(shard, dest)
 
-    # Hold back last 3 codeparrot shards
-    cp_shards = sorted(glob.glob(str(CLEAN_DIR / "codeparrot" / "shard_*.txt")))
-    cp_holdback = cp_shards[-3:] if len(cp_shards) >= 3 else cp_shards[-1:]
-    for shard in cp_holdback:
-        dest = CODE_EVAL_CLEAN / Path(shard).name
-        print(f"    Moving: {shard} -> {dest}")
-        shutil.move(shard, dest)
+        # Hold back last 2 starcoder_python shards
+        sp_shards = sorted(glob.glob(str(CLEAN_DIR / "starcoderdata_python" / "shard_*.txt")))
+        sp_holdback = sp_shards[-2:] if len(sp_shards) >= 2 else sp_shards[-1:]
+        for shard in sp_holdback:
+            # Rename to avoid collision with codeparrot shard names
+            dest = CODE_EVAL_CLEAN / f"starcoder_py_{Path(shard).name}"
+            print(f"    Moving: {shard} -> {dest}")
+            shutil.move(shard, dest)
 
-    # Hold back last 2 starcoder_python shards
-    sp_shards = sorted(glob.glob(str(CLEAN_DIR / "starcoderdata_python" / "shard_*.txt")))
-    sp_holdback = sp_shards[-2:] if len(sp_shards) >= 2 else sp_shards[-1:]
-    for shard in sp_holdback:
-        # Rename to avoid collision with codeparrot shard names
-        dest = CODE_EVAL_CLEAN / f"starcoder_py_{Path(shard).name}"
-        print(f"    Moving: {shard} -> {dest}")
-        shutil.move(shard, dest)
+        print(f"\n  Held back {len(cp_holdback)} codeparrot + {len(sp_holdback)} starcoder_python shards")
+        print(f"  These will NOT be seen during training.")
 
-    print(f"\n  Held back {len(cp_holdback)} codeparrot + {len(sp_holdback)} starcoder_python shards")
-    print(f"  These will NOT be seen during training.")
+        _tokenize_eval_holdback()
 
-    _tokenize_eval_holdback()
+    # --- Retrieval eval holdback ---
+    _step_retrieval_holdback()
 
 
 def _tokenize_eval_holdback():
@@ -280,9 +298,82 @@ def _tokenize_eval_holdback():
     ]
     run(cmd, "Tokenizing code eval holdback (~50M tokens)")
 
-    # Move all train shards to val (eval-only loader reads from val/)
-    train_dir = CODE_EVAL_TOKENIZED / "train"
-    val_dir = CODE_EVAL_TOKENIZED / "val"
+    _move_train_to_val(CODE_EVAL_TOKENIZED)
+    n_val = len(list((CODE_EVAL_TOKENIZED / "val").glob("*.bin")))
+    print(f"  Code eval set ready: {CODE_EVAL_TOKENIZED / 'val'} ({n_val} shards)")
+
+
+def _step_retrieval_holdback():
+    """Hold back retrieval shards (StackExchange + NQ/TriviaQA) for eval."""
+    print()
+    print("  --- Retrieval Eval Holdback ---")
+
+    if RETRIEVAL_EVAL_CLEAN.exists() and list(RETRIEVAL_EVAL_CLEAN.glob("*.txt")):
+        n = len(list(RETRIEVAL_EVAL_CLEAN.glob("*.txt")))
+        print(f"  Retrieval eval clean dir already has {n} shards -- skipping holdback")
+        print(f"  (Delete {RETRIEVAL_EVAL_CLEAN} to re-run)")
+        _tokenize_retrieval_eval()
+        return
+
+    RETRIEVAL_EVAL_CLEAN.mkdir(parents=True, exist_ok=True)
+
+    # Hold back last 3 StackExchange shards
+    se_shards = sorted(glob.glob(str(CLEAN_DIR / "stackexchange_qa" / "shard_*.txt")))
+    se_holdback = se_shards[-3:] if len(se_shards) >= 3 else se_shards[-1:]
+    for shard in se_holdback:
+        dest = RETRIEVAL_EVAL_CLEAN / f"stackex_{Path(shard).name}"
+        print(f"    Moving: {shard} -> {dest}")
+        shutil.move(shard, dest)
+
+    # Hold back last 2 NQ/TriviaQA shards
+    nq_shards = sorted(glob.glob(str(CLEAN_DIR / "nq_triviaqa" / "shard_*.txt")))
+    nq_holdback = nq_shards[-2:] if len(nq_shards) >= 2 else nq_shards[-1:]
+    for shard in nq_holdback:
+        dest = RETRIEVAL_EVAL_CLEAN / f"nq_tqa_{Path(shard).name}"
+        print(f"    Moving: {shard} -> {dest}")
+        shutil.move(shard, dest)
+
+    print(f"\n  Held back {len(se_holdback)} StackExchange + {len(nq_holdback)} NQ/TriviaQA shards")
+    print(f"  These will NOT be seen during training.")
+
+    _tokenize_retrieval_eval()
+
+
+def _tokenize_retrieval_eval():
+    """Tokenize the held-back retrieval eval shards."""
+    val_dir = RETRIEVAL_EVAL_TOKENIZED / "val"
+    if val_dir.exists() and list(val_dir.glob("*.bin")):
+        n = len(list(val_dir.glob("*.bin")))
+        print(f"  Retrieval eval already tokenized ({n} val shards) -- skipping")
+        return
+
+    print()
+    print("  Tokenizing retrieval eval holdback set...")
+
+    cmd = [
+        PYTHON, str(TOKENIZE_SCRIPT),
+        "--source", f"eval_stackex:{RETRIEVAL_EVAL_CLEAN / 'stackex_shard_*.txt'}",
+        "--source", f"eval_nq_tqa:{RETRIEVAL_EVAL_CLEAN / 'nq_tqa_shard_*.txt'}",
+        "--weight", "eval_stackex:0.6",
+        "--weight", "eval_nq_tqa:0.4",
+        "--total_tokens", "50000000",
+        "--out_dir", str(RETRIEVAL_EVAL_TOKENIZED),
+        "--tokenization", "gpt2",
+        "--tokens_per_shard", "10000000",
+        "--val_fraction", "0.05",
+        "--no_normalize", "--no_filter",
+    ]
+    run(cmd, "Tokenizing retrieval eval holdback (~50M tokens)")
+
+    _move_train_to_val(RETRIEVAL_EVAL_TOKENIZED)
+    n_val = len(list((RETRIEVAL_EVAL_TOKENIZED / "val").glob("*.bin")))
+    print(f"  Retrieval eval set ready: {RETRIEVAL_EVAL_TOKENIZED / 'val'} ({n_val} shards)")
+
+
+def _move_train_to_val(tokenized_dir: Path):
+    """Move all train shards to val/ (eval-only loader reads from val/)."""
+    train_dir = tokenized_dir / "train"
+    val_dir = tokenized_dir / "val"
     val_dir.mkdir(parents=True, exist_ok=True)
 
     if train_dir.exists():
@@ -294,9 +385,6 @@ def _tokenize_eval_holdback():
         remaining = list(train_dir.iterdir())
         if not any(f.suffix == ".bin" for f in remaining):
             shutil.rmtree(train_dir, ignore_errors=True)
-
-    n_val = len(list(val_dir.glob("*.bin")))
-    print(f"  Code eval set ready: {val_dir} ({n_val} shards)")
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +473,7 @@ def step_tokenize(only: str = None):
 # ---------------------------------------------------------------------------
 
 def step_mix():
-    banner("STEP 4: Mix All 9 Sources into Unified 6B Dataset")
+    banner("STEP 4: Mix All Sources into Unified 6B Dataset (Phase 2: Balanced)")
 
     if not MIX_CONFIG.exists():
         print(f"  [ERROR] Mix config not found: {MIX_CONFIG}")
@@ -438,6 +526,63 @@ def step_mix():
 
 
 # ---------------------------------------------------------------------------
+# Step 5: Mix Phase 1 circuit-formation dataset
+# ---------------------------------------------------------------------------
+
+def step_mix_phase1():
+    banner("STEP 5: Mix Phase 1 Circuit-Formation Dataset (~0.9B tokens)")
+
+    if not PHASE1_CONFIG.exists():
+        print(f"  [ERROR] Phase 1 config not found: {PHASE1_CONFIG}")
+        sys.exit(1)
+
+    # Verify all sources exist
+    with open(PHASE1_CONFIG) as f:
+        config = json.load(f)
+
+    print("  Checking source availability:")
+    all_ok = True
+    for name, src in config["sources"].items():
+        src_dir = PROJECT_ROOT / src["directory"]
+        train_dir = src_dir / "train"
+        val_dir = src_dir / "val"
+
+        n_train = len(list(train_dir.glob("*.bin"))) if train_dir.exists() else 0
+        n_val = len(list(val_dir.glob("*.bin"))) if val_dir.exists() else 0
+
+        if n_train == 0 and n_val == 0:
+            print(f"    [MISSING] {name}: {src_dir}")
+            all_ok = False
+        else:
+            print(f"    [OK]      {name}: {n_train} train + {n_val} val shards")
+
+    if not all_ok:
+        print("\n  [ERROR] Some sources are missing. Run tokenize step first.")
+        sys.exit(1)
+
+    cmd = [
+        PYTHON, str(MIX_SCRIPT),
+        "--config", str(PHASE1_CONFIG),
+        "--output_dir", str(PHASE1_OUTPUT),
+        "--seed", "42",
+    ]
+
+    run(cmd, "Mixing Phase 1 circuit-formation dataset")
+
+    # Summary
+    train_dir = PHASE1_OUTPUT / "train"
+    val_dir = PHASE1_OUTPUT / "val"
+    n_train = len(list(train_dir.glob("*.bin"))) if train_dir.exists() else 0
+    n_val = len(list(val_dir.glob("*.bin"))) if val_dir.exists() else 0
+    total_m = (n_train + n_val) * 10
+
+    print(f"\n  Phase 1 dataset ready at: {PHASE1_OUTPUT}")
+    print(f"  Train: {n_train} shards")
+    print(f"  Val:   {n_val} shards")
+    print(f"  Total: ~{total_m}M tokens")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -446,9 +591,10 @@ STEPS = {
     "holdback": step_holdback,
     "tokenize": step_tokenize,
     "mix": step_mix,
+    "mix_phase1": step_mix_phase1,
 }
 
-ALL_STEPS_ORDER = ["download", "holdback", "tokenize", "mix"]
+ALL_STEPS_ORDER = ["download", "holdback", "tokenize", "mix", "mix_phase1"]
 
 
 def main():
@@ -492,12 +638,16 @@ def main():
                 STEPS[step_name]()
 
     banner("Pipeline Complete!")
-    print(f"  Unified dataset: {MIX_OUTPUT}")
-    print(f"  Code eval set:   {CODE_EVAL_TOKENIZED}")
+    print(f"  Unified dataset (Phase 2): {MIX_OUTPUT}")
+    print(f"  Circuit dataset (Phase 1): {PHASE1_OUTPUT}")
+    print(f"  Code eval set:             {CODE_EVAL_TOKENIZED}")
+    print(f"  Retrieval eval set:        {RETRIEVAL_EVAL_TOKENIZED}")
     print()
     print("  Upload to RunPod:")
     print(f"    - {MIX_OUTPUT}/")
+    print(f"    - {PHASE1_OUTPUT}/")
     print(f"    - {CODE_EVAL_TOKENIZED}/")
+    print(f"    - {RETRIEVAL_EVAL_TOKENIZED}/")
     print(f"    - data/multilingual_1.5B_wiki90/  (if not already on RunPod)")
     print(f"    - data/domain_161M_corpus_tokenized/  (if not already on RunPod)")
     print()

@@ -917,7 +917,8 @@ class GPT(nn.Module):
             save_dtype='bf16', final_save_dtype='fp16', warmup_iters=0, grad_clip=1.0,
             use_amp=True, amp_dtype='bf16', eval_data_loaders=None, log_file=None,
             eval_seed=None, config_file=None, dataset_dir=None,
-            eval_prompts_file=None, eval_max_new_tokens=64):
+            eval_prompts_file=None, eval_max_new_tokens=64,
+            data_loader_schedule=None):
         """
         Main training loop - the model trains itself!
         
@@ -954,6 +955,10 @@ class GPT(nn.Module):
                         a copy is saved to the checkpoint directory for reproducibility.
             dataset_dir: Optional path to the dataset directory. Saved in training_state.json
                         for provenance tracking.
+            data_loader_schedule: Optional list of (switch_iter, loader, phase_name) tuples
+                                 for curriculum training. When iter reaches switch_iter, the
+                                 data_loader is swapped to the new loader. LR schedule stays
+                                 continuous. Built by train.py from config curriculum section.
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -1288,6 +1293,15 @@ class GPT(nn.Module):
                 torch.cuda.empty_cache()
                 gpu_mem("after_gc_and_empty_cache")
 
+            # Curriculum phase switching (data loader swap at scheduled iterations)
+            if data_loader_schedule:
+                for switch_iter, switch_loader, phase_name in data_loader_schedule:
+                    if iter == switch_iter:
+                        data_loader = switch_loader
+                        print(f"\n{'='*70}")
+                        print(f"  [CURRICULUM] iter {iter:,}: switching to phase '{phase_name}'")
+                        print(f"{'='*70}\n")
+            
             # Training step with optional AMP
             optimizer.zero_grad(set_to_none=True)
             batch = data_loader.get_batch('train')

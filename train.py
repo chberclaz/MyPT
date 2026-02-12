@@ -120,7 +120,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "freeze_layers", "freeze_embeddings"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "freeze_layers", "freeze_embeddings", "curriculum"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
@@ -438,6 +438,70 @@ def main():
                 return
             print()
     
+    # Build curriculum data loader schedule if specified in config
+    data_loader_schedule = None
+    curriculum_config = config_training.get('curriculum', None)
+    
+    if curriculum_config:
+        import os as _os
+        phases = curriculum_config.get('phases', [])
+        if len(phases) >= 2:
+            print()
+            print("========== Curriculum Training ==========")
+            print(f"Phases: {len(phases)}")
+            
+            data_loader_schedule = []
+            for i, phase in enumerate(phases):
+                phase_name = phase['name']
+                phase_dir = phase['dataset_dir']
+                until_iter = phase.get('until_iter', None)
+                desc = phase.get('description', '')
+                
+                print(f"  Phase {i+1}: '{phase_name}'")
+                print(f"    Dataset: {phase_dir}")
+                if until_iter is not None:
+                    print(f"    Until iter: {until_iter:,}")
+                else:
+                    print(f"    Until iter: end of training")
+                if desc:
+                    print(f"    {desc}")
+                
+                # Build a data loader for each phase
+                if not _os.path.exists(phase_dir):
+                    print(f"    [WARN] Dataset dir not found: {phase_dir}")
+                    print(f"    Will fail at training time if not created before then.")
+                
+                phase_loader = GPTDataLoader(
+                    model.config,
+                    model.tokenizer,
+                    dataset_dir=phase_dir,
+                    use_loss_mask=model.config.use_loss_mask
+                )
+                
+                # Schedule entry: (switch_at_iter, loader, phase_name)
+                # Phase 0 starts at iter 0 (or start_step on resume)
+                # Phase 1 starts at until_iter of phase 0, etc.
+                if i == 0:
+                    # First phase: use as the initial data_loader
+                    data_loader = phase_loader
+                    switch_iter = until_iter if until_iter is not None else effective_max_iters
+                else:
+                    # Subsequent phases: schedule the switch
+                    data_loader_schedule.append((prev_switch_iter, phase_loader, phase_name))
+                
+                prev_switch_iter = until_iter if until_iter is not None else effective_max_iters
+            
+            # Handle resume: if start_step is past a phase boundary, 
+            # use the correct phase's loader from the start
+            if start_step > 0 and data_loader_schedule:
+                for switch_iter, switch_loader, phase_name in data_loader_schedule:
+                    if start_step >= switch_iter:
+                        data_loader = switch_loader
+                        print(f"\n  [RESUME] start_step={start_step} >= switch at {switch_iter}")
+                        print(f"  Using '{phase_name}' data loader from the start")
+            
+            print()
+    
     # Train the model (model trains itself!)
     print("========== Starting Training ==========")
     print(f"Training from step {start_step} to {effective_max_iters}")
@@ -518,7 +582,8 @@ def main():
         config_file=args.config_file,
         dataset_dir=args.dataset_dir,
         eval_prompts_file=args.eval_prompts_file,
-        eval_max_new_tokens=args.eval_max_new_tokens
+        eval_max_new_tokens=args.eval_max_new_tokens,
+        data_loader_schedule=data_loader_schedule,
     )
     
     print("\n========== Training Complete ==========")
