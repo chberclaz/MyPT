@@ -1,6 +1,6 @@
 {
   "name": "GPT-750M-1024-Unified-v1",
-  "description": "From-scratch training on ~6B token unified dataset (v3 dual-retrieval). Architecture: RoPE + SwiGLU + RMSNorm (LLaMA-style). RAG-optimized mix: 23% code (induction), 20% retrieval (13% StackExchange + 7% NQ/TriviaQA), 45% general (FineWeb+Wiki+Reddit), 7% domain, 5% structured. Two complementary retrieval sources. Gradient accumulation 8x (effective batch ~98K tokens/step). LR 1.5e-4. tie_weights=true from step 0. 75K optimizer steps = ~7.37B tokens = ~1.2 epochs. GOLD checkpoint with 3-guard system.",
+  "description": "LLaMA-2 architecture at 700M parameter class, RAG-specialized. From-scratch training on ~6B token unified dataset (v3 dual-retrieval). Architecture: RoPE + SwiGLU + RMSNorm (LLaMA-style). RAG-optimized mix: 23% code (induction), 20% retrieval (13% StackExchange + 7% NQ/TriviaQA), 45% general (FineWeb+Wiki+Reddit), 7% domain, 5% structured. Two complementary retrieval sources. Gradient accumulation 8x (effective batch ~98K tokens/step). LR 1.5e-4. tie_weights=true from step 0. 75K optimizer steps = ~7.37B tokens = ~1.2 epochs. GOLD checkpoint with 3-guard system.",
 
   "batch_size": 12,
   "block_size": 1024,
@@ -19,7 +19,7 @@
 
   "learning_rate": 1.5e-4,
   "max_iters": 75000,
-  "eval_interval": 250,
+  "eval_interval": 350,
   "eval_iters": 200,
   "warmup_iters": 3750,
   "grad_clip": 1.0,
