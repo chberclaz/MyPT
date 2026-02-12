@@ -120,7 +120,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "freeze_layers", "freeze_embeddings", "curriculum"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
@@ -182,6 +182,7 @@ def main():
     effective_weight_decay = get_effective_value('weight_decay', args.weight_decay, config_training, parser_defaults)
     effective_use_amp = get_effective_value('use_amp', args.use_amp, config_training, parser_defaults)
     effective_amp_dtype = get_effective_value('amp_dtype', args.amp_dtype, config_training, parser_defaults)
+    effective_grad_accum_steps = int(config_training.get('grad_accum_steps', 1))
     
     # Auto-adjust amp_dtype based on GPU capability (if user didn't explicitly override)
     if effective_use_amp and args.amp_dtype is None and torch.cuda.is_available():
@@ -201,6 +202,8 @@ def main():
     print(f"Gradient clip: {effective_grad_clip}")
     print(f"Warmup: {effective_warmup_iters}")
     print(f"Mixed precision: {effective_amp_dtype.upper() if effective_use_amp else 'disabled'}")
+    if effective_grad_accum_steps > 1:
+        print(f"Gradient accumulation: {effective_grad_accum_steps} micro-steps")
     if config_training.get('freeze_layers', 0) > 0:
         print(f"Freeze layers: {config_training['freeze_layers']} (of {config_training.get('n_layer', '?')})")
     if args.init_from_model:
@@ -584,6 +587,7 @@ def main():
         eval_prompts_file=args.eval_prompts_file,
         eval_max_new_tokens=args.eval_max_new_tokens,
         data_loader_schedule=data_loader_schedule,
+        grad_accum_steps=effective_grad_accum_steps,
     )
     
     print("\n========== Training Complete ==========")

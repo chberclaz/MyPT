@@ -54,6 +54,12 @@ class GPTConfig:
     # Checkpoint dtype (None = use current model dtype)
     save_dtype: str | None = None  # 'fp32', 'bf16', 'fp16', or None
     
+    # Architecture variants (defaults match GPT-2 for backward compatibility)
+    pos_encoding: str = "learned"      # "learned" (GPT-2 absolute) or "rope" (rotary, modern)
+    mlp_type: str = "gelu"             # "gelu" (standard 2-layer) or "swiglu" (gated, LLaMA-style)
+    norm_type: str = "layernorm"       # "layernorm" or "rmsnorm"
+    rope_theta: float = 10000.0        # RoPE base frequency (only used when pos_encoding="rope")
+    
     # Episode-indexed SFT data loading options
     # dataset_mode: 'token_stream' (default, random windows) or 'sft_episode' (episode-indexed)
     # Note: dataset_mode is auto-detected from dataset format, these are fallback/override options
@@ -104,6 +110,119 @@ class GPTConfig:
             config_dict = json.load(f)
         return cls.from_dict(config_dict)
 
+# ---------------------------------------------------------------------------
+# RMSNorm (replaces LayerNorm when config.norm_type == "rmsnorm")
+# ---------------------------------------------------------------------------
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization (used by LLaMA, Mistral, Gemma).
+    
+    Faster than LayerNorm: skips mean subtraction, only variance normalization.
+    Has weight (learnable scale) but no bias.
+    """
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        norm = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return x * norm * self.weight
+
+
+# ---------------------------------------------------------------------------
+# Rotary Position Embeddings (RoPE)
+# ---------------------------------------------------------------------------
+
+def precompute_rope_frequencies(head_dim, max_seq_len, theta=10000.0, device=None):
+    """Precompute cos/sin tables for Rotary Position Embeddings.
+    
+    Args:
+        head_dim: Dimension per attention head (n_embd // n_head)
+        max_seq_len: Maximum sequence length (block_size)
+        theta: RoPE base frequency (default 10000.0)
+        device: Torch device
+    
+    Returns:
+        cos, sin: Each (max_seq_len, head_dim // 2)
+    """
+    half_dim = head_dim // 2
+    # Frequency bands: theta^(-2i/d) for i = 0, 1, ..., half_dim-1
+    freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    # Position indices
+    t = torch.arange(max_seq_len, device=device).float()
+    # Outer product: (max_seq_len, half_dim)
+    angles = torch.outer(t, freqs)
+    return angles.cos(), angles.sin()
+
+
+def apply_rotary_emb(x, cos, sin):
+    """Apply rotary position embeddings to Q or K tensor.
+    
+    Uses LLaMA-style split-half convention:
+        x_out[..., :d] = x[..., :d] * cos - x[..., d:] * sin
+        x_out[..., d:] = x[..., d:] * cos + x[..., :d] * sin
+    
+    Args:
+        x: (B, n_head, T, head_dim)
+        cos: (T, head_dim//2) or (B, T, head_dim//2)
+        sin: (T, head_dim//2) or (B, T, head_dim//2)
+    
+    Returns:
+        Rotated tensor, same shape as x
+    """
+    d = x.shape[-1] // 2
+    x1 = x[..., :d]
+    x2 = x[..., d:]
+    
+    # Reshape cos/sin for broadcasting: handle both (T, d) and (B, T, d)
+    if cos.dim() == 2:
+        # (T, d) -> (1, 1, T, d) for broadcasting with (B, nh, T, d)
+        cos = cos.unsqueeze(0).unsqueeze(0)
+        sin = sin.unsqueeze(0).unsqueeze(0)
+    elif cos.dim() == 3:
+        # (B, T, d) -> (B, 1, T, d) for broadcasting with (B, nh, T, d)
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+    
+    return torch.cat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# SwiGLU Feed-Forward (replaces standard MLP when config.mlp_type == "swiglu")
+# ---------------------------------------------------------------------------
+
+class SwiGLUFeedForward(nn.Module):
+    """Gated MLP with SiLU activation (used by LLaMA, Mistral, Gemma).
+    
+    SwiGLU(x) = (SiLU(x @ W_gate) * (x @ W_up)) @ W_down
+    
+    Three weight matrices instead of two. Intermediate dimension is auto-computed
+    to approximately match parameter count of standard MLP (4 * n_embd).
+    """
+    def __init__(self, config):
+        super().__init__()
+        dim = config.n_embd
+        # Compute intermediate dim: match param count with standard 4x MLP
+        # Standard: 2 * dim * (4*dim) = 8*dim^2
+        # SwiGLU:   3 * dim * hidden   -> hidden ≈ 8*dim/3
+        # Round up to multiple of 64 for GPU tensor core alignment
+        hidden = int(8 * dim / 3)
+        hidden = ((hidden + 63) // 64) * 64
+        
+        self.w_gate = nn.Linear(dim, hidden, bias=False)
+        self.w_up   = nn.Linear(dim, hidden, bias=False)
+        self.w_down = nn.Linear(hidden, dim, bias=False)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        return self.dropout(self.w_down(F.silu(self.w_gate(x)) * self.w_up(x)))
+
+
+# ---------------------------------------------------------------------------
+# Attention
+# ---------------------------------------------------------------------------
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -124,6 +243,8 @@ class CausalSelfAttention(nn.Module):
         kv_cache=None,
         cache_pos: int = 0,
         attn_mask=None,
+        rope_cos=None,
+        rope_sin=None,
     ):
         """
         Supports two cache modes:
@@ -141,6 +262,11 @@ class CausalSelfAttention(nn.Module):
             When provided, replaces is_causal with explicit mask. Used for packed
             sequences where each episode must only attend within its own segment.
             True = attend, False = mask out.
+        
+        rope_cos, rope_sin: Optional RoPE rotation tensors for this sequence.
+            Shape (T, head_dim//2) or (B, T, head_dim//2) for per-sample positions.
+            When provided, applied to Q and K before attention.
+            When None, no rotary embeddings are applied (learned pos used instead).
         """
         B, T, C = x.shape
 
@@ -151,6 +277,11 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, self.head_size).transpose(1, 2)
         k = k.view(B, T, self.n_head, self.head_size).transpose(1, 2)
         v = v.view(B, T, self.n_head, self.head_size).transpose(1, 2)
+
+        # Apply RoPE to Q and K (before any cache operations)
+        if rope_cos is not None:
+            q = apply_rotary_emb(q, rope_cos, rope_sin)
+            k = apply_rotary_emb(k, rope_cos, rope_sin)
 
         # ----------------------------
         # FAST PATH: preallocated KV cache (no cat)
@@ -167,7 +298,7 @@ class CausalSelfAttention(nn.Module):
                     f"Increase block_size or trim prompt."
                 )
 
-            # Write new keys/values into cache
+            # Write new keys/values into cache (K already has RoPE applied)
             k_cache[:, :, cache_pos:end_pos, :] = k
             v_cache[:, :, cache_pos:end_pos, :] = v
 
@@ -249,9 +380,21 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.sa = CausalSelfAttention(config)
-        self.fwd = FeedForward(config)
-        self.ln1 = nn.LayerNorm(config.n_embd)
-        self.ln2 = nn.LayerNorm(config.n_embd)
+        
+        # MLP: SwiGLU or standard GELU
+        if config.mlp_type == "swiglu":
+            self.fwd = SwiGLUFeedForward(config)
+        else:
+            self.fwd = FeedForward(config)
+        
+        # Normalization: RMSNorm or LayerNorm
+        if config.norm_type == "rmsnorm":
+            self.ln1 = RMSNorm(config.n_embd)
+            self.ln2 = RMSNorm(config.n_embd)
+        else:
+            self.ln1 = nn.LayerNorm(config.n_embd)
+            self.ln2 = nn.LayerNorm(config.n_embd)
+        
         self.use_checkpoint = config.use_checkpoint  # toggle
 
     def forward(
@@ -262,13 +405,18 @@ class Block(nn.Module):
         kv_cache=None,
         cache_pos: int = 0,
         attn_mask=None,
+        rope_cos=None,
+        rope_sin=None,
     ):
         # Training checkpoint path (no cache)
         if self.training and self.use_checkpoint and (past_kv is None) and (not use_cache) and (kv_cache is None):
-            # Capture attn_mask in closure for checkpointing
+            # Capture attn_mask and RoPE in closure for checkpointing
             _attn_mask = attn_mask
+            _rope_cos = rope_cos
+            _rope_sin = rope_sin
             def sa_fn(inp):
-                y, _ = self.sa(self.ln1(inp), past_kv=None, use_cache=False, attn_mask=_attn_mask)
+                y, _ = self.sa(self.ln1(inp), past_kv=None, use_cache=False,
+                              attn_mask=_attn_mask, rope_cos=_rope_cos, rope_sin=_rope_sin)
                 return y
 
             def ff_fn(inp):
@@ -286,6 +434,8 @@ class Block(nn.Module):
             kv_cache=kv_cache,
             cache_pos=cache_pos,
             attn_mask=attn_mask,
+            rope_cos=rope_cos,
+            rope_sin=rope_sin,
         )
         x = x + attn_out
         x = x + self.fwd(self.ln2(x))
@@ -314,9 +464,29 @@ class GPT(nn.Module):
             self.tokenizer = Tokenizer(self.config, kind)
 
         self.token_embedding_table = nn.Embedding(self.config.vocab_size, self.config.n_embd)
-        self.position_embedding_table= nn.Embedding(self.config.block_size, self.config.n_embd)
+        
+        # Position encoding: RoPE (modern) or learned absolute (GPT-2)
+        self._use_rope = getattr(self.config, 'pos_encoding', 'learned') == 'rope'
+        if self._use_rope:
+            # Precompute RoPE cos/sin tables as non-learnable buffers
+            head_dim = self.config.n_embd // self.config.n_head
+            rope_theta = getattr(self.config, 'rope_theta', 10000.0)
+            cos, sin = precompute_rope_frequencies(
+                head_dim, self.config.block_size, theta=rope_theta
+            )
+            self.register_buffer('rope_cos', cos, persistent=False)
+            self.register_buffer('rope_sin', sin, persistent=False)
+        else:
+            self.position_embedding_table = nn.Embedding(self.config.block_size, self.config.n_embd)
+        
         self.blocks = nn.ModuleList([Block(self.config) for _ in range(self.config.n_layer)])
-        self.ln_f= nn.LayerNorm(self.config.n_embd) # final Layer norm
+        
+        # Final normalization: RMSNorm or LayerNorm
+        if getattr(self.config, 'norm_type', 'layernorm') == 'rmsnorm':
+            self.ln_f = RMSNorm(self.config.n_embd)
+        else:
+            self.ln_f = nn.LayerNorm(self.config.n_embd)
+        
         self.lm_head = nn.Linear(self.config.n_embd, self.config.vocab_size)
         
         # Optional weight tying (GPT-2 style)
@@ -440,23 +610,43 @@ class GPT(nn.Module):
 
         tok_emb = self.token_embedding_table(idx)  # (B,T,C)
 
-        # Position handling
+        # Position handling: compute position_ids for both RoPE and learned paths
+        rope_cos = None
+        rope_sin = None
+        
         if segment_ids is not None:
             # PACKED MODE: reset positions at each episode boundary
-            pos_ids = self._compute_segment_positions(segment_ids)  # (B, T)
-            pos_emb = self.position_embedding_table(pos_ids)  # (B, T, C)
+            position_ids = self._compute_segment_positions(segment_ids)  # (B, T)
         elif kv_cache is not None and use_cache:
             pos_start = cache_pos
-            pos = torch.arange(pos_start, pos_start + T, device=device)
-            pos_emb = self.position_embedding_table(pos)  # (T, C)
+            position_ids = torch.arange(pos_start, pos_start + T, device=device).unsqueeze(0)  # (1, T)
         else:
             pos_start = 0
             if past_kv is not None and len(past_kv) > 0 and past_kv[0] is not None:
                 pos_start = past_kv[0][0].size(2)
-            pos = torch.arange(pos_start, pos_start + T, device=device)
-            pos_emb = self.position_embedding_table(pos)  # (T, C)
-
-        x = tok_emb + pos_emb
+            position_ids = torch.arange(pos_start, pos_start + T, device=device).unsqueeze(0)  # (1, T)
+        
+        if self._use_rope:
+            # RoPE: look up precomputed cos/sin for these position_ids
+            # position_ids: (B, T) or (1, T)
+            if position_ids.dim() == 2 and position_ids.shape[0] > 1:
+                # Per-sample positions (packed SFT): (B, T) -> (B, T, head_dim//2)
+                rope_cos = self.rope_cos[position_ids]  # (B, T, d)
+                rope_sin = self.rope_sin[position_ids]  # (B, T, d)
+            else:
+                # Shared positions across batch: (1, T) or (T,) -> (T, head_dim//2)
+                pos_flat = position_ids.squeeze(0)  # (T,)
+                rope_cos = self.rope_cos[pos_flat]  # (T, d)
+                rope_sin = self.rope_sin[pos_flat]  # (T, d)
+            
+            x = tok_emb  # No additive position embedding with RoPE
+        else:
+            # Learned absolute positional embeddings (GPT-2 style)
+            if position_ids.dim() == 2 and position_ids.shape[0] > 1:
+                pos_emb = self.position_embedding_table(position_ids)  # (B, T, C)
+            else:
+                pos_emb = self.position_embedding_table(position_ids.squeeze(0))  # (T, C)
+            x = tok_emb + pos_emb
 
         # Build segment-isolated attention mask if segment_ids provided
         attn_mask = None
@@ -464,7 +654,7 @@ class GPT(nn.Module):
             attn_mask = self._build_segment_attention_mask(segment_ids)  # (B, 1, T, T)
             if not getattr(self, '_segment_attn_logged', False):
                 n_segments = segment_ids.max().item()
-                print(f"  🔒 Segment-isolated attention ACTIVE: {n_segments} segments/pack, "
+                print(f"  Segment-isolated attention ACTIVE: {n_segments} segments/pack, "
                       f"mask shape {attn_mask.shape}, positions reset per episode")
                 self._segment_attn_logged = True
 
@@ -479,6 +669,8 @@ class GPT(nn.Module):
                         use_cache=True,
                         kv_cache=kv_cache[i],
                         cache_pos=cache_pos,
+                        rope_cos=rope_cos,
+                        rope_sin=rope_sin,
                     )
                 present_kv = (kv_cache, cache_pos + T)
 
@@ -487,13 +679,14 @@ class GPT(nn.Module):
                 present_kv = []
                 for i, block in enumerate(self.blocks):
                     layer_past = None if past_kv is None else past_kv[i]
-                    x, pkv = block(x, past_kv=layer_past, use_cache=True, kv_cache=None, cache_pos=0)
+                    x, pkv = block(x, past_kv=layer_past, use_cache=True, kv_cache=None, cache_pos=0,
+                                   rope_cos=rope_cos, rope_sin=rope_sin)
                     present_kv.append(pkv)
         else:
             # No cache (training or eval) - pass attn_mask if available
             for block in self.blocks:
                 x, _ = block(x, past_kv=None, use_cache=False, kv_cache=None, cache_pos=0,
-                             attn_mask=attn_mask)
+                             attn_mask=attn_mask, rope_cos=rope_cos, rope_sin=rope_sin)
             present_kv = None
 
         x = self.ln_f(x)
@@ -918,7 +1111,7 @@ class GPT(nn.Module):
             use_amp=True, amp_dtype='bf16', eval_data_loaders=None, log_file=None,
             eval_seed=None, config_file=None, dataset_dir=None,
             eval_prompts_file=None, eval_max_new_tokens=64,
-            data_loader_schedule=None):
+            data_loader_schedule=None, grad_accum_steps=1):
         """
         Main training loop - the model trains itself!
         
@@ -959,6 +1152,10 @@ class GPT(nn.Module):
                                  for curriculum training. When iter reaches switch_iter, the
                                  data_loader is swapped to the new loader. LR schedule stays
                                  continuous. Built by train.py from config curriculum section.
+            grad_accum_steps: Number of micro-batches to accumulate before each optimizer step.
+                             Effective batch = batch_size * grad_accum_steps. Default 1 (no
+                             accumulation). When > 1, each 'iter' counts one optimizer step,
+                             and grad_accum_steps forward/backward passes happen per step.
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -1017,6 +1214,12 @@ class GPT(nn.Module):
         print(f"  Warmup:  0 → {target_lr:.2e} over {warmup_steps} steps ({warmup_steps/max_iters*100:.1f}% of training)")
         print(f"  Decay:   {target_lr:.2e} → {min_lr:.2e} (cosine) over remaining {max_iters - warmup_steps} steps")
         print(f"  Min LR:  {min_lr:.2e} (10% of peak)")
+        if grad_accum_steps > 1:
+            eff_batch = self.config.batch_size * grad_accum_steps
+            tokens_per_step = eff_batch * self.config.block_size
+            print(f"Gradient accumulation: {grad_accum_steps} micro-steps per optimizer step")
+            print(f"  Effective batch size: {eff_batch} ({self.config.batch_size} x {grad_accum_steps})")
+            print(f"  Tokens per optimizer step: {tokens_per_step:,}")
         
         # Setup automatic mixed precision (AMP)
         device_type = 'cuda' if 'cuda' in str(self.config.device) else 'cpu'
@@ -1302,38 +1505,43 @@ class GPT(nn.Module):
                         print(f"  [CURRICULUM] iter {iter:,}: switching to phase '{phase_name}'")
                         print(f"{'='*70}\n")
             
-            # Training step with optional AMP
+            # Training step with gradient accumulation and optional AMP
             optimizer.zero_grad(set_to_none=True)
-            batch = data_loader.get_batch('train')
             
-            #gpu_mem("after_zero_grad")
-            # Handle (X, Y), (X, Y, loss_mask), and (X, Y, loss_mask, segment_ids) formats
-            with ctx:
-                if isinstance(batch, (tuple, list)) and len(batch) == 4:
-                    xb, yb, loss_mask, segment_ids = batch
-                    _, loss, _ = self(xb, yb, loss_mask=loss_mask, segment_ids=segment_ids)
-                elif isinstance(batch, (tuple, list)) and len(batch) == 3:
-                    xb, yb, loss_mask = batch
-                    _, loss, _ = self(xb, yb, loss_mask=loss_mask)
+            for micro_step in range(grad_accum_steps):
+                batch = data_loader.get_batch('train')
+                
+                # Handle (X, Y), (X, Y, loss_mask), and (X, Y, loss_mask, segment_ids) formats
+                with ctx:
+                    if isinstance(batch, (tuple, list)) and len(batch) == 4:
+                        xb, yb, loss_mask, segment_ids = batch
+                        _, loss, _ = self(xb, yb, loss_mask=loss_mask, segment_ids=segment_ids)
+                    elif isinstance(batch, (tuple, list)) and len(batch) == 3:
+                        xb, yb, loss_mask = batch
+                        _, loss, _ = self(xb, yb, loss_mask=loss_mask)
+                    else:
+                        xb, yb = batch
+                        _, loss, _ = self(xb, yb)
+                        # debug once
+                        if iter == start_step and micro_step == 0:
+                            print("Inside autocast dtype:", self.lm_head.weight.dtype)
+                
+                # Normalize loss by accumulation steps so gradients are averaged
+                loss = loss / grad_accum_steps
+                
+                if scaler is not None:
+                    scaler.scale(loss).backward()
                 else:
-                    xb, yb = batch
-                    _, loss, _ = self(xb, yb)
-                    # debug once
-                    if iter == start_step:
-                        print("Inside autocast dtype:", self.lm_head.weight.dtype)
-            #gpu_mem("after_forward")
+                    loss.backward()
             
+            # Gradient clipping and optimizer step (once per accumulation)
             if scaler is not None:
-                # FP16 path with GradScaler
-                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
                 if grad_clip > 0:
-                    scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                # BF16 or FP32 path (no scaler needed)
-                loss.backward()
                 if grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
                 optimizer.step()

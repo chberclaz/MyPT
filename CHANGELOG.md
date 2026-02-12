@@ -5,6 +5,46 @@ All notable changes to MyPT will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-08
+
+### Added
+
+#### Architecture Modernization (LLaMA-style)
+
+- **Rotary Position Embeddings (RoPE):** Replaces learned absolute positional embeddings with rotation-based relative encoding. Enables position-invariant attention patterns critical for RAG retrieval heads. Supports future context-length extension without retraining.
+- **SwiGLU Activation:** Gated MLP with SiLU activation replaces standard GELU feed-forward. Three weight matrices (gate, up, down) with auto-computed intermediate dimension (rounded to 64 for tensor core alignment). Approximately parameter-neutral vs standard 4x MLP.
+- **RMSNorm:** Root Mean Square normalization replaces LayerNorm in all transformer blocks and final layer norm. Faster (skips mean subtraction) with no bias parameters.
+- **Gradient Accumulation:** Configurable micro-step accumulation (`grad_accum_steps`) enables larger effective batch sizes without increasing GPU memory. Loss is normalized across micro-steps; optimizer steps once per accumulation cycle.
+
+#### Training Infrastructure
+
+- **Two-stage curriculum training:** Circuit formation phase (configurable code/retrieval-heavy mix) followed by balanced phase, managed via single config file with iteration-based data loader switching
+- **Per-category eval holdout:** Separate evaluation sets for induction, retrieval, general, domain, and structured categories with independent monitoring
+- **GOLD checkpoint system:** 3-guard validation (overfit ratio, consecutive val loss rises, eval set regression) for best-checkpoint selection
+
+#### Config & Compatibility
+
+- New `GPTConfig` fields: `pos_encoding` ("learned"/"rope"), `mlp_type` ("gelu"/"swiglu"), `norm_type` ("layernorm"/"rmsnorm"), `rope_theta` (base frequency), all with backward-compatible defaults
+- All existing configs and checkpoints continue to work without modification (defaults match GPT-2 architecture)
+- New 750M unified training config (`configs/base/750M_unified_v1.json`) with all modernizations enabled
+
+### Changed
+
+- `CausalSelfAttention.forward()` accepts optional `rope_cos`/`rope_sin` tensors for rotary embeddings (all cache paths: training, preallocated KV, cat-based KV)
+- `Block` selects norm and MLP type from config flags
+- `GPT.__init__()` conditionally creates RoPE buffers (non-learnable) or learned position embedding table
+- `GPT.forward()` computes position-indexed RoPE cos/sin and passes through all blocks; supports per-sample positions for packed SFT
+- `GPT.fit()` wraps training step in micro-batch accumulation loop with proper scaler handling
+- `train.py` extracts `grad_accum_steps` from config and passes to `model.fit()`
+- Training config iteration counts recalculated for 8x gradient accumulation (same total tokens, fewer optimizer steps)
+
+### Notes
+
+- Model parameter count with all modernizations: ~699M (vs ~695M baseline, +0.5%)
+- SFT loss masking and segment attention masking fully compatible with all changes
+- Smoke test suite (`scripts/smoke_test_arch.py`) validates all 10 verification points
+- No breaking changes to existing training or inference workflows
+
 ## [0.2.1] - 2026-01-16
 
 ### Changed
@@ -91,6 +131,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned
 
-- Fine-tuning pipeline (SFT, RLHF)
-- RAG
-- RAG Tool-Calling
+- Unified 6B token dataset generation (from-scratch training run)
+- RAG evaluation benchmarks
+- RAG Tool-Calling agent training

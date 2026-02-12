@@ -1,6 +1,6 @@
 {
   "name": "GPT-750M-1024-Unified-v1",
-  "description": "From-scratch training on ~6B token unified dataset (v3 dual-retrieval). RAG-optimized mix: 23% code (induction), 20% retrieval (13% StackExchange + 7% NQ/TriviaQA), 45% general (FineWeb+Wiki+Reddit), 7% domain, 5% structured. Two complementary retrieval sources. LR 1.5e-4. tie_weights=true from step 0. 600k iters = ~1.2 epochs. GOLD checkpoint with 3-guard system.",
+  "description": "From-scratch training on ~6B token unified dataset (v3 dual-retrieval). Architecture: RoPE + SwiGLU + RMSNorm (LLaMA-style). RAG-optimized mix: 23% code (induction), 20% retrieval (13% StackExchange + 7% NQ/TriviaQA), 45% general (FineWeb+Wiki+Reddit), 7% domain, 5% structured. Two complementary retrieval sources. Gradient accumulation 8x (effective batch ~98K tokens/step). LR 1.5e-4. tie_weights=true from step 0. 75K optimizer steps = ~7.37B tokens = ~1.2 epochs. GOLD checkpoint with 3-guard system.",
 
   "batch_size": 12,
   "block_size": 1024,
@@ -12,15 +12,21 @@
   "bias": false,
   "tie_weights": true,
 
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
+
   "learning_rate": 1.5e-4,
-  "max_iters": 600000,
-  "eval_interval": 2000,
+  "max_iters": 75000,
+  "eval_interval": 250,
   "eval_iters": 200,
-  "warmup_iters": 30000,
+  "warmup_iters": 3750,
   "grad_clip": 1.0,
   "weight_decay": 0.1,
   "use_amp": true,
   "amp_dtype": "bf16",
+  "grad_accum_steps": 8,
 
   "eval_sets": {
     "general": "data/multilingual_1.5B_wiki90",
@@ -32,19 +38,19 @@
   "log_file": "logs/train/unified_v1_eval.jsonl",
 
   "curriculum": {
-    "description": "Two-stage training: circuit formation then balanced. LR schedule is continuous (single cosine over max_iters). Only the data loader switches at the phase boundary.",
+    "description": "Two-stage training: circuit formation then balanced. LR schedule is continuous (single cosine over max_iters). Only the data loader switches at the phase boundary. Iteration counts are optimizer steps (each = 8 micro-batches with grad accumulation).",
     "phases": [
       {
         "name": "circuit_formation",
         "dataset_dir": "data/unified_phase1_circuit",
-        "until_iter": 73000,
-        "description": "40% code + 30% retrieval: maximize induction/retrieval head formation during the critical early window (~0.9B tokens)"
+        "until_iter": 9125,
+        "description": "40% code + 30% retrieval: maximize induction/retrieval head formation during the critical early window (~0.9B tokens = 9125 steps * 96 * 1024)"
       },
       {
         "name": "balanced",
         "dataset_dir": "data/unified_6B",
         "until_iter": null,
-        "description": "Normal v3 mix for broad capability and refinement (~5.1B tokens)"
+        "description": "Normal v3 mix for broad capability and refinement (~6.5B tokens remaining)"
       }
     ]
   }
