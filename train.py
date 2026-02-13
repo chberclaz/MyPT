@@ -184,6 +184,13 @@ def main():
     effective_amp_dtype = get_effective_value('amp_dtype', args.amp_dtype, config_training, parser_defaults)
     effective_grad_accum_steps = int(config_training.get('grad_accum_steps', 1))
     
+    # Auto-resolve dataset_dir from curriculum config if not specified on CLI
+    if args.dataset_dir is None and 'curriculum' in config_training:
+        curriculum_phases = config_training['curriculum'].get('phases', [])
+        if curriculum_phases:
+            args.dataset_dir = curriculum_phases[0]['dataset_dir']
+            print(f"[Auto] dataset_dir from curriculum phase 1: {args.dataset_dir}")
+    
     # Auto-adjust amp_dtype based on GPU capability (if user didn't explicitly override)
     if effective_use_amp and args.amp_dtype is None and torch.cuda.is_available():
         capability = torch.cuda.get_device_capability()
