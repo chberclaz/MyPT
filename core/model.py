@@ -498,6 +498,35 @@ class GPT(nn.Module):
             # Bias remains separate (if present)
             self.lm_head.weight = self.token_embedding_table.weight
             print("Weight tying enabled: embedding and lm_head share weights")
+        
+        # Apply proper weight initialization (GPT-2 / LLaMA standard)
+        # Must happen AFTER weight tying so tied weights get the correct scale
+        self.apply(self._init_weights)
+        # Apply scaled init to residual projections (GPT-2 convention):
+        # output projections in attention and MLP get 1/sqrt(2*n_layer) scaling
+        # to prevent residual stream magnitude from growing with depth
+        residual_std = 0.02 / (2 * self.config.n_layer) ** 0.5
+        for pn, p in self.named_parameters():
+            # Attention output projection: blocks.*.attn.proj.weight
+            # SwiGLU down-projection:      blocks.*.mlp.w_down.weight
+            # Standard MLP output:         blocks.*.mlp.net.2.weight (if using GELU MLP)
+            if pn.endswith('attn.proj.weight') or pn.endswith('w_down.weight') or pn.endswith('net.2.weight'):
+                nn.init.normal_(p, mean=0.0, std=residual_std)
+    
+    def _init_weights(self, module):
+        """Initialize weights following GPT-2 / LLaMA convention.
+        
+        All linear layers and embeddings use N(0, 0.02). This ensures:
+        - Logits are well-scaled at init (std ≈ 0.7, not 36) → loss starts at ~10.8
+        - Works correctly with tie_weights (both embedding and lm_head get same init)
+        - Residual projections get additional 1/sqrt(2*n_layer) scaling (applied separately)
+        """
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def _build_segment_attention_mask(self, segment_ids):
         """Build attention mask for packed sequences with segment isolation.
