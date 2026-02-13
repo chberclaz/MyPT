@@ -1111,7 +1111,8 @@ class GPT(nn.Module):
             use_amp=True, amp_dtype='bf16', eval_data_loaders=None, log_file=None,
             eval_seed=None, config_file=None, dataset_dir=None,
             eval_prompts_file=None, eval_max_new_tokens=64,
-            data_loader_schedule=None, grad_accum_steps=1):
+            data_loader_schedule=None, grad_accum_steps=1,
+            initial_phase=None):
         """
         Main training loop - the model trains itself!
         
@@ -1168,6 +1169,7 @@ class GPT(nn.Module):
             Dict with final train/val losses
         """
         import datetime
+        import time as _time
         
         self.train()
         
@@ -1251,6 +1253,7 @@ class GPT(nn.Module):
             "save_dtype": effective_save_dtype,
             "warmup_iters": warmup_steps,
             "grad_clip": grad_clip,
+            "grad_accum_steps": grad_accum_steps,
             # Provenance tracking
             "config_file": config_file,
             "dataset_dir": dataset_dir,
@@ -1263,6 +1266,9 @@ class GPT(nn.Module):
                 "vocab_size": self.config.vocab_size,
                 "dropout": self.config.dropout,
                 "bias": self.config.bias,
+                "pos_encoding": getattr(self.config, 'pos_encoding', 'learned'),
+                "mlp_type": getattr(self.config, 'mlp_type', 'gelu'),
+                "norm_type": getattr(self.config, 'norm_type', 'layernorm'),
                 "total_params": sum(p.numel() for p in self.parameters()),
             },
         }
@@ -1316,6 +1322,47 @@ class GPT(nn.Module):
             if log_dir:
                 os.makedirs(log_dir, exist_ok=True)
         
+        # Track training start time and current curriculum phase
+        train_start_time = _time.time()
+        train_start_dt = datetime.datetime.now()
+        current_phase = initial_phase if initial_phase is not None else "default"
+        tokens_per_step = self.config.batch_size * grad_accum_steps * self.config.block_size
+        
+        # Write training header to log
+        if log_file is not None:
+            header_entry = {
+                "event": "training_start",
+                "timestamp": train_start_dt.isoformat(),
+                "config": {
+                    "max_iters": max_iters,
+                    "start_step": start_step,
+                    "learning_rate": target_lr,
+                    "warmup_iters": warmup_steps,
+                    "grad_clip": grad_clip,
+                    "grad_accum_steps": grad_accum_steps,
+                    "batch_size": self.config.batch_size,
+                    "block_size": self.config.block_size,
+                    "tokens_per_step": tokens_per_step,
+                    "eval_interval": eval_interval,
+                    "eval_iters": eval_iters,
+                    "use_amp": use_amp,
+                    "amp_dtype": amp_dtype,
+                    "config_file": config_file,
+                    "dataset_dir": dataset_dir,
+                },
+                "model": {
+                    "total_params": sum(p.numel() for p in self.parameters()),
+                    "n_layer": self.config.n_layer,
+                    "n_head": self.config.n_head,
+                    "n_embd": self.config.n_embd,
+                    "pos_encoding": getattr(self.config, 'pos_encoding', 'learned'),
+                    "mlp_type": getattr(self.config, 'mlp_type', 'gelu'),
+                    "norm_type": getattr(self.config, 'norm_type', 'layernorm'),
+                },
+            }
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(header_entry) + "\n")
+        
         for iter in range(start_step, max_iters):
             # Update learning rate (warmup or constant)
             current_lr = get_lr(iter)
@@ -1323,10 +1370,11 @@ class GPT(nn.Module):
                 param_group['lr'] = current_lr
             # Evaluation and checkpointing
             if iter % eval_interval == 0:
+                eval_start = _time.time()
                 ct = datetime.datetime.now()
-                print(f"{iter} : {ct}")
-                # _mem("before_estimate")
-                # gpu_mem("before_estimate")
+                elapsed_total = _time.time() - train_start_time
+                tokens_processed = (iter - start_step) * tokens_per_step
+                progress_pct = (iter - start_step) / max(1, max_iters - start_step) * 100
                 
                 # Set eval seed for reproducibility if specified
                 if eval_seed is not None:
@@ -1337,8 +1385,18 @@ class GPT(nn.Module):
                 # Evaluate on main data loader (train split for train_loss reference)
                 losses = self.estimate_loss(data_loader, eval_iters, splits=['val'])
                 
-                # Build log entry
-                log_entry = {"iter": iter, "val_loss": float(losses['val'])}
+                # Build log entry with full context
+                log_entry = {
+                    "event": "eval",
+                    "iter": iter,
+                    "timestamp": ct.isoformat(),
+                    "elapsed_s": round(elapsed_total, 1),
+                    "tokens_processed": tokens_processed,
+                    "progress_pct": round(progress_pct, 2),
+                    "lr": current_lr,
+                    "phase": current_phase,
+                    "val_loss": round(float(losses['val']), 6),
+                }
                 
                 # Evaluate on additional eval sets if provided
                 eval_losses = {}
@@ -1352,7 +1410,7 @@ class GPT(nn.Module):
                         
                         eval_loss = self.estimate_loss(eval_loader, eval_iters, splits=['val'])
                         eval_losses[eval_name] = float(eval_loss['val'])
-                        log_entry[f"eval_{eval_name}"] = float(eval_loss['val'])
+                        log_entry[f"eval_{eval_name}"] = round(float(eval_loss['val']), 6)
                 
                 # Run inference evaluation if eval prompts provided
                 if eval_prompts is not None:
@@ -1394,21 +1452,36 @@ class GPT(nn.Module):
                     
                     # Warn if cache/nocache diverge
                     if cache_mismatches:
-                        print(f"  ⚠️  CACHE MISMATCH on: {cache_mismatches}")
+                        print(f"  CACHE MISMATCH on: {cache_mismatches}")
                         log_entry["cache_mismatches"] = cache_mismatches
                     
                     self.train()
                 
-                # _mem("after_estimate_before_save")
-                # gpu_mem("after_estimate_before_save")
-                lr_info = f" | lr {current_lr:.2e}"
-
-                # Console output: iter N | val X.XX | eval_name Y.YY | ...
-                eval_parts = " | ".join([f"eval_{k} {v:.4f}" for k, v in eval_losses.items()])
-                if eval_parts:
-                    print(f"step {iter}: val {losses['val']:.4f} | {eval_parts}{lr_info}")
+                # Compute eval duration and ETA
+                eval_duration = _time.time() - eval_start
+                steps_done = iter - start_step
+                steps_remaining = max_iters - iter
+                if steps_done > 0:
+                    secs_per_step = elapsed_total / steps_done
+                    eta_s = steps_remaining * secs_per_step
+                    eta_str = f"{eta_s/3600:.1f}h" if eta_s > 3600 else f"{eta_s/60:.0f}m"
                 else:
-                    print(f"step {iter}: val {losses['val']:.4f}{lr_info}")
+                    eta_str = "..."
+                
+                log_entry["eval_duration_s"] = round(eval_duration, 1)
+                
+                # Console output: rich, informative
+                elapsed_str = f"{elapsed_total/3600:.1f}h" if elapsed_total > 3600 else f"{elapsed_total/60:.0f}m"
+                tokens_str = f"{tokens_processed/1e9:.2f}B" if tokens_processed >= 1e9 else f"{tokens_processed/1e6:.0f}M"
+                
+                eval_parts = " | ".join([f"{k} {v:.4f}" for k, v in eval_losses.items()])
+                header = f"step {iter}/{max_iters} ({progress_pct:.1f}%) | {ct.strftime('%H:%M:%S')} | {elapsed_str} | ETA {eta_str} | {tokens_str} tokens"
+                metrics = f"  val {losses['val']:.4f} | lr {current_lr:.2e} | phase: {current_phase}"
+                if eval_parts:
+                    metrics += f" | {eval_parts}"
+                
+                print(f"\n{header}")
+                print(metrics)
                 
                 # Write to JSONL log file (append mode)
                 if log_file is not None:
@@ -1485,9 +1558,30 @@ class GPT(nn.Module):
                                 training_config=training_config,
                                 save_dtype=effective_save_dtype
                             )
-                            print(f"  🏆 New GOLD checkpoint! val_loss={current_val_loss:.4f} at step {iter}")
+                            print(f"  GOLD checkpoint! val_loss={current_val_loss:.4f} at step {iter}")
+                            if log_file is not None:
+                                gold_entry = {
+                                    "event": "gold_checkpoint",
+                                    "iter": iter,
+                                    "timestamp": datetime.datetime.now().isoformat(),
+                                    "val_loss": round(float(current_val_loss), 6),
+                                    "prev_best": round(float(best_val_loss), 6) if best_val_loss < float('inf') else None,
+                                }
+                                with open(log_file, 'a', encoding='utf-8') as f:
+                                    f.write(json.dumps(gold_entry) + "\n")
                         else:
-                            print(f"  ⚠️  GOLD blocked: val {current_val_loss:.4f} < best {best_val_loss:.4f} but {block_reason}")
+                            print(f"  GOLD blocked: val {current_val_loss:.4f} < best {best_val_loss:.4f} but {block_reason}")
+                            if log_file is not None:
+                                block_entry = {
+                                    "event": "gold_blocked",
+                                    "iter": iter,
+                                    "timestamp": datetime.datetime.now().isoformat(),
+                                    "val_loss": round(float(current_val_loss), 6),
+                                    "best_val_loss": round(float(best_val_loss), 6),
+                                    "reason": block_reason,
+                                }
+                                with open(log_file, 'a', encoding='utf-8') as f:
+                                    f.write(json.dumps(block_entry) + "\n")
                 # _mem("after_save")
                 # gpu_mem("after_save")
 
@@ -1501,9 +1595,21 @@ class GPT(nn.Module):
                 for switch_iter, switch_loader, phase_name in data_loader_schedule:
                     if iter == switch_iter:
                         data_loader = switch_loader
+                        current_phase = phase_name
                         print(f"\n{'='*70}")
                         print(f"  [CURRICULUM] iter {iter:,}: switching to phase '{phase_name}'")
                         print(f"{'='*70}\n")
+                        if log_file is not None:
+                            phase_entry = {
+                                "event": "phase_switch",
+                                "iter": iter,
+                                "timestamp": datetime.datetime.now().isoformat(),
+                                "elapsed_s": round(_time.time() - train_start_time, 1),
+                                "tokens_processed": (iter - start_step) * tokens_per_step,
+                                "new_phase": phase_name,
+                            }
+                            with open(log_file, 'a', encoding='utf-8') as f:
+                                f.write(json.dumps(phase_entry) + "\n")
             
             # Training step with gradient accumulation and optional AMP
             optimizer.zero_grad(set_to_none=True)
@@ -1547,9 +1653,45 @@ class GPT(nn.Module):
                 optimizer.step()
         
         # Final evaluation
+        total_elapsed = _time.time() - train_start_time
+        total_tokens = (max_iters - start_step) * tokens_per_step
         final_losses = self.estimate_loss(data_loader, eval_iters)
-        print(f"final step {iter}: train loss {final_losses['train']:.4f}, "
-              f"val loss {final_losses['val']:.4f}")
+        
+        elapsed_h = total_elapsed / 3600
+        tokens_b = total_tokens / 1e9
+        steps_per_sec = (max_iters - start_step) / total_elapsed if total_elapsed > 0 else 0
+        
+        print(f"\n{'='*70}")
+        print(f"  TRAINING COMPLETE")
+        print(f"{'='*70}")
+        print(f"  Final step {iter}: train loss {final_losses['train']:.4f}, val loss {final_losses['val']:.4f}")
+        print(f"  Total time:   {elapsed_h:.2f} hours ({total_elapsed:.0f}s)")
+        print(f"  Total tokens: {tokens_b:.2f}B ({total_tokens:,})")
+        print(f"  Speed:        {steps_per_sec:.2f} steps/s, {total_tokens/total_elapsed:.0f} tokens/s")
+        if gold_step is not None:
+            print(f"  Best (GOLD):  step {gold_step}, val_loss={best_val_loss:.4f}")
+        
+        # Write final summary to log
+        if log_file is not None:
+            final_entry = {
+                "event": "training_complete",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "started_at": train_start_dt.isoformat(),
+                "total_elapsed_s": round(total_elapsed, 1),
+                "total_elapsed_h": round(elapsed_h, 2),
+                "total_steps": max_iters - start_step,
+                "total_tokens": total_tokens,
+                "steps_per_sec": round(steps_per_sec, 3),
+                "tokens_per_sec": round(total_tokens / total_elapsed, 0) if total_elapsed > 0 else 0,
+                "final_train_loss": round(float(final_losses['train']), 6),
+                "final_val_loss": round(float(final_losses['val']), 6),
+                "best_val_loss": round(float(best_val_loss), 6) if best_val_loss < float('inf') else None,
+                "gold_step": gold_step,
+                "config_file": config_file,
+                "dataset_dir": dataset_dir,
+            }
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(final_entry) + "\n")
         
         # Save final model bundles
         if checkpoint_dir:
@@ -1577,12 +1719,12 @@ class GPT(nn.Module):
                 )
                 print(f"Deployment checkpoint saved to: {deploy_dir}")
             
-            print(f"\nTraining finished!")
-            print(f"  Resume training from: {checkpoint_dir}")
+            print(f"\nCheckpoints saved:")
+            print(f"  Resume training: {checkpoint_dir}")
             if final_save_dtype:
-                print(f"  Deploy inference from: {deploy_dir}")
+                print(f"  Deploy inference: {deploy_dir}")
             if gold_step is not None:
-                print(f"  🏆 Best (GOLD) checkpoint: {gold_dir} (step {gold_step}, val_loss={best_val_loss:.4f})")
+                print(f"  Best (GOLD): {gold_dir} (step {gold_step}, val_loss={best_val_loss:.4f})")
         
         return final_losses
     

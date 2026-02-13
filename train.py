@@ -505,6 +505,20 @@ def main():
             
             print()
     
+    # Determine initial curriculum phase name
+    initial_phase_name = None
+    if curriculum_config:
+        phases = curriculum_config.get('phases', [])
+        if phases:
+            initial_phase_name = phases[0]['name']
+            # If resuming past a phase boundary, find the correct phase
+            if start_step > 0:
+                for phase in phases:
+                    until = phase.get('until_iter')
+                    if until is None or start_step < until:
+                        initial_phase_name = phase['name']
+                        break
+    
     # Train the model (model trains itself!)
     print("========== Starting Training ==========")
     print(f"Training from step {start_step} to {effective_max_iters}")
@@ -588,6 +602,7 @@ def main():
         eval_max_new_tokens=args.eval_max_new_tokens,
         data_loader_schedule=data_loader_schedule,
         grad_accum_steps=effective_grad_accum_steps,
+        initial_phase=initial_phase_name,
     )
     
     print("\n========== Training Complete ==========")
