@@ -1,10 +1,10 @@
-# Phase 2 Domain Corpus Builder
+# Domain Corpus Builder
 
 Build domain-specific training data for IT security, protocols, Bash/Unix fundamentals, and programming language documentation.
 
 ## Overview
 
-The Phase 2 Domain Corpus pipeline automates the creation of a high-quality training dataset from authoritative technical sources. It handles the complete workflow from source acquisition through tokenization:
+The Domain Corpus pipeline automates the creation of a high-quality training dataset from authoritative technical sources. It handles the complete workflow from source acquisition through tokenization:
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐

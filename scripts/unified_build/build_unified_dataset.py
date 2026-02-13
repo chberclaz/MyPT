@@ -12,9 +12,9 @@ Runs the full data preparation pipeline locally on Windows/Linux/Mac:
 After completion, upload data/unified_6B/, data/unified_phase1_circuit/,
 data/code_eval_tokenized/, and data/retrieval_eval_tokenized/ to RunPod.
 
-v3 mix (dual retrieval sources):
+v3.1 mix (dual retrieval sources, adjusted for TriviaQA/SQuAD v2 yield):
   - 27% FineWeb-Edu, 15% Wiki, 15% Python code, 8% JS/Java code
-  - 13% StackExchange, 7% NQ/TriviaQA, 3% Reddit, 7% Domain, 3% peS2o, 2% README
+  - 17% StackExchange, 3% TriviaQA/SQuAD v2, 3% Reddit, 7% Domain, 3% peS2o, 2% README
   - OpenSubtitles REMOVED (quality audit)
 
 Two-stage curriculum training:
@@ -214,18 +214,33 @@ def step_download():
     else:
         print("  FineWeb-Edu + peS2o already downloaded.")
 
-    # --- NQ + TriviaQA ---
+    # --- TriviaQA + SQuAD v2 (reading comprehension passages) ---
+    # NQ is skipped: 42GB download for ~250M useful tokens.
+    # TriviaQA (primary, ~350M tokens) provides extractive retrieval signal.
+    # SQuAD v2 (supplement, ~70M tokens) adds unanswerable questions (~20%)
+    # teaching the model to recognize when context lacks the answer.
     nq_dir = CLEAN_DIR / "nq_triviaqa"
-    if nq_dir.exists() and list(nq_dir.glob("shard_*.txt")):
-        n = len(list(nq_dir.glob("shard_*.txt")))
-        print(f"  NQ/TriviaQA already exists ({n} shards) -- skipping")
+    MIN_NQ_SHARDS = 10  # need at least ~10 shards (~250M tokens)
+    existing_shards = list(nq_dir.glob("shard_*.txt")) if nq_dir.exists() else []
+    if len(existing_shards) >= MIN_NQ_SHARDS:
+        print(f"  TriviaQA + SQuAD v2 already exists ({len(existing_shards)} shards) -- skipping")
     else:
+        # Clean up any partial data from a previous failed run
+        if existing_shards:
+            print(f"  Found {len(existing_shards)} partial shard(s) -- cleaning up for fresh download")
+            for f in existing_shards:
+                f.unlink()
+            meta = nq_dir / "download_metadata.json"
+            if meta.exists():
+                meta.unlink()
         cmd = [
             PYTHON, str(DOWNLOAD_NQ_SCRIPT),
             "--output_dir", str(CLEAN_DIR),
             "--target_tokens", "420000000",
+            "--squad_tokens", "70000000",
+            "--sources", "triviaqa", "squad_v2",
         ]
-        run(cmd, "Downloading: NQ + TriviaQA")
+        run(cmd, "Downloading: TriviaQA + SQuAD v2")
 
 
 # ---------------------------------------------------------------------------

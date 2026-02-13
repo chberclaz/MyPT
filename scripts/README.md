@@ -1,168 +1,121 @@
 # MyPT Scripts
 
-Utility scripts for model management, inspection, and dataset preparation.
+Utility scripts for model management, dataset preparation, SFT, evaluation, and debugging.
 
-## Available Scripts
+## Directory Structure
 
-### `prepare_dataset.py`
-Prepare sharded datasets for large-scale training.
-
-**Purpose:** Convert text files into binary shards for training on large datasets (100M+ tokens) without loading everything into RAM.
-
-**Usage:**
-```bash
-# Basic usage
-python scripts/prepare_dataset.py \
-    --input_files data.txt \
-    --out_dir data/my_dataset
-
-# Multiple sources
-python scripts/prepare_dataset.py \
-    --input_files wiki.txt books.txt news.txt \
-    --out_dir data/large_corpus \
-    --tokenization gpt2 \
-    --tokens_per_shard 10000000
-
-# Character-level
-python scripts/prepare_dataset.py \
-    --input_files input.txt \
-    --out_dir data/char_dataset \
-    --tokenization char
+```
+scripts/
+├── build_rag_index.py          # Build RAG embedding index from documents
+├── workspace_chat.py           # Interactive workspace agent chat CLI
+│
+├── data_prep/                  # Dataset downloading, tokenization, mixing
+│   ├── append_to_dataset.py
+│   ├── convert_opensubtitles.py
+│   ├── download_opensource_sft.py
+│   ├── fetch_and_prepare_multilingual.py
+│   ├── fetch_and_prepare_phase1_5.py
+│   ├── fetch_and_prepare_phase2_domain.py
+│   ├── mix_general_with_sft.py
+│   ├── mix_tokenized_datasets.py
+│   ├── prepare_dataset.py
+│   └── prepare_weighted_dataset.py
+│
+├── sft/                        # SFT dataset generation, formatting, validation
+│   ├── analyze_episode_diversity.py
+│   ├── augment_episodes_paraphrase.py
+│   ├── deduplicate_by_user_message.py
+│   ├── deduplicate_episodes.py
+│   ├── diversify_user_messages.py
+│   ├── generate_agent_sft.py
+│   ├── generate_echo_dataset.py
+│   ├── generate_format_lock_dataset.py
+│   ├── generate_operator_dataset.py
+│   ├── generate_run2_minimal_qa.py
+│   ├── generate_synthetic_sft.py
+│   ├── inspect_sft_dataset.py
+│   ├── mix_sft_jsonl.py
+│   ├── prepare_chat_sft.py
+│   ├── prepare_tool_sft.py
+│   ├── validate_sft_dataset.py
+│   ├── validate_sft_episode_masks.py
+│   ├── verify_loss_mask_direction.py
+│   └── verify_mask_alignment.py
+│
+├── eval/                       # Evaluation and benchmarking
+│   ├── eval_operator.py
+│   └── sft_eval_suite.py
+│
+├── debug/                      # Debugging and diagnostics
+│   ├── debug_inference_parity.py
+│   ├── debug_train_eval_parity.py
+│   ├── diagnose_operator_loss.py
+│   ├── diagnose_sft_training.py
+│   └── trace_training_step.py
+│
+├── model/                      # Model inspection, conversion, parameter tools
+│   ├── calculate_params.py
+│   ├── check_tie_weights.py
+│   ├── compare_embeddings.py
+│   ├── convert_legacy_checkpoints.py
+│   ├── enable_weight_tying.py
+│   ├── init_special_embeddings.py
+│   ├── inspect_model.py
+│   └── smoke_test_arch.py
+│
+├── translation/                # Multilingual and translation tooling
+│   ├── extract_for_translation.py
+│   ├── merge_bilingual_episodes.py
+│   ├── recombine_translations.py
+│   └── translate_deepl.py
+│
+├── utils/                      # General utilities
+│   ├── manage_users.py
+│   └── show_configs.py
+│
+└── unified_build/              # Unified from-scratch training pipeline
+    ├── build_unified_dataset.py
+    ├── download_nq_triviaqa.py
+    ├── download_unified_sources.py
+    ├── mix_multi_source.py
+    └── pack_training_data.bat
 ```
 
-**Features:**
-- Streams text from multiple files (low memory usage)
-- Cleans and normalizes text
-- Deduplicates lines (optional)
-- Tokenizes incrementally
-- Writes binary shards (~10M tokens each, ~40MB)
-- Splits into train/val directories
+## Quick Reference
 
-**Arguments:**
-- `--input_files`: List of text files (required)
-- `--out_dir`: Output directory (required)
-- `--tokenization`: gpt2 or char (default: gpt2)
-- `--tokens_per_shard`: Tokens per shard (default: 10M)
-- `--val_fraction`: Validation fraction (default: 0.1)
-- `--no_normalize`: Skip text normalization
-- `--no_filter`: Skip line filtering
-- `--no_dedup`: Skip deduplication
-
----
-
-### `calculate_params.py`
-Calculate the number of parameters in a GPT model.
-
-**Usage:**
+### Data Preparation
 ```bash
-# From config file
-python scripts/calculate_params.py --config_file configs/150M_1024.json
-
-# From parameters
-python scripts/calculate_params.py --n_layer 16 --n_embd 768 --n_head 12
-
-# Interactive mode
-python scripts/calculate_params.py --interactive
-
-# Show formula
-python scripts/calculate_params.py --show_formula
+python scripts/data_prep/prepare_dataset.py --input_files data.txt --out_dir data/my_dataset
+python scripts/data_prep/prepare_weighted_dataset.py --config data/sources/config.json --out_dir data/weighted
+python scripts/data_prep/mix_tokenized_datasets.py --base_dir data/base --replay_dir data/replay --out_dir data/mixed
 ```
 
-**Features:**
-- Detailed parameter breakdown by component
-- Memory estimates (FP32, FP16)
-- Training memory estimates
-- Works with config files or manual input
-
-**Arguments:**
-- `--config_file`: Path to config JSON file
-- `--n_layer`: Number of layers
-- `--n_embd`: Embedding dimension
-- `--n_head`: Number of attention heads
-- `--vocab_size`: Vocabulary size (default: 50304)
-- `--block_size`: Context length (default: 256)
-- `--bias`: Use bias in layers
-- `--interactive`: Interactive mode
-- `--show_formula`: Display calculation formula
-
----
-
-### `show_configs.py`
-Display available model configuration presets.
-
-**Usage:**
+### SFT Pipeline
 ```bash
-# List all configs
-python scripts/show_configs.py
-
-# Show details for specific config
-python scripts/show_configs.py --config_file configs/150M_1024.json
+python scripts/sft/prepare_chat_sft.py --input data/episodes.jsonl --output_dir data/sft_ready
+python scripts/sft/inspect_sft_dataset.py --dataset_dir data/sft_ready --show_samples 3
+python scripts/sft/validate_sft_dataset.py --dataset data/sft_ready
 ```
 
-**Features:**
-- Lists all available configs
-- Shows parameter counts
-- Displays architecture details
-- Provides usage examples
-
-**Arguments:**
-- `--config_file`: Show details for specific config (optional)
-- `--configs_dir`: Directory containing configs (default: configs/)
-
----
-
-### `inspect_model.py`
-Inspect model checkpoints and display configuration details.
-
-**Usage:**
+### Model Tools
 ```bash
-python scripts/inspect_model.py --model_name dante
+python scripts/model/inspect_model.py --model_name my_model
+python scripts/model/calculate_params.py --config_file configs/base/750M_unified_v1.json
+python scripts/utils/show_configs.py
 ```
 
-**Features:**
-- Shows model configuration (layers, embedding size, etc.)
-- Displays tokenizer information
-- Shows training progress (last step)
-- Auto-detects JSON or legacy checkpoint format
-
-**Arguments:**
-- `--model_name`: Name of the model to inspect (required)
-- `--legacy_checkpoint`: Specific legacy checkpoint file (optional)
-
----
-
-### `convert_legacy_checkpoints.py`
-Convert old single-file checkpoints to new JSON-based format.
-
-**Usage:**
+### Evaluation
 ```bash
-# Convert all legacy checkpoints
-python scripts/convert_legacy_checkpoints.py --all
-
-# Convert specific model
-python scripts/convert_legacy_checkpoints.py --model_name dante
-
-# Dry run (preview without converting)
-python scripts/convert_legacy_checkpoints.py --all --dry-run
+python scripts/eval/sft_eval_suite.py --model my_model -v
+python scripts/eval/eval_operator.py --model my_model -v
 ```
 
-**Features:**
-- Finds all legacy checkpoints automatically
-- Converts to JSON-based format
-- Keeps backup of original files
-- Validates conversion
-
-**Arguments:**
-- `--model_name`: Specific model to convert
-- `--checkpoint`: Legacy filename (default: latest.pt)
-- `--all`: Convert all found legacy checkpoints
-- `--dry-run`: Show what would be converted without converting
-
----
+### Unified Training Pipeline
+```bash
+python scripts/unified_build/build_unified_dataset.py
+```
 
 ## See Also
 
 - **Main scripts** (in root): `train.py`, `generate.py`
-- **Examples**: See `examples/` folder
 - **Documentation**: See `docs/` folder
-

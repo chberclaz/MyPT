@@ -270,7 +270,7 @@ pip install -e .
 
 ```bash
 # View available configurations
-python scripts/show_configs.py
+python scripts/utils/show_configs.py
 
 # Train a model from scratch (Phase 1)
 python train.py \

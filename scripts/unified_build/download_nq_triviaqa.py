@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-Download and Format Natural Questions + TriviaQA for Pre-Training
+Download and Format Retrieval QA Data for Pre-Training
 
-Downloads both reading comprehension datasets from HuggingFace and formats
+Downloads reading comprehension datasets from HuggingFace and formats
 them as pre-training text with the pattern:
 
     [passage text]
@@ -10,29 +10,44 @@ them as pre-training text with the pattern:
     Question: [question]
     Answer: [answer grounded in passage]
 
+    -- or for unanswerable questions (SQuAD v2): --
+
+    [passage text]
+
+    Question: [question]
+    Answer: The passage does not contain enough information to answer this question.
+
 This creates a strong retrieval head training signal: every example forces
-the model to learn that answers come FROM the preceding passage.
+the model to learn that answers come FROM the preceding passage, AND that
+sometimes the answer is NOT in the passage (critical for RAG).
 
 Sources:
-1. Natural Questions (google-research-datasets/natural_questions)
-   - 307K real Google queries + Wikipedia passages + extracted answers
-   - License: CC BY-SA 3.0
-
-2. TriviaQA (mandarjoshi/trivia_qa)
-   - 95K trivia questions + 650K evidence documents
+1. TriviaQA (mandarjoshi/trivia_qa) -- PRIMARY
+   - 138K trivia questions + 650K evidence documents
+   - Multiple evidence passages per question for context diversity
    - License: Apache 2.0
+
+2. SQuAD v2 (rajpurkar/squad_v2) -- SUPPLEMENT
+   - 130K extractive QA examples from Wikipedia paragraphs
+   - ~20% are unanswerable: teaches "answer is NOT in context"
+   - Precise answer spans with character offsets
+   - License: CC BY-SA 4.0
+
+3. Natural Questions (google-research-datasets/natural_questions) -- DISABLED
+   - Disabled due to 42GB download size (full HTML Wikipedia pages)
+   - TriviaQA + SQuAD v2 provide equivalent retrieval signal
 
 Target: ~420M tokens (7% of 6B mix)
 
 Usage:
-    # Download and format both
+    # Download TriviaQA + SQuAD v2 (default)
     python scripts/unified_build/download_nq_triviaqa.py --output_dir data/unified_clean
-
-    # Download only NQ
-    python scripts/unified_build/download_nq_triviaqa.py --output_dir data/unified_clean --sources nq
 
     # Download only TriviaQA
     python scripts/unified_build/download_nq_triviaqa.py --output_dir data/unified_clean --sources triviaqa
+
+    # Download only SQuAD v2
+    python scripts/unified_build/download_nq_triviaqa.py --output_dir data/unified_clean --sources squad_v2
 """
 
 import argparse
@@ -221,7 +236,6 @@ def download_natural_questions(
         "google-research-datasets/natural_questions",
         split="train",
         streaming=True,
-        trust_remote_code=True,
     )
 
     nq_dir = output_dir / "nq_triviaqa"
@@ -288,8 +302,11 @@ def download_natural_questions(
         if long_answers:
             # Take the first annotated long answer
             la = long_answers[0]
-            start_tok = la.get("start_token", -1)
-            end_tok = la.get("end_token", -1)
+            start_tok_raw = la.get("start_token", -1)
+            end_tok_raw = la.get("end_token", -1)
+            # Handle HF NQ format where values may be lists
+            start_tok = start_tok_raw[0] if isinstance(start_tok_raw, list) and start_tok_raw else (start_tok_raw if isinstance(start_tok_raw, int) else -1)
+            end_tok = end_tok_raw[0] if isinstance(end_tok_raw, list) and end_tok_raw else (end_tok_raw if isinstance(end_tok_raw, int) else -1)
 
             if start_tok >= 0 and end_tok > start_tok:
                 # Get tokens in the long answer span, skip HTML
@@ -314,8 +331,12 @@ def download_natural_questions(
 
         if short_answers:
             sa = short_answers[0]
-            sa_start = sa.get("start_token", -1)
-            sa_end = sa.get("end_token", -1)
+            sa_start_raw = sa.get("start_token", -1)
+            sa_end_raw = sa.get("end_token", -1)
+
+            # HF NQ stores short answer spans as lists (one annotator may have multiple spans)
+            sa_start = sa_start_raw[0] if isinstance(sa_start_raw, list) and sa_start_raw else (sa_start_raw if isinstance(sa_start_raw, int) else -1)
+            sa_end = sa_end_raw[0] if isinstance(sa_end_raw, list) and sa_end_raw else (sa_end_raw if isinstance(sa_end_raw, int) else -1)
 
             if sa_start >= 0 and sa_end > sa_start:
                 sa_tokens = []
@@ -421,7 +442,6 @@ def download_triviaqa(
         name="rc",
         split="train",
         streaming=True,
-        trust_remote_code=True,
     )
 
     # Write to the SAME directory as NQ (they get combined)
@@ -507,7 +527,9 @@ def download_triviaqa(
             stats["no_evidence"] += 1
             continue
 
-        # Use each evidence document as a separate training example
+        # Use each grounded evidence document as a separate training example.
+        # Multiple passages per question is beneficial: the model sees the same
+        # answer extracted from different contexts, strengthening retrieval circuits.
         for evidence in evidence_texts:
             if not evidence or not isinstance(evidence, str):
                 continue
@@ -532,7 +554,13 @@ def download_triviaqa(
             total_chars += len(formatted)
             stats["est_tokens"] = int(total_chars / CHARS_PER_TOKEN)
 
-            # Only use first matching evidence per question to avoid duplication
+            # Check token target inside the evidence loop
+            if total_chars >= target_chars:
+                break
+
+        # Early exit if we've reached target
+        if total_chars >= target_chars:
+            print(f"    TriviaQA: reached target ({stats['est_tokens']:,} tokens), stopping")
             break
 
         # Progress
@@ -544,11 +572,6 @@ def download_triviaqa(
                 f"~{stats['est_tokens'] / 1e6:.0f}M tokens | "
                 f"{rate:.0f} docs/s"
             )
-
-        # Stop when we have enough (TriviaQA portion = remaining 40%)
-        if total_chars >= target_chars * 0.4:
-            print(f"    TriviaQA: reached target ({stats['est_tokens']:,} tokens), stopping")
-            break
 
     writer.close()
     elapsed = time.time() - start_time
@@ -568,12 +591,173 @@ def download_triviaqa(
 
 
 # ---------------------------------------------------------------------------
+# SQuAD v2 (unanswerable questions + precise extractive QA)
+# ---------------------------------------------------------------------------
+
+UNANSWERABLE_RESPONSES = [
+    "The passage does not contain enough information to answer this question.",
+    "This question cannot be answered based on the given passage.",
+    "The provided context does not address this question.",
+    "No answer can be found in the passage above.",
+    "The passage does not mention information relevant to this question.",
+]
+
+def download_squad_v2(
+    output_dir: Path,
+    target_tokens: int,
+    report_every: int = 10000,
+) -> dict:
+    """
+    Download and format SQuAD v2.
+
+    SQuAD v2 adds ~50K unanswerable questions (20% of dataset) to SQuAD 1.1's
+    extractive QA. This teaches the model that sometimes the answer is NOT in
+    the passage -- a critical signal for RAG, where retrieved passages may be
+    irrelevant.
+
+    Answerable examples: passage + question + extracted answer span
+    Unanswerable examples: passage + question + "cannot be answered" response
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        print("  ERROR: 'datasets' library not installed. Run: pip install datasets")
+        sys.exit(1)
+
+    print(f"\n  Loading SQuAD v2 from HuggingFace...")
+    print(f"  Target: {target_tokens:,} tokens (~{target_tokens * CHARS_PER_TOKEN / 1e9:.1f} GB text)")
+
+    ds = load_dataset(
+        "rajpurkar/squad_v2",
+        split="train",
+        streaming=True,
+    )
+
+    # Write to the SAME directory as TriviaQA (they get combined)
+    nq_dir = output_dir / "nq_triviaqa"
+    # Continue shard numbering from where previous sources left off
+    existing_shards = sorted(nq_dir.glob("shard_*.txt")) if nq_dir.exists() else []
+    start_shard = len(existing_shards)
+
+    writer = ShardWriter(str(nq_dir), shard_mb=SHARD_MB)
+    writer.shard_idx = start_shard
+    if start_shard > 0:
+        writer.current_file.close()
+        writer._open_new_shard()
+
+    deduper = ExactDeduplicator()
+    import random
+    rng = random.Random(42)  # Deterministic unanswerable response selection
+
+    stats = {
+        "seen": 0,
+        "kept": 0,
+        "kept_answerable": 0,
+        "kept_unanswerable": 0,
+        "too_short": 0,
+        "duplicate": 0,
+        "est_tokens": 0,
+    }
+    target_chars = int(target_tokens * CHARS_PER_TOKEN)
+    total_chars = 0
+    start_time = time.time()
+
+    for record in ds:
+        stats["seen"] += 1
+
+        # Extract fields
+        context = record.get("context", "").strip()
+        question = record.get("question", "").strip()
+        answers = record.get("answers", {})
+
+        if not context or not question:
+            continue
+
+        # Clean the passage
+        passage = clean_passage(context)
+        if not passage:
+            stats["too_short"] += 1
+            continue
+
+        # Format question
+        if question[0].islower():
+            question = question[0].upper() + question[1:]
+        if not question.endswith("?"):
+            question += "?"
+
+        # Determine if answerable
+        answer_texts = answers.get("text", [])
+
+        if answer_texts and answer_texts[0].strip():
+            # Answerable: use the first answer
+            answer_text = answer_texts[0].strip()
+
+            # Verify answer is in passage (should always be true for SQuAD)
+            if answer_text.lower() not in passage.lower():
+                continue
+
+            if deduper.is_duplicate(passage + question):
+                stats["duplicate"] += 1
+                continue
+
+            formatted = format_reading_comprehension(passage, question, answer_text)
+            stats["kept_answerable"] += 1
+        else:
+            # Unanswerable: use varied "no answer" responses
+            if deduper.is_duplicate(passage + question):
+                stats["duplicate"] += 1
+                continue
+
+            unanswerable_response = rng.choice(UNANSWERABLE_RESPONSES)
+            formatted = format_reading_comprehension(passage, question, unanswerable_response)
+            stats["kept_unanswerable"] += 1
+
+        writer.write_document(formatted)
+        stats["kept"] += 1
+        total_chars += len(formatted)
+        stats["est_tokens"] = int(total_chars / CHARS_PER_TOKEN)
+
+        # Progress
+        if stats["seen"] % report_every == 0:
+            elapsed = time.time() - start_time
+            rate = stats["seen"] / elapsed if elapsed > 0 else 0
+            pct_unans = stats["kept_unanswerable"] / max(1, stats["kept"]) * 100
+            print(
+                f"    SQuAD v2: {stats['seen']:,} seen | {stats['kept']:,} kept "
+                f"({pct_unans:.0f}% unans) | "
+                f"~{stats['est_tokens'] / 1e6:.0f}M tokens | "
+                f"{rate:.0f} docs/s"
+            )
+
+        # Stop when we have enough
+        if total_chars >= target_chars:
+            print(f"    SQuAD v2: reached target ({stats['est_tokens']:,} tokens), stopping")
+            break
+
+    writer.close()
+    elapsed = time.time() - start_time
+
+    pct_unans = stats["kept_unanswerable"] / max(1, stats["kept"]) * 100
+    print(f"\n  SQuAD v2 complete:")
+    print(f"    Seen: {stats['seen']:,}")
+    print(f"    Kept: {stats['kept']:,} ({stats['kept_answerable']:,} answerable, "
+          f"{stats['kept_unanswerable']:,} unanswerable [{pct_unans:.0f}%])")
+    print(f"    Too short: {stats['too_short']:,}")
+    print(f"    Duplicates: {stats['duplicate']:,}")
+    print(f"    Est. tokens: {stats['est_tokens']:,}")
+    print(f"    Shards written: {writer.stats()['total_shards']}")
+    print(f"    Time: {elapsed:.0f}s")
+
+    return {**stats, **writer.stats(), "source": "squad_v2", "elapsed_s": elapsed}
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download NQ + TriviaQA for retrieval head training",
+        description="Download TriviaQA + SQuAD v2 for retrieval head training",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -586,27 +770,42 @@ def main():
     parser.add_argument(
         "--sources",
         nargs="*",
-        default=["nq", "triviaqa"],
-        choices=["nq", "triviaqa"],
-        help="Which sources to download (default: both)",
+        default=["triviaqa", "squad_v2"],
+        choices=["nq", "triviaqa", "squad_v2"],
+        help="Which sources to download (default: triviaqa + squad_v2)",
     )
     parser.add_argument(
         "--target_tokens",
         type=int,
         default=420_000_000,
-        help="Total target tokens for combined NQ + TriviaQA (default: 420M)",
+        help="Total target tokens (default: 420M)",
+    )
+    parser.add_argument(
+        "--squad_tokens",
+        type=int,
+        default=70_000_000,
+        help="Target tokens for SQuAD v2 specifically (default: 70M). "
+             "Remainder goes to TriviaQA.",
     )
 
     args = parser.parse_args()
     output_dir = Path(args.output_dir)
 
+    # Compute per-source targets
+    squad_target = args.squad_tokens if "squad_v2" in args.sources else 0
+    triviaqa_target = args.target_tokens - squad_target if "triviaqa" in args.sources else 0
+
     print("=" * 70)
-    print("  NQ + TriviaQA Downloader")
-    print("  Retrieval Head Training Data")
+    print("  Retrieval QA Downloader")
+    print("  TriviaQA + SQuAD v2 for Retrieval Head Training")
     print("=" * 70)
     print(f"\n  Output: {output_dir / 'nq_triviaqa'}")
     print(f"  Sources: {', '.join(args.sources)}")
-    print(f"  Target: {args.target_tokens:,} tokens")
+    print(f"  Target: {args.target_tokens:,} tokens total")
+    if "triviaqa" in args.sources:
+        print(f"    TriviaQA: ~{triviaqa_target:,} tokens (extractive retrieval)")
+    if "squad_v2" in args.sources:
+        print(f"    SQuAD v2: ~{squad_target:,} tokens (extractive + unanswerable)")
     print(f"  Format: passage + question + grounded answer")
 
     results = {}
@@ -618,7 +817,12 @@ def main():
 
     if "triviaqa" in args.sources:
         results["triviaqa"] = download_triviaqa(
-            output_dir, args.target_tokens
+            output_dir, triviaqa_target
+        )
+
+    if "squad_v2" in args.sources:
+        results["squad_v2"] = download_squad_v2(
+            output_dir, squad_target
         )
 
     # Write metadata
@@ -631,12 +835,14 @@ def main():
 
     meta = {
         "downloaded_at": datetime.now().isoformat(),
-        "description": "Natural Questions + TriviaQA formatted as reading comprehension "
-                       "passages for retrieval head pre-training",
-        "format": "passage\\n\\nQuestion: question\\nAnswer: grounded answer",
+        "description": "TriviaQA + SQuAD v2 formatted as reading comprehension "
+                       "passages for retrieval head pre-training. SQuAD v2 includes "
+                       "unanswerable questions (~20%) teaching the model to recognize "
+                       "when context does not contain the answer.",
+        "format": "passage\\n\\nQuestion: question\\nAnswer: grounded answer (or unanswerable response)",
         "licenses": {
-            "natural_questions": "CC BY-SA 3.0",
             "triviaqa": "Apache 2.0",
+            "squad_v2": "CC BY-SA 4.0",
         },
         "total_shards": len(total_shards),
         "total_bytes": total_bytes,

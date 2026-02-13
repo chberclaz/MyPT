@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Model parameter count with all modernizations: ~699M (vs ~695M baseline, +0.5%)
 - SFT loss masking and segment attention masking fully compatible with all changes
-- Smoke test suite (`scripts/smoke_test_arch.py`) validates all 10 verification points
+- Smoke test suite (`scripts/model/smoke_test_arch.py`) validates all 10 verification points
 - No breaking changes to existing training or inference workflows
 
 ## [0.2.1] - 2026-01-16

@@ -243,7 +243,6 @@ def download_fineweb_edu(output_dir: Path, target_tokens: int,
         name="sample-10BT",  # Use the 10B token sample (much faster than full)
         split="train",
         streaming=True,
-        trust_remote_code=True,
     )
     
     writer = ShardWriter(str(output_dir / "fineweb_edu"), shard_mb=SHARD_MB)
@@ -312,12 +311,13 @@ def download_pes2o(output_dir: Path, target_tokens: int,
     print(f"\n  Loading peS2o from HuggingFace (streaming)...")
     print(f"  Target: {target_tokens:,} tokens (~{target_tokens * CHARS_PER_TOKEN / 1e9:.1f} GB text)")
     
+    # peS2o uses a custom loading script that newer datasets versions reject.
+    # Bypass by loading the raw json.gz files directly with the "json" builder.
     ds = load_dataset(
-        "allenai/peS2o",
-        name="v2",
+        "json",
+        data_files="hf://datasets/allenai/peS2o/data/v2/train-*.json.gz",
         split="train",
         streaming=True,
-        trust_remote_code=True,
     )
     
     writer = ShardWriter(str(output_dir / "pes2o"), shard_mb=SHARD_MB)

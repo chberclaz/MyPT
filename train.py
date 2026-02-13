@@ -619,7 +619,7 @@ def main():
     print()
     print("Next steps:")
     print(f"  Generate: python generate.py --model_name {args.model_name} --prompt 'Your prompt'")
-    print(f"  Inspect:  python scripts/inspect_model.py --model_name {args.model_name}")
+    print(f"  Inspect:  python scripts/model/inspect_model.py --model_name {args.model_name}")
 
 
 if __name__ == "__main__":
