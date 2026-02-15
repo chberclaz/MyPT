@@ -261,6 +261,12 @@ def parse_args():
     parser.add_argument("--system_prompt", type=str, default=None,
                         help="Override system prompt (default: use CONVERSATION_SYSTEM_PROMPT)")
     
+    # Weighted loss masking (WeFT-style)
+    parser.add_argument("--weighted_mask", action="store_true",
+                        help="Use weighted loss masks: structural tokens (stop, think, cite, toolcall) "
+                             "get higher weights (1.5-2.0x) to emphasize generation steering decisions. "
+                             "Compatible with existing loss computation (mask is float, not binary).")
+    
     return parser.parse_args()
 
 
@@ -325,26 +331,57 @@ def serialize_conversation(
 def char_mask_to_token_mask(
     text: str, 
     char_mask: str, 
-    tokenizer: Tokenizer
-) -> Tuple[List[int], List[int]]:
+    tokenizer: Tokenizer,
+    weighted: bool = False
+) -> Tuple[List[int], List[float]]:
     """
     Convert character-level mask to token-level mask.
     
     Strategy: Use token ID detection for robust masking.
-    - Find <myPT_assistant> token (ID 50263) - mask=0
-    - Everything after it until </myPT_assistant> (ID 50264) - mask=1
-    - </myPT_assistant> itself - mask=1 (model learns to stop)
-    - <myPT_eot> (ID 50271) - mask=0
+    - Find <myPT_assistant> token - mask=0
+    - Everything after it until </myPT_assistant> - mask=1
+    - </myPT_assistant> itself - mask=1 (or 2.0 if weighted)
+    - <myPT_eot> - mask=1 (or 2.0 if weighted)
+    
+    When weighted=True (WeFT-style), structural control tokens get higher
+    weights to emphasize generation-steering decisions:
+      - Normal assistant content: 1.0
+      - </myPT_assistant>, <myPT_eot>: 2.0 (critical stop signals)
+      - <myPT_think>, </myPT_think>, <myPT_cite>, </myPT_cite>: 1.5 (steering)
+      - <myPT_toolcall>, </myPT_toolcall>: 2.0 (critical action triggers)
     
     This avoids character/byte alignment issues with BPE tokenization.
     
     Returns:
-        (token_ids, token_mask) where token_mask[i] is 1 if token i should be trained on
+        (token_ids, token_mask) where token_mask[i] is the loss weight for token i
     """
-    # Special token IDs
-    ASSISTANT_OPEN_ID = 50263   # <myPT_assistant>
-    ASSISTANT_CLOSE_ID = 50264  # </myPT_assistant>
-    EOT_ID = 50271              # <myPT_eot>
+    # Dynamic token ID lookup -- never hardcode IDs!
+    from core.special_tokens import get_special_token_ids
+    _IDS = get_special_token_ids()
+    
+    ASSISTANT_OPEN_ID  = _IDS["myPT_assistant_open"]
+    ASSISTANT_CLOSE_ID = _IDS["myPT_assistant_close"]
+    EOT_ID             = _IDS["myPT_eot"]
+    
+    # Additional IDs for weighted masking
+    TOOLCALL_OPEN_ID   = _IDS["myPT_toolcall_open"]
+    TOOLCALL_CLOSE_ID  = _IDS["myPT_toolcall_close"]
+    THINK_OPEN_ID      = _IDS["myPT_think_open"]
+    THINK_CLOSE_ID     = _IDS["myPT_think_close"]
+    CITE_OPEN_ID       = _IDS["myPT_cite_open"]
+    CITE_CLOSE_ID      = _IDS["myPT_cite_close"]
+    
+    # Weighted mask values
+    W_STOP = 2.0    # Critical stop signals (assistant_close, eot)
+    W_STEER = 1.5   # Steering tokens (think open/close, cite open/close)
+    W_ACTION = 2.0  # Action triggers (toolcall open/close)
+    W_NORMAL = 1.0  # Normal assistant content
+    W_OFF = 0.0     # Masked (system, user, toolresult)
+    
+    # High-weight token sets (only used when weighted=True)
+    STOP_IDS = {ASSISTANT_CLOSE_ID, EOT_ID}
+    STEER_IDS = {THINK_OPEN_ID, THINK_CLOSE_ID, CITE_OPEN_ID, CITE_CLOSE_ID}
+    ACTION_IDS = {TOOLCALL_OPEN_ID, TOOLCALL_CLOSE_ID}
     
     # Encode full text to get token IDs
     token_ids = tokenizer.encode(text)
@@ -355,22 +392,22 @@ def char_mask_to_token_mask(
     
     for i, token_id in enumerate(token_ids):
         if token_id == ASSISTANT_OPEN_ID:
-            # Opening tag - don't train on it
-            token_mask.append(0)
+            token_mask.append(W_OFF)
             in_assistant_response = True
         elif token_id == ASSISTANT_CLOSE_ID:
-            # Closing tag - DO train on it (model learns when to stop)
-            token_mask.append(1)
+            token_mask.append(W_STOP if weighted else W_NORMAL)
             in_assistant_response = False
         elif token_id == EOT_ID:
-            # End of turn - DO train on it (future-proofing for multi-turn)
-            token_mask.append(1)
+            token_mask.append(W_STOP if weighted else W_NORMAL)
         elif in_assistant_response:
-            # Inside assistant response - train on content
-            token_mask.append(1)
+            if weighted and token_id in STEER_IDS:
+                token_mask.append(W_STEER)
+            elif weighted and token_id in ACTION_IDS:
+                token_mask.append(W_ACTION)
+            else:
+                token_mask.append(W_NORMAL)
         else:
-            # System/user content - don't train
-            token_mask.append(0)
+            token_mask.append(W_OFF)
     
     return token_ids, token_mask
 
@@ -593,15 +630,17 @@ class EpisodeShardWriter:
     Handles multi-shard output when data exceeds tokens_per_shard.
     """
     
-    def __init__(self, output_dir: str, split: str, tokens_per_shard: int):
+    def __init__(self, output_dir: str, split: str, tokens_per_shard: int,
+                 weighted_mask: bool = False):
         self.output_dir = output_dir
         self.split = split
         self.tokens_per_shard = tokens_per_shard
+        self.weighted_mask = weighted_mask
         
         # Current shard data
         self.shard_idx = 0
         self.tokens: List[int] = []
-        self.masks: List[int] = []
+        self.masks: List[float] = []
         self.episodes: List[Tuple[int, int]] = []  # (start, length) pairs
         self.current_offset = 0  # Token offset in current shard
         
@@ -669,10 +708,16 @@ class EpisodeShardWriter:
         tokens_path = os.path.join(shard_dir, "tokens.bin")
         tokens_arr.tofile(tokens_path)
         
-        # Write mask.bin (uint8)
-        masks_arr = np.array(self.masks, dtype=np.uint8)
+        # Write mask.bin (uint8) -- always written for backward compatibility
+        masks_binary = np.array([1 if m > 0 else 0 for m in self.masks], dtype=np.uint8)
         mask_path = os.path.join(shard_dir, "mask.bin")
-        masks_arr.tofile(mask_path)
+        masks_binary.tofile(mask_path)
+        
+        # Write mask_weighted.bin (float32) when using WeFT-style weighted masks
+        if self.weighted_mask:
+            masks_weighted = np.array(self.masks, dtype=np.float32)
+            mask_weighted_path = os.path.join(shard_dir, "mask_weighted.bin")
+            masks_weighted.tofile(mask_weighted_path)
         
         # Write segment_ids.bin (uint8) if segment IDs were provided
         # This enables segment-isolated attention for packed sequences
@@ -871,12 +916,16 @@ def main():
     else:
         print(f"  Train: {len(conversations) - len(val_indices)}, Val: {len(val_indices)}")
     
-    # Get pad token ID for packing
-    pad_token_id = tokenizer.special_tokens.get('myPT_eot', 50271)
+    # Get pad token ID for packing (dynamic lookup, never hardcode)
+    from core.special_tokens import get_special_token_ids
+    pad_token_id = get_special_token_ids()["myPT_eot"]
     
     # Initialize shard writers
-    train_writer = EpisodeShardWriter(args.output_dir, "train", args.tokens_per_shard)
-    val_writer = EpisodeShardWriter(args.output_dir, "val", args.tokens_per_shard)
+    use_weighted = getattr(args, 'weighted_mask', False)
+    train_writer = EpisodeShardWriter(args.output_dir, "train", args.tokens_per_shard,
+                                       weighted_mask=use_weighted)
+    val_writer = EpisodeShardWriter(args.output_dir, "val", args.tokens_per_shard,
+                                     weighted_mask=use_weighted)
     
     # Stats tracking
     train_mask_sum = 0
@@ -887,13 +936,30 @@ def main():
     packing_stats_val = None
     
     def tokenize_conversation(conv: Dict, conv_idx: int) -> Tuple[List[int], List[int], Dict]:
-        """Tokenize a single conversation, return (tokens, mask, metadata)."""
+        """Tokenize a single conversation, return (tokens, mask, metadata).
+        
+        Handles two episode types:
+        - Standard SFT episodes: serialized with special tags and assistant-only masking
+        - Replay episodes ({"_replay": true, "text": "..."}): raw text with full mask=1
+          Used for pre-training data replay to prevent catastrophic forgetting.
+        """
+        # Pre-training replay episodes: raw text, full loss (mask=1 everywhere)
+        if conv.get("_replay", False):
+            raw_text = conv.get("text", "")
+            tokens = tokenizer.encode(raw_text)
+            mask = [1.0] * len(tokens)
+            meta = {"_conv_idx": conv_idx, "_replay": True}
+            return tokens, mask, meta
+        
         text, char_mask = serialize_conversation(
             conv,
             skip_system=args.no_system_prompt,
             system_prompt_override=args.system_prompt
         )
-        tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
+        tokens, mask = char_mask_to_token_mask(
+            text, char_mask, tokenizer,
+            weighted=getattr(args, 'weighted_mask', False)
+        )
         
         # Build metadata for packing
         meta = {"_conv_idx": conv_idx}
@@ -1219,7 +1285,7 @@ def main():
     print(f"\nTo train with this dataset:")
     print(f"  python train.py --model_name my_sft_model \\")
     print(f"      --dataset_dir {args.output_dir} \\")
-    print(f"      --config_file configs/sft1/micro.json")
+    print(f"      --config_file configs/sft/phase1_format_lock.json")
 
 
 if __name__ == "__main__":

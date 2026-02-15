@@ -21,6 +21,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.model import GPT
 from core.episode_data_loader import GPTEpisodeDataLoader
+from core.special_tokens import get_special_token_ids, BASE_VOCAB_SIZE, SPECIAL_TOKEN_STRINGS
+
+# Number of special tokens (dynamic, based on SPECIAL_TOKEN_STRINGS)
+_N_SPECIAL = len(SPECIAL_TOKEN_STRINGS)
+_SPECIAL_START = BASE_VOCAB_SIZE
+_SPECIAL_END = BASE_VOCAB_SIZE + _N_SPECIAL
 
 
 def main():
@@ -119,7 +125,7 @@ def main():
     
     # Check special token gradients specifically
     print("\n" + "-" * 60)
-    print("SPECIAL TOKEN EMBEDDING GRADIENTS (IDs 50257-50271)")
+    print(f"SPECIAL TOKEN EMBEDDING GRADIENTS (IDs {_SPECIAL_START}-{_SPECIAL_END - 1})")
     print("-" * 60)
     
     tok_emb = model.token_embedding_table.weight
@@ -127,27 +133,27 @@ def main():
     
     # Get gradients for special tokens
     if tok_emb.grad is not None:
-        special_tok_grad = tok_emb.grad[50257:50272]
+        special_tok_grad = tok_emb.grad[_SPECIAL_START:_SPECIAL_END]
         print(f"\n  token_embedding_table gradients for special tokens:")
         print(f"    grad_norm (special): {special_tok_grad.norm().item():.8f}")
         print(f"    grad_mean (special): {special_tok_grad.mean().item():.8f}")
         print(f"    grad_std (special):  {special_tok_grad.std().item():.8f}")
         
         # Compare to regular tokens
-        regular_tok_grad = tok_emb.grad[:50257]
+        regular_tok_grad = tok_emb.grad[:_SPECIAL_START]
         print(f"\n    grad_norm (regular): {regular_tok_grad.norm().item():.8f}")
         print(f"    grad_mean (regular): {regular_tok_grad.mean().item():.8f}")
     else:
         print("  WARNING: token_embedding_table has no gradient!")
     
     if lm_head.grad is not None:
-        special_lm_grad = lm_head.grad[50257:50272]
+        special_lm_grad = lm_head.grad[_SPECIAL_START:_SPECIAL_END]
         print(f"\n  lm_head gradients for special tokens:")
         print(f"    grad_norm (special): {special_lm_grad.norm().item():.8f}")
         print(f"    grad_mean (special): {special_lm_grad.mean().item():.8f}")
         print(f"    grad_std (special):  {special_lm_grad.std().item():.8f}")
         
-        regular_lm_grad = lm_head.grad[:50257]
+        regular_lm_grad = lm_head.grad[:_SPECIAL_START]
         print(f"\n    grad_norm (regular): {regular_lm_grad.norm().item():.8f}")
         print(f"    grad_mean (regular): {regular_lm_grad.mean().item():.8f}")
     else:
@@ -198,19 +204,19 @@ def main():
     print("SPECIAL TOKEN EMBEDDING CHANGES")
     print("-" * 60)
     
-    tok_emb_new = model.token_embedding_table.weight[50257:50272].detach()
-    tok_emb_old = initial_weights['token_embedding_table.weight'][50257:50272]
+    tok_emb_new = model.token_embedding_table.weight[_SPECIAL_START:_SPECIAL_END].detach()
+    tok_emb_old = initial_weights['token_embedding_table.weight'][_SPECIAL_START:_SPECIAL_END]
     tok_change = (tok_emb_new - tok_emb_old).norm().item()
     print(f"  token_embedding_table (special): change={tok_change:.8f}")
     
-    lm_head_new = model.lm_head.weight[50257:50272].detach()
-    lm_head_old = initial_weights['lm_head.weight'][50257:50272]
+    lm_head_new = model.lm_head.weight[_SPECIAL_START:_SPECIAL_END].detach()
+    lm_head_old = initial_weights['lm_head.weight'][_SPECIAL_START:_SPECIAL_END]
     lm_change = (lm_head_new - lm_head_old).norm().item()
     print(f"  lm_head (special): change={lm_change:.8f}")
     
     # Compare to regular tokens
-    tok_emb_reg_new = model.token_embedding_table.weight[:50257].detach()
-    tok_emb_reg_old = initial_weights['token_embedding_table.weight'][:50257]
+    tok_emb_reg_new = model.token_embedding_table.weight[:_SPECIAL_START].detach()
+    tok_emb_reg_old = initial_weights['token_embedding_table.weight'][:_SPECIAL_START]
     tok_reg_change = (tok_emb_reg_new - tok_emb_reg_old).norm().item()
     print(f"\n  token_embedding_table (regular): change={tok_reg_change:.8f}")
     
@@ -219,15 +225,9 @@ def main():
     print("PER-SPECIAL-TOKEN CHANGES")
     print("-" * 60)
     
-    special_token_names = [
-        "myPT_system_open", "myPT_system_close", "myPT_user_open", "myPT_user_close",
-        "myPT_user_context_open", "myPT_user_context_close", "myPT_assistant_open", 
-        "myPT_assistant_close", "myPT_toolcall_open", "myPT_toolcall_close",
-        "myPT_toolresult_open", "myPT_toolresult_close", "myPT_thinking_open",
-        "myPT_thinking_close", "myPT_eot"
-    ]
+    special_token_names = list(SPECIAL_TOKEN_STRINGS.keys())
     
-    for i, token_id in enumerate(range(50257, 50272)):
+    for i, token_id in enumerate(range(_SPECIAL_START, _SPECIAL_END)):
         emb_change = (tok_emb_new[i] - tok_emb_old[i]).norm().item()
         lm_change = (lm_head_new[i] - lm_head_old[i]).norm().item()
         name = special_token_names[i] if i < len(special_token_names) else f"token_{token_id}"

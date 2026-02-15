@@ -33,7 +33,30 @@ CONVERSATION_SYSTEM_PROMPT = """You are MyPT."""
 
 
 # =============================================================================
-# Phase 3b: Agentic System Prompt (with tools)
+# Phase 3-4: Chat / RAG System Prompt (no tools)
+# =============================================================================
+#
+# Slightly longer than the Phase 1-2 prompt, but still compact.
+# Phase 3-4 episodes (RAG chat, multi-turn) are long enough that
+# ~15 masked system tokens don't significantly hurt loss mask %.
+#
+# DO NOT bloat this -- every token here is masked (loss=0) and eats
+# into the supervised signal ratio.
+# =============================================================================
+
+CHAT_SYSTEM_PROMPT = """You are MyPT, a helpful assistant. Answer based on the provided context when available."""
+
+# A few short variants for surface diversity (all ~15-20 tokens)
+CHAT_SYSTEM_PROMPTS = [
+    CHAT_SYSTEM_PROMPT,
+    "You are MyPT. Use the provided context to answer accurately.",
+    "You are MyPT, a helpful assistant. Be concise and cite sources when possible.",
+    "You are MyPT. Answer questions based on the given context.",
+]
+
+
+# =============================================================================
+# Phase 5-6: Agentic System Prompt (with tools)
 # =============================================================================
 #
 # Used for:
@@ -90,8 +113,11 @@ After receiving tool results, provide a helpful answer to the user."""
 # Defaults - CHANGE THESE TO SWITCH BETWEEN PROMPT VARIANTS
 # =============================================================================
 
-# For Phase 3a SFT and simple inference
+# For Phase 1-2 SFT (minimal, maximizes loss mask %)
 DEFAULT_CONVERSATION_PROMPT = CONVERSATION_SYSTEM_PROMPT
+
+# For Phase 3-4 SFT (slightly longer, episodes are big enough)
+DEFAULT_CHAT_PROMPT = CHAT_SYSTEM_PROMPT
 
 # =============================================================================
 # DEFAULT AGENTIC PROMPT SELECTION

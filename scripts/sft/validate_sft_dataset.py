@@ -21,27 +21,10 @@ import numpy as np
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# No tokenizer needed - validation uses token IDs directly
+# Dynamic token ID lookup -- never hardcode IDs!
+from core.special_tokens import get_special_token_ids
 
-
-# Special token IDs
-SPECIAL_TOKENS = {
-    "myPT_system_open": 50257,
-    "myPT_system_close": 50258,
-    "myPT_user_open": 50259,
-    "myPT_user_close": 50260,
-    "myPT_user_context_open": 50261,
-    "myPT_user_context_close": 50262,
-    "myPT_assistant_open": 50263,
-    "myPT_assistant_close": 50264,
-    "myPT_toolcall_open": 50265,
-    "myPT_toolcall_close": 50266,
-    "myPT_toolresult_open": 50267,
-    "myPT_toolresult_close": 50268,
-    "myPT_thinking_open": 50269,
-    "myPT_thinking_close": 50270,
-    "myPT_eot": 50271,
-}
+SPECIAL_TOKENS = get_special_token_ids()
 
 ASSISTANT_OPEN_ID = SPECIAL_TOKENS["myPT_assistant_open"]
 ASSISTANT_CLOSE_ID = SPECIAL_TOKENS["myPT_assistant_close"]

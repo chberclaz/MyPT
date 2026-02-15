@@ -22,6 +22,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.tokenizer import Tokenizer
 from core.model import GPTConfig
+from core.special_tokens import get_special_token_ids, BASE_VOCAB_SIZE
+
+# Dynamic token ID lookup -- never hardcode IDs!
+_IDS = get_special_token_ids()
+_ASSISTANT_OPEN_ID  = _IDS["myPT_assistant_open"]
+_ASSISTANT_CLOSE_ID = _IDS["myPT_assistant_close"]
 
 
 def main():
@@ -111,9 +117,9 @@ def main():
         
         # Note special tokens
         note = ""
-        if x_tok >= 50257:
+        if x_tok >= BASE_VOCAB_SIZE:
             note += f"x=special({x_tok}) "
-        if y_tok >= 50257:
+        if y_tok >= BASE_VOCAB_SIZE:
             note += f"y=special({y_tok}) "
         
         print(f"{pos:4d} | {repr(x_str):^30} | {repr(y_str):^30} | {note}")
@@ -168,18 +174,18 @@ def main():
     print("=" * 70)
     
     # Check if assistant tags are in masked region
-    assistant_open_id = 50263
-    assistant_close_id = 50264
+    assistant_open_id = _ASSISTANT_OPEN_ID
+    assistant_close_id = _ASSISTANT_CLOSE_ID
     
     # Find where assistant tags appear in y (targets)
     assistant_open_in_y = np.where(y == assistant_open_id)[0]
     assistant_close_in_y = np.where(y == assistant_close_id)[0]
     
-    print(f"\n<myPT_assistant> (50263) appears as TARGET at positions: {list(assistant_open_in_y)}")
+    print(f"\n<myPT_assistant> ({assistant_open_id}) appears as TARGET at positions: {list(assistant_open_in_y)}")
     for pos in assistant_open_in_y:
         print(f"  Position {pos}: mask_y={mask_y[pos]} (should be 1 to train on generating this tag)")
     
-    print(f"\n</myPT_assistant> (50264) appears as TARGET at positions: {list(assistant_close_in_y)}")
+    print(f"\n</myPT_assistant> ({assistant_close_id}) appears as TARGET at positions: {list(assistant_close_in_y)}")
     for pos in assistant_close_in_y:
         print(f"  Position {pos}: mask_y={mask_y[pos]} (should be 1 to train on generating this tag)")
     

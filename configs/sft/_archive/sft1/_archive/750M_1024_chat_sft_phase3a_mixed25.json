@@ -11,6 +11,11 @@
   "n_layer": 32,
   "dropout": 0.12,
   "bias": false,
+  "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
 
   "comment_training": "SFT training with replay buffer - conservative LR for first run",
   "learning_rate": 3e-5,

@@ -1,36 +1,40 @@
 {
-  "name": "GPT-750M-Phase3a1-Beta",
-  "description": "Phase 3a-1β: Echo expansion. Builds on alpha with diverse echo templates. ~2000-3000 examples.",
-  
+  "name": "Phase 1: Format Lock",
+  "description": "Teaches model to respect <myPT_assistant>...</myPT_assistant><myPT_eot> structure. Ultra-short responses, synthetic templates.",
+
   "batch_size": 16,
   "block_size": 512,
   "vocab_size": 50304,
   "n_embd": 1280,
   "n_head": 20,
   "n_layer": 32,
-  "dropout": 0.05,
+  "dropout": 0.10,
   "bias": false,
   "tie_weights": true,
-  
-  "learning_rate": 5e-5,
-  "max_iters": 2500,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
+
+  "learning_rate": 7e-5,
+  "max_iters": 2000,
   "eval_interval": 100,
   "warmup_iters": 100,
   "use_amp": true,
   "amp_dtype": "bf16",
-  
+
   "use_loss_mask": true,
-  
+
   "batch_sampling_mode": "epoch",
   "pad_token_id": null,
   "episode_min_tokens": 10,
-  "epoch_seed": 4502,
+  "epoch_seed": 4501,
   "epoch_shuffle": true,
   "epoch_drop_last": true,
-  
+
   "weight_decay": 0.05,
-  
+
   "eval_sets": null,
   "eval_seed": 1337,
-  "log_file": "logs/train/phase3a1_beta.jsonl"
+  "log_file": "logs/train/phase1_format_lock.jsonl"
 }

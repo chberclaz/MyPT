@@ -845,7 +845,7 @@ Next steps:
      python scripts/inspect_sft_dataset.py --dataset_dir {output_dir}/packed --show_samples 2
   3. Train:
      python train.py --model_name phase3a_operator --init_from_model phase3a1_alpha_v2 \\
-         --dataset_dir {output_dir}/packed --config_file configs/sft1/750M_phase3a_operator_contrastive.json
+         --dataset_dir {output_dir}/packed --config_file configs/sft/phase2_operators.json
   4. Eval:
      python scripts/sft_eval_suite.py --model phase3a_operator -v
 """)

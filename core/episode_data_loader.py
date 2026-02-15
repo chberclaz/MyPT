@@ -268,8 +268,12 @@ class GPTEpisodeDataLoader:
                 valid_ids.append(i)
         
         # Memory-map mask if available
+        # Prefer weighted mask (float32) if present, otherwise standard uint8
         mask = None
-        if os.path.exists(mask_path):
+        mask_weighted_path = os.path.join(shard_dir, "mask_weighted.bin")
+        if os.path.exists(mask_weighted_path):
+            mask = np.memmap(mask_weighted_path, dtype=np.float32, mode='r')
+        elif os.path.exists(mask_path):
             mask = np.memmap(mask_path, dtype=np.uint8, mode='r')
         
         # Memory-map segment_ids if available (for packed sequences with segment isolation)

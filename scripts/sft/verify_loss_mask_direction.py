@@ -20,6 +20,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.model import GPT
 from core.episode_data_loader import GPTEpisodeDataLoader
+from core.special_tokens import get_special_token_ids, BASE_VOCAB_SIZE
+
+# Dynamic token ID lookup -- never hardcode IDs!
+_IDS = get_special_token_ids()
+_ASSISTANT_OPEN_ID  = _IDS["myPT_assistant_open"]
+_ASSISTANT_CLOSE_ID = _IDS["myPT_assistant_close"]
+_SYSTEM_OPEN_ID     = _IDS["myPT_system_open"]
+_SYSTEM_CLOSE_ID    = _IDS["myPT_system_close"]
+_USER_OPEN_ID       = _IDS["myPT_user_open"]
+_USER_CLOSE_ID      = _IDS["myPT_user_close"]
 
 
 def main():
@@ -147,9 +157,9 @@ def main():
         loss_val = per_token_loss[pos].item()
         
         note = ""
-        if y_tok == 50263: note = "← <myPT_assistant>"
-        elif y_tok == 50264: note = "← </myPT_assistant>"
-        elif y_tok >= 50257: note = f"← special({y_tok})"
+        if y_tok == _ASSISTANT_OPEN_ID: note = "← <myPT_assistant>"
+        elif y_tok == _ASSISTANT_CLOSE_ID: note = "← </myPT_assistant>"
+        elif y_tok >= BASE_VOCAB_SIZE: note = f"← special({y_tok})"
         
         print(f"  [{pos:3d}] x={repr(x_str):22} → y={repr(y_str):22} loss={loss_val:.3f} {note}")
     
@@ -171,10 +181,10 @@ def main():
         loss_val = per_token_loss[pos].item()
         
         note = ""
-        if y_tok == 50257: note = "← <myPT_system>"
-        elif y_tok == 50258: note = "← </myPT_system>"
-        elif y_tok == 50259: note = "← <myPT_user>"
-        elif y_tok == 50260: note = "← </myPT_user>"
+        if y_tok == _SYSTEM_OPEN_ID: note = "← <myPT_system>"
+        elif y_tok == _SYSTEM_CLOSE_ID: note = "← </myPT_system>"
+        elif y_tok == _USER_OPEN_ID: note = "← <myPT_user>"
+        elif y_tok == _USER_CLOSE_ID: note = "← </myPT_user>"
         
         print(f"  [{pos:3d}] x={repr(x_str):22} → y={repr(y_str):22} loss={loss_val:.3f} (IGNORED) {note}")
     
@@ -183,15 +193,15 @@ def main():
     print("=" * 70)
     
     # Check if assistant tokens are in mask=1 region
-    assistant_open_positions = np.where(seq_y == 50263)[0]
-    assistant_close_positions = np.where(seq_y == 50264)[0]
+    assistant_open_positions = np.where(seq_y == _ASSISTANT_OPEN_ID)[0]
+    assistant_close_positions = np.where(seq_y == _ASSISTANT_CLOSE_ID)[0]
     
-    print(f"\n<myPT_assistant> (50263) appears as target at positions: {list(assistant_open_positions)}")
+    print(f"\n<myPT_assistant> ({_ASSISTANT_OPEN_ID}) appears as target at positions: {list(assistant_open_positions)}")
     for pos in assistant_open_positions:
         if pos < len(seq_mask):
             print(f"  Position {pos}: mask={int(seq_mask[pos])} → {'TRAINED' if seq_mask[pos]==1 else 'NOT TRAINED'}")
     
-    print(f"\n</myPT_assistant> (50264) appears as target at positions: {list(assistant_close_positions)}")
+    print(f"\n</myPT_assistant> ({_ASSISTANT_CLOSE_ID}) appears as target at positions: {list(assistant_close_positions)}")
     for pos in assistant_close_positions:
         if pos < len(seq_mask):
             print(f"  Position {pos}: mask={int(seq_mask[pos])} → {'TRAINED' if seq_mask[pos]==1 else 'NOT TRAINED'}")
@@ -203,13 +213,13 @@ def main():
         mask1_targets = seq_y[mask1_positions]
         
         # Count special tokens
-        special_count = np.sum(mask1_targets >= 50257)
-        regular_count = np.sum(mask1_targets < 50257)
+        special_count = np.sum(mask1_targets >= BASE_VOCAB_SIZE)
+        regular_count = np.sum(mask1_targets < BASE_VOCAB_SIZE)
         
         print(f"Mask=1 targets: {special_count} special tokens, {regular_count} regular tokens")
         
         # Check if any system/user tokens are in mask=1 (would be a bug)
-        system_user_tokens = {50257, 50258, 50259, 50260}  # system open/close, user open/close
+        system_user_tokens = {_SYSTEM_OPEN_ID, _SYSTEM_CLOSE_ID, _USER_OPEN_ID, _USER_CLOSE_ID}
         bug_count = sum(1 for t in mask1_targets if t in system_user_tokens)
         
         if bug_count > 0:

@@ -49,7 +49,7 @@ import sys
 import json
 import numpy as np
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 
 # Fix Windows console encoding
 if sys.platform == "win32":
@@ -59,7 +59,7 @@ if sys.platform == "win32":
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.special_tokens import SPECIAL_TOKEN_STRINGS
+from core.special_tokens import SPECIAL_TOKEN_STRINGS, get_special_token_ids
 from core.tokenizer import Tokenizer
 from core.model import GPTConfig
 
@@ -82,6 +82,14 @@ TOOLCALL_OPEN = SPECIAL_TOKEN_STRINGS["myPT_toolcall_open"]
 TOOLCALL_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_toolcall_close"]
 TOOLRESULT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_toolresult_open"]
 TOOLRESULT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_toolresult_close"]
+USER_CONTEXT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_user_context_open"]
+USER_CONTEXT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_user_context_close"]
+ASSISTANT_CONTEXT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_assistant_context_open"]
+ASSISTANT_CONTEXT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_assistant_context_close"]
+THINK_OPEN = SPECIAL_TOKEN_STRINGS["myPT_think_open"]
+THINK_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_think_close"]
+CITE_OPEN = SPECIAL_TOKEN_STRINGS["myPT_cite_open"]
+CITE_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_cite_close"]
 EOT = SPECIAL_TOKEN_STRINGS["myPT_eot"]
 
 
@@ -110,6 +118,17 @@ def parse_args():
                         help="Random seed for shuffling")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Verbose output")
+    
+    # Packing options
+    parser.add_argument("--enable_packing", action="store_true",
+                        help="Enable sequence packing (fill block_size with multiple episodes)")
+    parser.add_argument("--pack_block_size", type=int, default=1024,
+                        help="Target packed sequence length (default: 1024)")
+    
+    # Weighted loss masking (WeFT-style)
+    parser.add_argument("--weighted_mask", action="store_true",
+                        help="Use weighted loss masks: structural tokens (stop, think, cite, toolcall) "
+                             "get higher weights (1.5-2.0x) to emphasize generation steering decisions.")
     
     return parser.parse_args()
 
@@ -140,6 +159,16 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
     """
     Serialize a tool conversation to text + char-level mask.
     
+    Handles all myPT tag types including think, cite, user_context,
+    and assistant_context. See docs/sft/TAG_NESTING_REFERENCE.md for
+    canonical nesting rules.
+    
+    JSONL fields that trigger new tags:
+        msg["context"]  → <myPT_user_context> inside user block
+        msg["think"]    → <myPT_think> at start of assistant block
+        msg["cite"]     → <myPT_cite> at end of assistant content
+        role "assistant_context" → standalone <myPT_assistant_context>
+    
     Returns:
         (text, char_mask) where char_mask has '1' for assistant chars, '0' otherwise
     """
@@ -158,37 +187,64 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
         content = msg.get("content", "")
         
         if role == "user":
-            u = f"{USER_OPEN}{content}{USER_CLOSE}\n"
+            # Build user block, optionally with user_context inside
+            user_context = msg.get("context", "")
+            if user_context:
+                ctx = f"{USER_CONTEXT_OPEN}{user_context}{USER_CONTEXT_CLOSE}"
+                u = f"{USER_OPEN}{ctx}{content}{USER_CLOSE}\n"
+            else:
+                u = f"{USER_OPEN}{content}{USER_CLOSE}\n"
             text_parts.append(u)
-            mask_parts.append("0" * len(u))  # Don't train on user
+            mask_parts.append("0" * len(u))
+        
+        elif role == "assistant_context":
+            # Standalone block between user and assistant (system-injected)
+            ac = f"{ASSISTANT_CONTEXT_OPEN}{content}{ASSISTANT_CONTEXT_CLOSE}\n"
+            text_parts.append(ac)
+            mask_parts.append("0" * len(ac))
         
         elif role == "assistant":
-            # Regular assistant message (final answer)
-            a = f"{ASSISTANT_OPEN}{content}{ASSISTANT_CLOSE}\n"
+            # Build assistant content with optional think prefix and cite suffix
+            think_text = msg.get("think", "")
+            cite_text = msg.get("cite", "")
+            
+            inner = ""
+            if think_text:
+                inner += f"{THINK_OPEN}{think_text}{THINK_CLOSE}"
+            inner += content
+            if cite_text:
+                inner += f"{CITE_OPEN}{cite_text}{CITE_CLOSE}"
+            
+            a = f"{ASSISTANT_OPEN}{inner}{ASSISTANT_CLOSE}\n"
             text_parts.append(a)
-            mask_parts.append("1" * len(a))  # Train on assistant!
+            mask_parts.append("1" * len(a))
         
         elif role == "assistant_toolcall":
-            # Assistant message with toolcall
+            # Assistant message with toolcall, optionally with think prefix
             name = msg.get("name", "")
             arguments = msg.get("arguments", {})
             toolcall_str = serialize_toolcall(name, arguments)
+            think_text = msg.get("think", "")
             
-            # Wrap in assistant tags
-            a = f"{ASSISTANT_OPEN}{toolcall_str}{ASSISTANT_CLOSE}\n"
+            inner = ""
+            if think_text:
+                inner += f"{THINK_OPEN}{think_text}{THINK_CLOSE}"
+            inner += toolcall_str
+            
+            a = f"{ASSISTANT_OPEN}{inner}{ASSISTANT_CLOSE}\n"
             text_parts.append(a)
-            mask_parts.append("1" * len(a))  # Train on toolcalls!
+            mask_parts.append("1" * len(a))
         
         elif role == "toolresult":
             # Tool result (don't train)
             result_content = msg.get("content", {})
             r = serialize_toolresult(result_content) + "\n"
             text_parts.append(r)
-            mask_parts.append("0" * len(r))  # Don't train on tool outputs
+            mask_parts.append("0" * len(r))
     
-    # End of turn marker
+    # End of turn marker (trained - model learns to stop)
     text_parts.append(EOT + "\n")
-    mask_parts.append("0" * (len(EOT) + 1))
+    mask_parts.append("1" * len(EOT) + "0")
     
     return "".join(text_parts), "".join(mask_parts)
 
@@ -196,34 +252,72 @@ def serialize_conversation(item: Dict[str, Any]) -> Tuple[str, str]:
 def char_mask_to_token_mask(
     text: str, 
     char_mask: str, 
-    tokenizer: Tokenizer
-) -> Tuple[List[int], List[int]]:
+    tokenizer: Tokenizer,
+    weighted: bool = False
+) -> Tuple[List[int], List[float]]:
     """
     Convert character-level mask to token-level mask.
     
-    Strategy: For each token, if ANY of its characters are masked as '1',
-    the entire token is masked as 1 (trainable).
+    When weighted=False: binary mask (0.0 / 1.0).
+    When weighted=True: WeFT-style weighted mask with higher weights for
+    structural control tokens that steer generation decisions.
+    
+    Uses dynamic token ID lookup -- never hardcodes IDs.
     """
     assert len(text) == len(char_mask), f"Length mismatch: {len(text)} vs {len(char_mask)}"
     
-    # Encode text to get token IDs
+    # Dynamic token ID lookup
+    _IDS = get_special_token_ids()
+    
+    ASSISTANT_OPEN_ID  = _IDS["myPT_assistant_open"]
+    ASSISTANT_CLOSE_ID = _IDS["myPT_assistant_close"]
+    EOT_ID             = _IDS["myPT_eot"]
+    
+    # Additional IDs for weighted masking
+    TOOLCALL_OPEN_ID   = _IDS["myPT_toolcall_open"]
+    TOOLCALL_CLOSE_ID  = _IDS["myPT_toolcall_close"]
+    THINK_OPEN_ID      = _IDS["myPT_think_open"]
+    THINK_CLOSE_ID     = _IDS["myPT_think_close"]
+    CITE_OPEN_ID       = _IDS["myPT_cite_open"]
+    CITE_CLOSE_ID      = _IDS["myPT_cite_close"]
+    
+    # Weighted mask values
+    W_STOP   = 2.0   # Critical stop signals (assistant_close, eot)
+    W_STEER  = 1.5   # Steering tokens (think open/close, cite open/close)
+    W_ACTION = 2.0   # Action triggers (toolcall open/close)
+    W_NORMAL = 1.0   # Normal assistant content
+    W_OFF    = 0.0   # Masked (system, user, toolresult)
+    
+    # High-weight token sets (only used when weighted=True)
+    STOP_IDS   = {ASSISTANT_CLOSE_ID, EOT_ID}
+    STEER_IDS  = {THINK_OPEN_ID, THINK_CLOSE_ID, CITE_OPEN_ID, CITE_CLOSE_ID}
+    ACTION_IDS = {TOOLCALL_OPEN_ID, TOOLCALL_CLOSE_ID}
+    
+    # Encode full text to get token IDs
     token_ids = tokenizer.encode(text)
     
-    # Build token mask by checking each token's character span
-    token_mask = []
-    char_pos = 0
+    # Build mask based on token structure
+    token_mask: List[float] = []
+    in_assistant_response = False
     
     for token_id in token_ids:
-        token_text = tokenizer.decode([token_id])
-        token_len = len(token_text)
-        
-        if char_pos + token_len <= len(char_mask):
-            span_mask = char_mask[char_pos:char_pos + token_len]
-            token_mask.append(1 if '1' in span_mask else 0)
+        if token_id == ASSISTANT_OPEN_ID:
+            token_mask.append(W_OFF)
+            in_assistant_response = True
+        elif token_id == ASSISTANT_CLOSE_ID:
+            token_mask.append(W_STOP if weighted else W_NORMAL)
+            in_assistant_response = False
+        elif token_id == EOT_ID:
+            token_mask.append(W_STOP if weighted else W_NORMAL)
+        elif in_assistant_response:
+            if weighted and token_id in STEER_IDS:
+                token_mask.append(W_STEER)
+            elif weighted and token_id in ACTION_IDS:
+                token_mask.append(W_ACTION)
+            else:
+                token_mask.append(W_NORMAL)
         else:
-            token_mask.append(0)
-        
-        char_pos += token_len
+            token_mask.append(W_OFF)
     
     return token_ids, token_mask
 
@@ -235,15 +329,17 @@ class EpisodeShardWriter:
     Handles multi-shard output when data exceeds tokens_per_shard.
     """
     
-    def __init__(self, output_dir: str, split: str, tokens_per_shard: int):
+    def __init__(self, output_dir: str, split: str, tokens_per_shard: int,
+                 weighted_mask: bool = False):
         self.output_dir = output_dir
         self.split = split
         self.tokens_per_shard = tokens_per_shard
+        self.weighted_mask = weighted_mask
         
         # Current shard data
         self.shard_idx = 0
         self.tokens: List[int] = []
-        self.masks: List[int] = []
+        self.masks: List[float] = []
         self.episodes: List[Tuple[int, int]] = []  # (start, length) pairs
         
         # Statistics
@@ -251,8 +347,16 @@ class EpisodeShardWriter:
         self.total_episodes = 0
         self.shards_written = 0
     
-    def add_episode(self, token_ids: List[int], mask: List[int]):
-        """Add an episode to the current shard."""
+    def add_episode(self, token_ids: List[int], mask: List[float],
+                    segment_ids: Optional[List[int]] = None):
+        """Add an episode to the current shard.
+        
+        Args:
+            token_ids: Token IDs for this episode/packed sequence
+            mask: Loss mask values aligned with token_ids
+            segment_ids: Optional per-token segment IDs for packed sequences.
+                segment 0 = padding, 1+ = episode within pack.
+        """
         episode_len = len(token_ids)
         
         # Check if we need to start a new shard
@@ -266,6 +370,12 @@ class EpisodeShardWriter:
         # Append data
         self.tokens.extend(token_ids)
         self.masks.extend(mask)
+        
+        # Segment IDs (for packed sequences with segment-isolated attention)
+        if segment_ids is not None:
+            if not hasattr(self, 'segment_ids'):
+                self.segment_ids = []
+            self.segment_ids.extend(segment_ids)
         
         self.total_tokens += episode_len
         self.total_episodes += 1
@@ -295,23 +405,39 @@ class EpisodeShardWriter:
         tokens_path = os.path.join(shard_dir, "tokens.bin")
         tokens_arr.tofile(tokens_path)
         
-        # Write mask.bin (uint8)
-        masks_arr = np.array(self.masks, dtype=np.uint8)
+        # Write mask.bin (uint8) -- always written for backward compatibility
+        masks_binary = np.array([1 if m > 0 else 0 for m in self.masks], dtype=np.uint8)
         mask_path = os.path.join(shard_dir, "mask.bin")
-        masks_arr.tofile(mask_path)
+        masks_binary.tofile(mask_path)
+        
+        # Write mask_weighted.bin (float32) when using WeFT-style weighted masks
+        if self.weighted_mask:
+            masks_weighted = np.array(self.masks, dtype=np.float32)
+            mask_weighted_path = os.path.join(shard_dir, "mask_weighted.bin")
+            masks_weighted.tofile(mask_weighted_path)
+        
+        # Write segment_ids.bin (uint8) if segment IDs were provided
+        has_segments = hasattr(self, 'segment_ids') and len(self.segment_ids) > 0
+        if has_segments:
+            seg_arr = np.array(self.segment_ids, dtype=np.uint8)
+            seg_path = os.path.join(shard_dir, "segment_ids.bin")
+            seg_arr.tofile(seg_path)
         
         # Write episodes.idx (uint64 pairs: start, length)
         episodes_arr = np.array(self.episodes, dtype=np.uint64)
         episodes_path = os.path.join(shard_dir, "episodes.idx")
         episodes_arr.tofile(episodes_path)
         
+        seg_info = " (with segment_ids)" if has_segments else ""
         print(f"  Written {self.split}/shard_{self.shard_idx:05d}: "
-              f"{len(self.tokens):,} tokens, {len(self.episodes)} episodes")
+              f"{len(self.tokens):,} tokens, {len(self.episodes)} episodes{seg_info}")
         
         # Reset for next shard
         self.tokens = []
         self.masks = []
         self.episodes = []
+        if hasattr(self, 'segment_ids'):
+            self.segment_ids = []
         self.shard_idx += 1
         self.shards_written += 1
     
@@ -422,11 +548,20 @@ def main():
         print(f"  {name}: {count}")
     
     # Initialize shard writers
-    train_writer = EpisodeShardWriter(args.output_dir, "train", args.tokens_per_shard)
-    val_writer = EpisodeShardWriter(args.output_dir, "val", args.tokens_per_shard)
+    use_weighted = getattr(args, 'weighted_mask', False)
+    train_writer = EpisodeShardWriter(args.output_dir, "train", args.tokens_per_shard,
+                                       weighted_mask=use_weighted)
+    val_writer = EpisodeShardWriter(args.output_dir, "val", args.tokens_per_shard,
+                                     weighted_mask=use_weighted)
     
-    # Process conversations
+    # Pad token for packing
+    pad_token_id = get_special_token_ids()["myPT_eot"]
+    
+    # Process conversations -- tokenize all episodes first
     print("\nProcessing and tokenizing...")
+    
+    train_episodes = []
+    val_episodes = []
     
     train_mask_sum = 0
     train_mask_count = 0
@@ -434,51 +569,134 @@ def main():
     val_mask_count = 0
     
     for i, conv in enumerate(conversations):
-        text, char_mask = serialize_conversation(conv)
-        
-        # Determine split for this episode
-        split = "val" if i in val_indices else "train"
-        episode_idx = val_writer.total_episodes if split == "val" else train_writer.total_episodes
-        
-        # Audit: Log episode text before tokenization (for traceability)
-        if AUDIT_AVAILABLE:
-            # Truncate text for log (first 500 chars) to avoid huge log entries
-            text_preview = text[:500] + "..." if len(text) > 500 else text
-            # Escape newlines for single-line log format
-            text_preview_escaped = text_preview.replace("\n", "\\n")
-            audit.training(
-                "episode_text",
-                dataset_type="tool_sft",
-                split=split,
-                episode_idx=episode_idx,
-                conversation_idx=i,
-                text_length=len(text),
-                num_assistant_chars=char_mask.count("1"),
-                details=text_preview_escaped
+        # Pre-training replay episodes: raw text, full loss (mask=1 everywhere)
+        if conv.get("_replay", False):
+            raw_text = conv.get("text", "")
+            tokens = tokenizer.encode(raw_text)
+            mask = [1.0] * len(tokens)
+            meta = {"_conv_idx": i, "_replay": True}
+        else:
+            text, char_mask = serialize_conversation(conv)
+            
+            # Audit: Log episode text before tokenization (for traceability)
+            split_name = "val" if i in val_indices else "train"
+            if AUDIT_AVAILABLE:
+                text_preview = text[:500] + "..." if len(text) > 500 else text
+                text_preview_escaped = text_preview.replace("\n", "\\n")
+                audit.training(
+                    "episode_text",
+                    dataset_type="tool_sft",
+                    split=split_name,
+                    conversation_idx=i,
+                    text_length=len(text),
+                    num_assistant_chars=char_mask.count("1"),
+                    details=text_preview_escaped
+                )
+            
+            tokens, mask = char_mask_to_token_mask(
+                text, char_mask, tokenizer,
+                weighted=use_weighted
             )
-        
-        tokens, mask = char_mask_to_token_mask(text, char_mask, tokenizer)
+            meta = {"_conv_idx": i}
         
         if i in val_indices:
-            val_writer.add_episode(tokens, mask)
+            val_episodes.append((tokens, mask, meta))
             val_mask_sum += sum(mask)
             val_mask_count += len(mask)
         else:
-            train_writer.add_episode(tokens, mask)
+            train_episodes.append((tokens, mask, meta))
             train_mask_sum += sum(mask)
             train_mask_count += len(mask)
         
         if args.verbose and (i + 1) % 100 == 0:
             print(f"  Processed {i + 1}/{len(conversations)}")
     
-    # Finalize shards
-    print("\nWriting shards...")
-    train_shards = train_writer.finalize()
-    val_shards = val_writer.finalize()
+    print(f"  Tokenized {len(train_episodes)} train + {len(val_episodes)} val episodes")
     
-    # Calculate statistics
-    train_mask_ratio = train_mask_sum / train_mask_count if train_mask_count > 0 else 0
-    val_mask_ratio = val_mask_sum / val_mask_count if val_mask_count > 0 else 0
+    # ==========================================================================
+    # PACKING PATH
+    # ==========================================================================
+    if args.enable_packing:
+        from scripts.sft.pack_utils import greedy_bin_pack, compute_packing_stats
+        
+        print(f"\n{'='*60}")
+        print(f"  PACKING MODE ENABLED")
+        print(f"  Block size: {args.pack_block_size}")
+        print(f"{'='*60}")
+        
+        import random
+        random.shuffle(train_episodes)
+        train_packed = greedy_bin_pack(train_episodes, args.pack_block_size, pad_token_id)
+        val_packed = greedy_bin_pack(val_episodes, args.pack_block_size, pad_token_id)
+        
+        packing_stats_train = compute_packing_stats(
+            [(t, m) for t, m, _ in train_episodes],
+            train_packed,
+            args.pack_block_size
+        )
+        packing_stats_val = compute_packing_stats(
+            [(t, m) for t, m, _ in val_episodes],
+            val_packed,
+            args.pack_block_size
+        )
+        
+        # Write packed sequences
+        print(f"\nWriting packed sequences...")
+        for pack in train_packed:
+            tokens, mask, segment_ids, meta = pack
+            train_writer.add_episode(tokens, mask, segment_ids=segment_ids)
+        
+        for pack in val_packed:
+            tokens, mask, segment_ids, meta = pack
+            val_writer.add_episode(tokens, mask, segment_ids=segment_ids)
+        
+        # Finalize
+        print("\nFinalizing shards...")
+        train_shards = train_writer.finalize()
+        val_shards = val_writer.finalize()
+        
+        # Print packing summary
+        print(f"\n{'='*60}")
+        print(f"  PACKING RESULTS")
+        print(f"{'='*60}")
+        print(f"\n  TRAIN:")
+        print(f"    Original: {packing_stats_train['original_episodes']} episodes, "
+              f"{packing_stats_train['original_tokens']:,} tokens")
+        print(f"    Avg episode length: {packing_stats_train['avg_episode_len']:.1f} tokens")
+        print(f"    Packed:   {packing_stats_train['packed_sequences']} sequences x "
+              f"{args.pack_block_size} = {packing_stats_train['packed_tokens']:,} tokens")
+        print(f"    Content utilization: {packing_stats_train['nonpad_ratio']:.1%}")
+        print(f"    Supervised tokens/step: "
+              f"{packing_stats_train['unpacked_effective_mask']:.1%} -> "
+              f"{packing_stats_train['packed_effective_mask']:.1%}")
+        print(f"    Training efficiency: {packing_stats_train['training_efficiency_gain']:.1f}x")
+        print(f"\n  VAL:")
+        print(f"    Original: {packing_stats_val['original_episodes']} episodes, "
+              f"{packing_stats_val['original_tokens']:,} tokens")
+        print(f"    Packed:   {packing_stats_val['packed_sequences']} sequences x "
+              f"{args.pack_block_size} = {packing_stats_val['packed_tokens']:,} tokens")
+        
+        train_mask_ratio = packing_stats_train['packed_mask_ratio']
+        val_mask_ratio = packing_stats_val['packed_mask_ratio']
+    
+    # ==========================================================================
+    # NON-PACKING PATH (original behavior)
+    # ==========================================================================
+    else:
+        for tokens, mask, meta in train_episodes:
+            train_writer.add_episode(tokens, mask)
+        
+        for tokens, mask, meta in val_episodes:
+            val_writer.add_episode(tokens, mask)
+        
+        # Finalize shards
+        print("\nWriting shards...")
+        train_shards = train_writer.finalize()
+        val_shards = val_writer.finalize()
+        
+        # Calculate statistics
+        train_mask_ratio = train_mask_sum / train_mask_count if train_mask_count > 0 else 0
+        val_mask_ratio = val_mask_sum / val_mask_count if val_mask_count > 0 else 0
     
     print(f"\n  Total train tokens: {train_writer.total_tokens:,}")
     print(f"  Total val tokens: {val_writer.total_tokens:,}")
@@ -509,11 +727,17 @@ def main():
         "vocab_size": args.vocab_size,
         "tokens_per_shard": args.tokens_per_shard,
         "tool_counts": tool_counts,
+        "weighted_mask": use_weighted,
         "special_tokens_used": [
             "myPT_system", "myPT_user", "myPT_assistant",
-            "myPT_toolcall", "myPT_toolresult", "myPT_eot"
+            "myPT_toolcall", "myPT_toolresult", "myPT_eot",
+            "myPT_think", "myPT_cite"
         ],
     }
+    
+    if args.enable_packing:
+        metadata["packing_enabled"] = True
+        metadata["pack_block_size"] = args.pack_block_size
     
     metadata_path = os.path.join(args.output_dir, "dataset_metadata.json")
     with open(metadata_path, 'w') as f:
@@ -553,7 +777,7 @@ def main():
     print(f"\nTo train:")
     print(f"  python train.py --model_name my_agent \\")
     print(f"      --dataset_dir {args.output_dir} \\")
-    print(f"      --config_file configs/sft2/toolchat.json \\")
+    print(f"      --config_file configs/sft/phase5_simple_toolcall.json \\")
     print(f"      --init_from_model base_model")
 
 

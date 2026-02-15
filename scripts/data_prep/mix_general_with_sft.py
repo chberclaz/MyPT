@@ -452,7 +452,7 @@ def main():
     
     print(f"\n  To train with this dataset:")
     print(f"    python train.py \\")
-    print(f"      --config_file configs/sft1/750M_1024_chat_sft_phase3a.json \\")
+    print(f"      --config_file configs/sft/phase3_chat_sft.json \\")
     print(f"      --dataset_dir {output_dir} \\")
     print(f"      --init_from_model checkpoints/domain_v8 \\")
     print(f"      --model_name phase3a_sft_mixed")

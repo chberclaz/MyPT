@@ -5,6 +5,93 @@ All notable changes to MyPT will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-15 — Complete SFT Pipeline
+
+Design and implementation of the complete 6-phase Supervised Fine-Tuning pipeline
+that transforms the 750M base model into a bilingual (EN/DE) agentic RAG assistant
+with tool-calling, reasoning, and citation capabilities.
+
+### Added
+
+#### SFT Pipeline Architecture
+- **6-phase sequential curriculum** taking the base model from raw token prediction to agentic RAG:
+  1. **Format Lock** — learn `<myPT_assistant>...<myPT_eot>` skeleton, stop generation
+  2. **Operators** — generalize abstract operators (COPY/WRAP/EXTRACT) to unseen payloads
+  3. **Chat SFT** — natural bilingual conversation, `<myPT_think>` reasoning, `<myPT_cite>` attribution
+  4. **Multi-turn** — multi-turn conversations with clean turn boundaries
+  5. **Simple Toolcall** — single-step tool use with `<myPT_toolcall>` / `<myPT_toolresult>`
+  6. **Agentic RAG** — multi-step tool chains (search → get_doc → answer), error recovery
+- **Standardized data flow** for all phases: Generator → Mix → Tokenize → Train
+- **Unified JSONL schema** with role types (`user`, `assistant`, `assistant_toolcall`, `toolresult`) and optional `think`, `cite`, `context` fields
+- **19 special tokens** (IDs 50257-50275) with documented loss masking rules: model-generated tags trained, system-injected tags masked
+- **Phase-by-phase tag introduction** so the model learns incrementally (system/user/assistant/eot in P1, think/cite/user_context in P3, toolcall/toolresult in P5)
+- **Complete pipeline guide:** `docs/sft/SFT_PIPELINE_GUIDE.md` (17 sections, ~940 lines) covering architecture, data flow, every phase with exact commands, success gates, HuggingFace dataset integration, anti-forgetting strategies, and troubleshooting
+
+#### Data Generation Scripts
+- `scripts/sft/generate_rag_chat_sft.py` — Phase 3 RAG chat episodes with 6 episode patterns (context_answer, context_think, multiturn, extraction, insufficient_context, no_context), 30 EN + 30 DE context question templates, follow-up questions, extraction directives, insufficient-context refusals
+- `scripts/sft/generate_agent_sft.py` — Phase 5-6 agentic tool-calling episodes with 8 patterns (search, list_docs, get_doc, summarize, multi_step, no_results, no_tool, contrastive), think/cite blocks, 4 EN + 4 DE contrastive wrong-tool-then-correction scenarios
+- `scripts/sft/generate_pretrain_replay.py` — samples raw text from pre-training shards for anti-forgetting replay buffers
+
+#### Tokenization & Packing
+- `scripts/sft/prepare_chat_sft.py` — Phase 1-4 tokenizer with episode packing, loss masking, weighted masks
+- `scripts/sft/prepare_tool_sft.py` — Phase 5-6 tokenizer handling all 19 tags including toolcall/toolresult roles, packing support, segment_ids for attention isolation
+- `scripts/sft/pack_utils.py` — shared packing utilities: `greedy_bin_pack()`, `group_by_field()`, `compute_packing_stats()`
+- **Episode packing** fills each 1024-token block with multiple episodes (25-50x efficiency gain for Phase 1-2 where episodes are ~30 tokens)
+
+#### Training Configs
+- 6 canonical configs in `configs/sft/`: `phase1_format_lock.json` through `phase6_agentic_rag.json`
+- Monotonically decreasing learning rates: 7e-5 → 3e-5 → 3e-5 → 2.5e-5 → 2e-5 → 1.5e-5
+- Phase-appropriate dropout: 0.10 (synthetic) → 0.08 (operators) → 0.12 (chat) → 0.10 → 0.08 → 0.08
+- Cumulative `eval_sets` per phase for cross-phase OOD forgetting detection
+- NEFTune noise (`neftune_alpha`) per phase
+
+#### Three-Tier System Prompt Strategy
+- Phase 1-2: `"You are MyPT."` (~4 tokens) — maximizes loss mask % on ultra-short episodes
+- Phase 3-4: `CHAT_SYSTEM_PROMPT` (~15-20 tokens, 4 short variants) — episodes long enough to absorb
+- Phase 5-6: `AGENTIC_STANDARD_PROMPT` (~80 tokens) — tool episodes are long, need tool list
+- Defined in `core/system_prompts.py`
+
+#### Anti-Forgetting & Evaluation
+- **Pre-training replay:** `generate_pretrain_replay.py` for 1-5% raw text mixing per phase
+- **Cross-phase replay:** mandatory schedule (Phase 2: 5% P1, Phase 3: 3% P1 + 3% P2, etc.)
+- **Regression gate:** `scripts/eval/run_regression_gate.py` — automated pass/fail after each phase with cumulative bucket thresholds
+- **Pre-training skills eval:** `data/eval_pretrain_skills/skills_eval.jsonl` — 32 held-out prompts (math, German, facts, code)
+- **OOD generalization eval:** `data/eval_ood/` — 38 prompts across 4 files using novel phrasings absent from training templates, auto-detected by regression gate for phases ≥ 3
+
+#### Weighted Loss Masking (WeFT-style)
+- Control tokens (`<myPT_eot>`, `<myPT_toolcall>`, `<myPT_think>`, `<myPT_cite>`) get 1.5-2.0x loss weight
+- `--weighted_mask` flag writes `mask_weighted.bin` (float32) alongside backward-compatible `mask.bin` (uint8)
+- `core/episode_data_loader.py` auto-detects and prioritizes float32 weights
+
+#### NEFTune Embedding Noise
+- `core/model.py`: `neftune_alpha` in `GPTConfig`, uniform noise injection in `forward()` during training only
+- Configurable per phase via config JSON
+
+#### Future-Proof Special Token ID Resolution
+- `core/special_tokens.py`: `BASE_VOCAB_SIZE` + `get_special_token_ids()` — single source of truth
+- Migrated 15+ scripts from hardcoded numeric IDs to dynamic lookups
+
+#### Data Quality & Diversity
+- **Template diversity:** All template lists in both generators roughly doubled (think templates 2-3→5-7, answer templates 3→6-12, question templates 4-8→8-30)
+- **Question style diversity:** Added casual, imperative, task-oriented, analytical, and extraction styles (previously all neutral/polite)
+- **Contrastive examples:** 8% of Phase 5-6 episodes are wrong-tool-then-correction scenarios
+- **Dynamic think omission:** `--think_omit_ratio` (15%) randomly omits think blocks so model learns thinking is contextual
+- **German balance:** Default `--de_ratio` raised to 0.40 in both generators, full EN/DE parity on all templates
+- **HuggingFace dataset recommendations** documented per phase (OASST2, alpaca-gpt4_de, Dolci-Instruct, OpenSchnabeltier, ultra-chat_de, German function calling, German RAG SFT)
+
+### Changed
+
+- Merged `configs/sft1/` + `configs/sft2/` → single `configs/sft/` directory (legacy configs archived to `_archive/`)
+- `core/episode_data_loader.py`: prioritizes `mask_weighted.bin` (float32) over `mask.bin` (uint8)
+- All 15+ scripts with hardcoded token IDs updated to use `get_special_token_ids()`
+
+### Notes
+
+- Complete pipeline documented in `docs/sft/SFT_PIPELINE_GUIDE.md` (17 sections)
+- No breaking changes to existing training or inference workflows
+- Backward-compatible: `mask.bin` (uint8) still works; `mask_weighted.bin` (float32) is optional
+- All SFT Quality Audit items at 100%: C1-C8, A1, A4, A5, A6, B4, B5, B7
+
 ## [0.3.0] - 2026-02-08
 
 ### Added

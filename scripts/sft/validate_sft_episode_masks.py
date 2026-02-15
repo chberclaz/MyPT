@@ -26,10 +26,12 @@ from collections import defaultdict
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Special token IDs (must match core/special_tokens.py registration order)
-ASSISTANT_OPEN_ID = 50263   # <myPT_assistant>
-ASSISTANT_CLOSE_ID = 50264  # </myPT_assistant>
-EOT_ID = 50271              # <myPT_eot>
+# Dynamic token ID lookup -- never hardcode IDs!
+from core.special_tokens import get_special_token_ids
+_IDS = get_special_token_ids()
+ASSISTANT_OPEN_ID = _IDS["myPT_assistant_open"]
+ASSISTANT_CLOSE_ID = _IDS["myPT_assistant_close"]
+EOT_ID = _IDS["myPT_eot"]
 
 
 def load_dataset(dataset_dir: str, split: str = 'train'):

@@ -1,0 +1,42 @@
+{
+  "name": "Phase 2: Operators",
+  "description": "Abstract operator learning (COPY, UPCASE, TRANSLATE, etc.) with contrastive templates and packing. Generalizes operators to unseen payloads.",
+
+  "batch_size": 16,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.08,
+  "bias": false,
+  "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
+
+  "learning_rate": 3e-5,
+  "max_iters": 1200,
+  "eval_interval": 100,
+  "warmup_iters": 120,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+
+  "use_loss_mask": true,
+
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 7778,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+
+  "weight_decay": 0.05,
+
+  "eval_sets": {
+    "phase1_format": "data/sft_phase1_format_lock"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase2_operators.jsonl"
+}

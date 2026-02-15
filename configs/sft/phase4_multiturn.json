@@ -1,0 +1,45 @@
+{
+  "name": "Phase 4: Multi-turn Boundaries",
+  "description": "Multi-turn conversation training. Teaches correct turn boundaries, context tracking across turns, and conversation coherence.",
+
+  "batch_size": 8,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.10,
+  "bias": false,
+  "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
+
+  "learning_rate": 2.5e-5,
+  "max_iters": 3000,
+  "eval_interval": 300,
+  "save_every": 1000,
+  "warmup_iters": 100,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+
+  "use_loss_mask": true,
+
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 4401,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+
+  "weight_decay": 0.05,
+
+  "eval_sets": {
+    "phase1_format": "data/sft_phase1_format_lock",
+    "phase2_operators": "data/sft_phase2_operators",
+    "phase3_chat": "data/sft_phase3_chat"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase4_multiturn.jsonl"
+}

@@ -7,8 +7,13 @@
   "n_embd": 1280,
   "n_head": 20,
   "n_layer": 32,
-  "dropout": 0.05,
+  "dropout": 0.08,
   "bias": false,
+  "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
   "learning_rate": 2e-5,
   "use_loss_mask": true
 }

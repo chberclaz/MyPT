@@ -60,6 +60,13 @@ class GPTConfig:
     norm_type: str = "layernorm"       # "layernorm" or "rmsnorm"
     rope_theta: float = 10000.0        # RoPE base frequency (only used when pos_encoding="rope")
     
+    # NEFTune: Noisy Embedding Fine-Tuning (arXiv:2310.05914)
+    # Adds uniform noise to token embeddings during training for regularization.
+    # Dramatically improves instruction-following quality (10-115% on AlpacaEval).
+    # Set to 0.0 to disable. Recommended: 5-15 for SFT, 5 for format lock.
+    # Only active during training (model.training=True); inference is unaffected.
+    neftune_alpha: float = 0.0
+    
     # Episode-indexed SFT data loading options
     # dataset_mode: 'token_stream' (default, random windows) or 'sft_episode' (episode-indexed)
     # Note: dataset_mode is auto-detected from dataset format, these are fallback/override options
@@ -676,6 +683,13 @@ class GPT(nn.Module):
             else:
                 pos_emb = self.position_embedding_table(position_ids.squeeze(0))  # (T, C)
             x = tok_emb + pos_emb
+
+        # NEFTune: add uniform noise to embeddings during training (arXiv:2310.05914)
+        neftune_alpha = getattr(self.config, 'neftune_alpha', 0.0)
+        if self.training and neftune_alpha > 0:
+            dims = torch.tensor(T * x.shape[2], dtype=x.dtype, device=device)
+            mag = neftune_alpha / torch.sqrt(dims)
+            x = x + torch.zeros_like(x).uniform_(-mag, mag)
 
         # Build segment-isolated attention mask if segment_ids provided
         attn_mask = None

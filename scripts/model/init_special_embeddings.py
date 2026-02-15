@@ -2,9 +2,12 @@
 """
 Initialize special token embeddings from meaningful tokens.
 
-Special tokens (50257-50271) start with random embeddings because they were
-never used during pre-training or domain adaptation. This script initializes
-them from semantically related existing tokens.
+Special tokens start with random embeddings because they were never used
+during pre-training. This script initializes them from semantically related
+existing tokens.
+
+Token IDs are resolved dynamically from core/special_tokens.py -- never
+hardcoded.
 
 Usage:
     python scripts/init_special_embeddings.py --model domain_v5 --output domain_v5_sft_ready
@@ -19,57 +22,53 @@ import shutil
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.model import GPT
+from core.special_tokens import (
+    SPECIAL_TOKEN_STRINGS, get_special_token_ids, BASE_VOCAB_SIZE,
+)
 
+# Dynamic token ID lookup
+_IDS = get_special_token_ids()
+_N_SPECIAL = len(SPECIAL_TOKEN_STRINGS)
 
-# Map special tokens to meaningful source tokens
-# We use tokens that appear in similar contexts to bootstrap the embeddings
+# TOKEN_NAMES: id -> string (built dynamically from the canonical source)
+TOKEN_NAMES = {tid: SPECIAL_TOKEN_STRINGS[name]
+               for name, tid in _IDS.items()}
+
+# Map special tokens to meaningful source tokens (for embedding initialization).
+# We use tokens that appear in similar contexts to bootstrap the embeddings.
 #
 # IMPORTANT: Only initialize tokens that appear in Phase 3a training data!
 # Unused tokens should keep their random embeddings so the model doesn't generate them.
 
 # Phase 3a tokens (conversational, no tools):
 INIT_SOURCES_PHASE3A = {
-    50257: ["system", ":", "<"],           # <myPT_system>
-    50258: ["system", ">", "/"],           # </myPT_system>  
-    50259: ["user", ":", "<"],             # <myPT_user>
-    50260: ["user", ">", "/"],             # </myPT_user>
-    50263: ["assistant", ":", "<"],        # <myPT_assistant>
-    50264: ["assistant", ">", "/"],        # </myPT_assistant>
-    50271: ["end", ".", "\n"],             # <myPT_eot>
+    _IDS["myPT_system_open"]:    ["system", ":", "<"],
+    _IDS["myPT_system_close"]:   ["system", ">", "/"],
+    _IDS["myPT_user_open"]:      ["user", ":", "<"],
+    _IDS["myPT_user_close"]:     ["user", ">", "/"],
+    _IDS["myPT_assistant_open"]: ["assistant", ":", "<"],
+    _IDS["myPT_assistant_close"]:["assistant", ">", "/"],
+    _IDS["myPT_eot"]:            ["end", ".", "\n"],
 }
 
 # Phase 3b tokens (agentic with tools) - add these later:
 INIT_SOURCES_PHASE3B = {
-    50261: ["context", ":", "<"],          # <myPT_user_context>
-    50262: ["context", ">", "/"],          # </myPT_user_context>
-    50265: ["tool", "call", "<"],          # <myPT_toolcall>
-    50266: ["tool", "call", ">"],          # </myPT_toolcall>
-    50267: ["result", ":", "<"],           # <myPT_toolresult>
-    50268: ["result", ">", "/"],           # </myPT_toolresult>
-    50269: ["think", ":", "<"],            # <myPT_thinking>
-    50270: ["think", ">", "/"],            # </myPT_thinking>
+    _IDS["myPT_user_context_open"]:      ["context", ":", "<"],
+    _IDS["myPT_user_context_close"]:     ["context", ">", "/"],
+    _IDS["myPT_assistant_context_open"]: ["context", "assistant", "<"],
+    _IDS["myPT_assistant_context_close"]:["context", "assistant", ">"],
+    _IDS["myPT_toolcall_open"]:          ["tool", "call", "<"],
+    _IDS["myPT_toolcall_close"]:         ["tool", "call", ">"],
+    _IDS["myPT_toolresult_open"]:        ["result", ":", "<"],
+    _IDS["myPT_toolresult_close"]:       ["result", ">", "/"],
+    _IDS["myPT_think_open"]:             ["think", ":", "<"],
+    _IDS["myPT_think_close"]:            ["think", ">", "/"],
+    _IDS["myPT_cite_open"]:              ["cite", "source", "<"],
+    _IDS["myPT_cite_close"]:             ["cite", "source", ">"],
 }
 
 # Default: only Phase 3a tokens
 INIT_SOURCES = INIT_SOURCES_PHASE3A
-
-TOKEN_NAMES = {
-    50257: "<myPT_system>",
-    50258: "</myPT_system>",
-    50259: "<myPT_user>",
-    50260: "</myPT_user>",
-    50261: "<myPT_user_context>",
-    50262: "</myPT_user_context>",
-    50263: "<myPT_assistant>",
-    50264: "</myPT_assistant>",
-    50265: "<myPT_toolcall>",
-    50266: "</myPT_toolcall>",
-    50267: "<myPT_toolresult>",
-    50268: "</myPT_toolresult>",
-    50269: "<myPT_thinking>",
-    50270: "</myPT_thinking>",
-    50271: "<myPT_eot>",
-}
 
 
 def main():
@@ -112,7 +111,7 @@ def main():
     
     # Store original norms for comparison
     orig_norms = {}
-    for tid in range(50257, 50272):
+    for tid in range(BASE_VOCAB_SIZE, BASE_VOCAB_SIZE + _N_SPECIAL):
         if tid < emb.shape[0]:
             orig_norms[tid] = torch.norm(emb[tid]).item()
     
@@ -131,7 +130,7 @@ def main():
             try:
                 encoded = tokenizer.encode(text)
                 for enc_id in encoded:
-                    if enc_id < 50257:  # Only use regular tokens
+                    if enc_id < BASE_VOCAB_SIZE:  # Only use regular tokens
                         source_embeds.append(emb[enc_id].clone())
                         source_ids.append(enc_id)
             except:
@@ -195,7 +194,7 @@ def main():
     print("Verification - comparing original vs initialized embeddings:")
     print("=" * 70)
     
-    for tid in range(50257, 50272):
+    for tid in range(BASE_VOCAB_SIZE, BASE_VOCAB_SIZE + _N_SPECIAL):
         if tid < emb.shape[0]:
             old_norm = orig_norms.get(tid, 0)
             new_norm = torch.norm(emb[tid]).item()

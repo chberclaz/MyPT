@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.model import GPT, GPTConfig
 from core.episode_data_loader import GPTEpisodeDataLoader
-from core.special_tokens import SPECIAL_TOKEN_STRINGS
+from core.special_tokens import SPECIAL_TOKEN_STRINGS, BASE_VOCAB_SIZE
 
 
 def main():
@@ -211,7 +211,7 @@ def main():
         print(f"\n    === SPECIAL TOKEN POSITIONS ===")
         for i, tok in enumerate(ep_tokens[:200]):  # First 200 tokens
             tok = int(tok)
-            if tok >= 50257:  # Special token range
+            if tok >= BASE_VOCAB_SIZE:  # Special token range
                 tok_str = tokenizer.decode([tok])
                 m = ep_mask[i] if ep_mask is not None else "N/A"
                 print(f"    Position {i}: token={tok} '{tok_str}' mask={m}")

@@ -1,6 +1,6 @@
 {
-  "name": "GPT-750M-Phase3a-Operator-Contrastive",
-  "description": "Operator learning with 5x payload repetition (contrastive templates) + packing. No layer freezing - testing data change in isolation.",
+  "name": "GPT-750M-Phase3a-Operator-Packed",
+  "description": "Operator learning with packed sequences (100k episodes, 37% mask ratio, 57x efficiency). Layer freezing to preserve pre-trained induction heads and prevent memorization.",
   
   "batch_size": 16,
   "block_size": 1024,
@@ -8,9 +8,13 @@
   "n_embd": 1280,
   "n_head": 20,
   "n_layer": 32,
-  "dropout": 0.05,
+  "dropout": 0.08,
   "bias": false,
   "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
   
   "learning_rate": 3e-5,
   "max_iters": 1200,
@@ -21,7 +25,7 @@
   
   "use_loss_mask": true,
   
-  "freeze_layers": 0,
+  "freeze_layers": 28,
   "freeze_embeddings": false,
   
   "batch_sampling_mode": "epoch",
@@ -35,5 +39,5 @@
   
   "eval_sets": null,
   "eval_seed": 1337,
-  "log_file": "logs/train/phase3a_operator_contrastive.jsonl"
+  "log_file": "logs/train/phase3a_operator_packed.jsonl"
 }

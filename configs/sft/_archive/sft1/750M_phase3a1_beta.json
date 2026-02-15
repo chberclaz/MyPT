@@ -1,6 +1,6 @@
 {
-  "name": "GPT-750M-Phase3a-Operator",
-  "description": "Operator learning test: COPY, WRAP, EXTRACT with unique payloads. Tests abstract operator generalization.",
+  "name": "GPT-750M-Phase3a1-Beta",
+  "description": "Phase 3a-1β: Echo expansion. Builds on alpha with diverse echo templates. ~2000-3000 examples.",
   
   "batch_size": 16,
   "block_size": 512,
@@ -8,12 +8,16 @@
   "n_embd": 1280,
   "n_head": 20,
   "n_layer": 32,
-  "dropout": 0.05,
+  "dropout": 0.10,
   "bias": false,
   "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
   
   "learning_rate": 5e-5,
-  "max_iters": 1700,
+  "max_iters": 2500,
   "eval_interval": 100,
   "warmup_iters": 100,
   "use_amp": true,
@@ -24,7 +28,7 @@
   "batch_sampling_mode": "epoch",
   "pad_token_id": null,
   "episode_min_tokens": 10,
-  "epoch_seed": 7777,
+  "epoch_seed": 4502,
   "epoch_shuffle": true,
   "epoch_drop_last": true,
   
@@ -32,5 +36,5 @@
   
   "eval_sets": null,
   "eval_seed": 1337,
-  "log_file": "logs/train/phase3a_operator.jsonl"
+  "log_file": "logs/train/phase3a1_beta.jsonl"
 }

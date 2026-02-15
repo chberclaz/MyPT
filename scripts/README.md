@@ -22,25 +22,31 @@ scripts/
 │   └── prepare_weighted_dataset.py
 │
 ├── sft/                        # SFT dataset generation, formatting, validation
-│   ├── analyze_episode_diversity.py
-│   ├── augment_episodes_paraphrase.py
-│   ├── deduplicate_by_user_message.py
-│   ├── deduplicate_episodes.py
-│   ├── diversify_user_messages.py
-│   ├── generate_agent_sft.py
-│   ├── generate_echo_dataset.py
-│   ├── generate_format_lock_dataset.py
-│   ├── generate_operator_dataset.py
-│   ├── generate_run2_minimal_qa.py
-│   ├── generate_synthetic_sft.py
-│   ├── inspect_sft_dataset.py
-│   ├── mix_sft_jsonl.py
-│   ├── prepare_chat_sft.py
-│   ├── prepare_tool_sft.py
-│   ├── validate_sft_dataset.py
-│   ├── validate_sft_episode_masks.py
-│   ├── verify_loss_mask_direction.py
-│   └── verify_mask_alignment.py
+│   ├── convert_hf_dataset.py          # NEW: Universal HuggingFace SFT dataset converter
+│   ├── prepare_phase1_format_lock.py  # NEW: Automated Phase 1 pipeline (generate+mix+tokenize)
+│   ├── generate_format_lock_dataset.py  # Phase 1 format lock Q&A (EN+DE)
+│   ├── generate_echo_dataset.py         # Phase 1 echo/repeat instructions
+│   ├── generate_operator_dataset.py     # Phase 2 COPY/WRAP/EXTRACT operators
+│   ├── generate_rag_chat_sft.py          # NEW: Phase 3 RAG chat episodes (user_context+think+cite)
+│   ├── generate_multiturn_sft.py        # NEW: Phase 4 multi-turn conversations
+│   ├── generate_agent_sft.py            # Phase 5 tool-calling episodes (EN+DE, think+cite, NO_TOOL)
+│   ├── generate_sft_tool_episodes.py    # NEW: Phase 6 multi-step agentic tool chains
+│   ├── mix_sft_jsonl.py                 # Mix JSONL files with sampling ratios
+│   ├── prepare_chat_sft.py              # Tokenize chat JSONL (Phase 1-4)
+│   ├── prepare_tool_sft.py              # Tokenize tool JSONL (Phase 5-6)
+│   ├── inspect_sft_dataset.py           # Inspect tokenized dataset
+│   ├── validate_sft_dataset.py          # Validate dataset integrity
+│   ├── validate_sft_episode_masks.py    # Validate loss masks
+│   ├── verify_loss_mask_direction.py    # Verify mask direction
+│   ├── verify_mask_alignment.py         # Token-level mask alignment
+│   ├── augment_episodes_paraphrase.py   # Paraphrase augmentation
+│   ├── diversify_user_messages.py       # User message variation
+│   ├── deduplicate_episodes.py          # Episode deduplication
+│   ├── deduplicate_by_user_message.py   # Deduplicate by user text
+│   ├── analyze_episode_diversity.py     # Diversity analysis
+│   └── archive/                         # Obsolete scripts
+│       ├── generate_run2_minimal_qa.py  # (legacy) Superseded by Phase 1 format lock
+│       └── generate_synthetic_sft.py    # (legacy) Requires external API, not offline
 │
 ├── eval/                       # Evaluation and benchmarking
 │   ├── eval_operator.py
@@ -92,10 +98,19 @@ python scripts/data_prep/mix_tokenized_datasets.py --base_dir data/base --replay
 
 ### SFT Pipeline
 ```bash
+# Phase 1 (automated: generate + mix + tokenize)
+python scripts/sft/prepare_phase1_format_lock.py
+
+# Convert HuggingFace datasets to myPT format
+python scripts/sft/convert_hf_dataset.py --dataset OpenAssistant/oasst2 --output data/sft_hf/oasst2.jsonl
+
+# Manual: tokenize, inspect, validate
 python scripts/sft/prepare_chat_sft.py --input data/episodes.jsonl --output_dir data/sft_ready
 python scripts/sft/inspect_sft_dataset.py --dataset_dir data/sft_ready --show_samples 3
 python scripts/sft/validate_sft_dataset.py --dataset data/sft_ready
 ```
+
+**Full SFT documentation:** See `docs/sft/SFT_PIPELINE_GUIDE.md`
 
 ### Model Tools
 ```bash

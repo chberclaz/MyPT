@@ -1,6 +1,6 @@
 {
-  "name": "GPT-750M-Phase3a1-Format-Lock",
-  "description": "Phase 3a-1: Format locking. Teaches model to respect chat tags and stop at </myPT_assistant>. Ultra-short responses only.",
+  "name": "GPT-750M-Phase3a1-Alpha",
+  "description": "Phase 3a-1α: Core format lock. Ultra-focused ~1000 examples, moderate repetition. Teaches chat structure and basic copy.",
   
   "batch_size": 16,
   "block_size": 512,
@@ -8,14 +8,18 @@
   "n_embd": 1280,
   "n_head": 20,
   "n_layer": 32,
-  "dropout": 0.05,
+  "dropout": 0.10,
   "bias": false,
   "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
   
   "learning_rate": 7e-5,
-  "max_iters": 2000,
-  "eval_interval": 100,
-  "warmup_iters": 100,
+  "max_iters": 600,
+  "eval_interval": 50,
+  "warmup_iters": 50,
   "use_amp": true,
   "amp_dtype": "bf16",
   
@@ -32,5 +36,5 @@
   
   "eval_sets": null,
   "eval_seed": 1337,
-  "log_file": "logs/train/phase3a1_format_lock.jsonl"
+  "log_file": "logs/train/phase3a1_alpha.jsonl"
 }

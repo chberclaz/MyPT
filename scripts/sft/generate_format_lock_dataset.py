@@ -991,43 +991,287 @@ def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> Li
     # GERMAN CONTENT - Basic German Q&A
     # ==========================================================================
     
-    GERMAN_BASIC = [
-        ("Sag Hallo.", "Hallo."),
-        ("Sag Ja.", "Ja."),
-        ("Sag Nein.", "Nein."),
-        ("Sag Danke.", "Danke."),
-        ("Sag Bitte.", "Bitte."),
-        ("Sag OK.", "OK."),
+    # ==========================================================================
+    # GERMAN SAY TEMPLATES - Combinatorial (mirrors English SAY section)
+    # ==========================================================================
+    
+    GERMAN_SAY_TEMPLATES = [
+        "Sag {word}.",
+        "Sage {word}.",
+        "Antworte {word}.",
+        "Antworte mit {word}.",
+        "Gib aus: {word}.",
+        "Nur ein Wort: {word}.",
+        "Kurz: {word}.",
+    ]
+    
+    GERMAN_SAY_WORDS = [
+        "Hallo", "hallo", "HALLO", "Tschüss", "tschüss",
+        "Ja", "ja", "JA", "Nein", "nein", "NEIN",
+        "OK", "ok", "Ok", "Danke", "danke", "DANKE",
+        "Bitte", "bitte", "Gut", "gut", "GUT",
+        "Fertig", "fertig", "Bereit", "bereit",
+        "Richtig", "richtig", "Falsch", "falsch",
+        "Fehler", "Erfolg", "Wahr", "Stopp", "Start",
+        "Weiter", "Pause", "Hilfe", "Test", "Offen",
+        "Aktiv", "Sicher", "Klar", "Genau", "Stimmt",
+    ]
+    
+    for template in GERMAN_SAY_TEMPLATES:
+        for word in GERMAN_SAY_WORDS:
+            q = template.format(word=word)
+            a = f"{word}."
+            pairs.append((q, a))
+    
+    # ==========================================================================
+    # GERMAN CAPITALS - Expanded with templates
+    # ==========================================================================
+    
+    GERMAN_CAPITALS = {
+        "Deutschland": "Berlin", "Frankreich": "Paris", "Italien": "Rom",
+        "Spanien": "Madrid", "England": "London", "Japan": "Tokio",
+        "China": "Peking", "Russland": "Moskau", "Brasilien": "Brasília",
+        "Australien": "Canberra", "Kanada": "Ottawa", "Indien": "Neu-Delhi",
+        "Ägypten": "Kairo", "Polen": "Warschau", "Niederlande": "Amsterdam",
+        "Belgien": "Brüssel", "Österreich": "Wien", "Schweiz": "Bern",
+        "Schweden": "Stockholm", "Norwegen": "Oslo", "Dänemark": "Kopenhagen",
+        "Finnland": "Helsinki", "Griechenland": "Athen", "Portugal": "Lissabon",
+        "Irland": "Dublin", "Türkei": "Ankara", "Südkorea": "Seoul",
+        "Argentinien": "Buenos Aires", "Mexiko": "Mexiko-Stadt",
+    }
+    
+    GERMAN_CAPITAL_TEMPLATES = [
+        "Hauptstadt von {country}?",
+        "Was ist die Hauptstadt von {country}?",
+        "{country} Hauptstadt?",
+    ]
+    
+    for country, capital in GERMAN_CAPITALS.items():
+        for template in GERMAN_CAPITAL_TEMPLATES:
+            pairs.append((template.format(country=country), f"{capital}."))
+    
+    # ==========================================================================
+    # GERMAN COLORS - Templates
+    # ==========================================================================
+    
+    GERMAN_COLORS = [
+        "rot", "Rot", "ROT", "blau", "Blau", "BLAU",
+        "grün", "Grün", "gelb", "Gelb",
+        "schwarz", "Schwarz", "weiß", "Weiß",
+        "orange", "Orange", "lila", "Lila",
+        "braun", "Braun", "grau", "Grau",
+        "rosa", "Rosa", "gold", "Gold",
+    ]
+    
+    GERMAN_COLOR_TEMPLATES = [
+        "Sag {color}.", "Farbe: {color}.", "Antworte mit {color}.",
+    ]
+    
+    for template in GERMAN_COLOR_TEMPLATES:
+        for color in GERMAN_COLORS:
+            pairs.append((template.format(color=color), f"{color}."))
+    
+    # ==========================================================================
+    # GERMAN DAYS & MONTHS
+    # ==========================================================================
+    
+    GERMAN_DAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+    GERMAN_DAY_TEMPLATES = ["Sag {day}.", "Welcher Tag: {day}?", "Tag: {day}."]
+    
+    for template in GERMAN_DAY_TEMPLATES:
+        for day in GERMAN_DAYS:
+            pairs.append((template.format(day=day), f"{day}."))
+    
+    for i, day in enumerate(GERMAN_DAYS):
+        pairs.append((f"Welcher Tag kommt nach {GERMAN_DAYS[i-1]}?", f"{day}."))
+        pairs.append((f"Tag Nummer {i+1}?", f"{day}."))
+    
+    GERMAN_MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+                     "Juli", "August", "September", "Oktober", "November", "Dezember"]
+    
+    for i, month in enumerate(GERMAN_MONTHS):
+        pairs.append((f"Sag {month}.", f"{month}."))
+        pairs.append((f"Monat Nummer {i+1}?", f"{month}."))
+        pairs.append((f"Monat nach {GERMAN_MONTHS[i-1]}?", f"{month}."))
+    
+    # ==========================================================================
+    # GERMAN YES/NO FACTS - Expanded
+    # ==========================================================================
+    
+    GERMAN_YES_FACTS = [
+        "Ist Wasser nass?", "Ist der Himmel blau?", "Ist Gras grün?",
+        "Ist 2+2=4?", "Ist die Erde rund?", "Ist Python eine Sprache?",
+        "Ist 10 > 5?", "Ist Montag ein Tag?", "Ist 1 ungerade?",
+        "Ist Rot eine Farbe?", "Ist Gold ein Metall?", "Ist Eis kalt?",
+        "Ist Feuer heiß?", "Ist die Sonne ein Stern?", "Ist 100 > 50?",
+        "Ist Dezember ein Monat?", "Ist Sonntag ein Tag?", "Ist Zucker süß?",
+        "Ist Schnee weiß?", "Ist die Nacht dunkel?", "Ist Sommer warm?",
+        "Ist 7 eine Primzahl?", "Ist 12 durch 3 teilbar?",
+    ]
+    
+    GERMAN_NO_FACTS = [
+        "Ist Feuer kalt?", "Ist Eis heiß?", "Ist 2+2=5?",
+        "Ist die Erde flach?", "Ist 3 > 7?", "Ist die Nacht hell?",
+        "Ist Wasser trocken?", "Ist der Mond ein Stern?", "Ist 1 gerade?",
+        "Ist Schnee schwarz?", "Ist Sommer kalt?", "Ist Winter heiß?",
+        "Ist 10 < 5?", "Ist 100 < 50?", "Ist Glas undurchsichtig?",
+        "Ist Zucker salzig?", "Ist 9 eine Primzahl?",
+    ]
+    
+    for fact in GERMAN_YES_FACTS:
+        pairs.append((fact, "Ja."))
+    for fact in GERMAN_NO_FACTS:
+        pairs.append((fact, "Nein."))
+    
+    # ==========================================================================
+    # GERMAN OPPOSITES - Expanded
+    # ==========================================================================
+    
+    GERMAN_OPPOSITES = {
+        "heiß": "Kalt", "groß": "Klein", "schnell": "Langsam",
+        "hell": "Dunkel", "gut": "Schlecht", "glücklich": "Traurig",
+        "alt": "Jung", "reich": "Arm", "leicht": "Schwer",
+        "offen": "Geschlossen", "voll": "Leer", "nass": "Trocken",
+        "laut": "Leise", "stark": "Schwach", "lang": "Kurz",
+        "breit": "Schmal", "dick": "Dünn", "sauber": "Schmutzig",
+        "neu": "Alt", "früh": "Spät", "hoch": "Niedrig",
+        "nah": "Fern", "tief": "Flach", "süß": "Sauer",
+    }
+    
+    GERMAN_OPPOSITE_TEMPLATES = [
+        "Gegenteil von {word}?",
+        "Was ist das Gegenteil von {word}?",
+    ]
+    
+    for word, opposite in GERMAN_OPPOSITES.items():
+        for template in GERMAN_OPPOSITE_TEMPLATES:
+            pairs.append((template.format(word=word), f"{opposite}."))
+    
+    # ==========================================================================
+    # GERMAN GREETINGS & STATUS - Expanded
+    # ==========================================================================
+    
+    GERMAN_GREETINGS = [
         ("Guten Morgen!", "Guten Morgen!"),
         ("Guten Tag!", "Guten Tag!"),
         ("Guten Abend!", "Guten Abend!"),
         ("Gute Nacht!", "Gute Nacht!"),
+        ("Hallo!", "Hallo!"),
+        ("Servus!", "Servus!"),
+        ("Grüß Gott!", "Grüß Gott!"),
+        ("Moin!", "Moin!"),
         ("Wie geht's?", "Gut."),
+        ("Wie geht es Ihnen?", "Gut, danke."),
+        ("Willkommen!", "Willkommen!"),
+        ("Tschüss!", "Tschüss!"),
+        ("Auf Wiedersehen!", "Auf Wiedersehen!"),
+    ]
+    pairs.extend(GERMAN_GREETINGS)
+    
+    GERMAN_STATUS = [
+        ("Status?", "OK."),
         ("Alles klar?", "Ja."),
+        ("Alles gut?", "Ja."),
         ("Verstanden?", "Verstanden."),
         ("Fertig?", "Fertig."),
         ("Bereit?", "Bereit."),
-        ("Hauptstadt von Deutschland?", "Berlin."),
-        ("Hauptstadt von Frankreich?", "Paris."),
-        ("Hauptstadt von Italien?", "Rom."),
-        ("Hauptstadt von Spanien?", "Madrid."),
-        ("Was ist 1 + 1?", "2."),
-        ("Was ist 2 + 2?", "4."),
-        ("Was ist 5 + 5?", "10."),
-        ("Was ist 10 - 5?", "5."),
-        ("Ist Wasser nass?", "Ja."),
-        ("Ist Feuer kalt?", "Nein."),
-        ("Ist der Himmel blau?", "Ja."),
-        ("Gegenteil von heiß?", "Kalt."),
-        ("Gegenteil von groß?", "Klein."),
-        ("Gegenteil von schnell?", "Langsam."),
-        ("Welche Farbe: rot?", "Rot."),
-        ("Welche Farbe: blau?", "Blau."),
-        ("Welche Farbe: grün?", "Grün."),
-        ("Hund Geräusch?", "Bellen."),
-        ("Katze Geräusch?", "Miau."),
+        ("Bestätigt?", "Bestätigt."),
+        ("Wer bist du?", "MyPT."),
+        ("Wie heißt du?", "MyPT."),
+        ("Bist du da?", "Ja."),
+        ("Funktioniert es?", "Ja."),
+        ("Kannst du helfen?", "Ja."),
+        ("Online?", "Ja."),
     ]
-    pairs.extend(GERMAN_BASIC)
+    pairs.extend(GERMAN_STATUS)
+    
+    # ==========================================================================
+    # GERMAN NUMBERS - Templates
+    # ==========================================================================
+    
+    for num in range(0, 21):
+        pairs.append((f"Sag {num}.", f"{num}."))
+        pairs.append((f"Zahl: {num}.", f"{num}."))
+        pairs.append((f"Antworte mit {num}.", f"{num}."))
+    
+    # ==========================================================================
+    # GERMAN MATH - Compact set
+    # ==========================================================================
+    
+    GERMAN_ADD_TEMPLATES = [("Was ist {a} + {b}?", "{r}."), ("{a} plus {b}?", "{r}.")]
+    GERMAN_SUB_TEMPLATES = [("Was ist {a} - {b}?", "{r}."), ("{a} minus {b}?", "{r}.")]
+    GERMAN_MUL_TEMPLATES = [("Was ist {a} × {b}?", "{r}."), ("{a} mal {b}?", "{r}.")]
+    
+    for a in range(0, 21):
+        for b in range(0, 11):
+            for tq, ta in GERMAN_ADD_TEMPLATES:
+                pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
+    
+    for a in range(1, 21):
+        for b in range(0, min(a+1, 11)):
+            for tq, ta in GERMAN_SUB_TEMPLATES:
+                pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
+    
+    for a in range(0, 13):
+        for b in range(0, 13):
+            for tq, ta in GERMAN_MUL_TEMPLATES:
+                pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
+    
+    # ==========================================================================
+    # GERMAN ANIMAL SOUNDS
+    # ==========================================================================
+    
+    GERMAN_ANIMAL_SOUNDS = {
+        "Hund": "Bellen", "Katze": "Miau", "Kuh": "Muh", "Schwein": "Oink",
+        "Ente": "Quak", "Vogel": "Zwitschern", "Löwe": "Brüllen",
+        "Schlange": "Zischen", "Biene": "Summen", "Wolf": "Heulen",
+        "Frosch": "Quaken", "Eule": "Huhu", "Pferd": "Wiehern",
+        "Schaf": "Mäh", "Hahn": "Kikeriki",
+    ]
+    
+    GERMAN_SOUND_TEMPLATES = [
+        "{animal} Geräusch?",
+        "Welches Geräusch macht ein {animal}?",
+    ]
+    
+    for animal, sound in GERMAN_ANIMAL_SOUNDS.items():
+        for template in GERMAN_SOUND_TEMPLATES:
+            pairs.append((template.format(animal=animal), f"{sound}."))
+    
+    # ==========================================================================
+    # GERMAN POLITE RESPONSES
+    # ==========================================================================
+    
+    GERMAN_POLITE = [
+        ("Danke.", "Gern geschehen."),
+        ("Danke schön.", "Bitte schön."),
+        ("Vielen Dank.", "Gern geschehen."),
+        ("Entschuldigung.", "Kein Problem."),
+        ("Bitte hilf mir.", "OK."),
+        ("Kannst du helfen?", "Ja."),
+        ("Bitte.", "OK."),
+    ]
+    pairs.extend(GERMAN_POLITE)
+    
+    # ==========================================================================
+    # GERMAN COMPARISONS
+    # ==========================================================================
+    
+    GERMAN_COMPARISONS = [
+        ("Größer: Ameise oder Elefant?", "Elefant."),
+        ("Schneller: Auto oder Fahrrad?", "Auto."),
+        ("Heißer: Sonne oder Eis?", "Sonne."),
+        ("Höher: Berg oder Hügel?", "Berg."),
+        ("Schwerer: Feder oder Stein?", "Stein."),
+        ("Länger: Jahr oder Tag?", "Jahr."),
+        ("Heller: Tag oder Nacht?", "Tag."),
+        ("Tiefer: Ozean oder See?", "Ozean."),
+        ("Größer: Wal oder Maus?", "Wal."),
+        ("Schneller: Licht oder Schall?", "Licht."),
+        ("Größer: Erde oder Mond?", "Erde."),
+        ("Härter: Diamant oder Glas?", "Diamant."),
+    ]
+    pairs.extend(GERMAN_COMPARISONS)
     
     return pairs
 
@@ -1035,8 +1279,18 @@ def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> Li
 def create_episode(question: str, answer: str, episode_id: int) -> dict:
     """Create a single episode in the expected format."""
     # Detect language from content
-    german_indicators = ["Sag ", "Guten ", "Gute ", "Hauptstadt von", "Was ist", "Ist ", 
-                         "Gegenteil von", "Welche Farbe", "Geräusch", "Verstanden", "Fertig", "Bereit"]
+    german_indicators = [
+        "Sag ", "Sage ", "Guten ", "Gute ", "Hauptstadt von", "Was ist", "Ist ",
+        "Gegenteil von", "Welche Farbe", "Geräusch", "Verstanden", "Fertig", "Bereit",
+        "Antworte ", "Gib aus:", "Nur ein Wort:", "Kurz:", "Welcher Tag",
+        "Tag Nummer", "Monat Nummer", "Monat nach", "Farbe:", "Zahl:",
+        "Größer:", "Schneller:", "Heißer:", "Höher:", "Schwerer:", "Länger:",
+        "Heller:", "Tiefer:", "Härter:", "Wie heißt", "Wer bist",
+        "Bist du", "Funktioniert", "Kannst du", "Bestätigt", "Alles klar",
+        "Alles gut", "Wie geht", "Willkommen", "Servus", "Grüß Gott", "Moin",
+        "Tschüss", "Auf Wiedersehen", "Entschuldigung", "Bitte hilf",
+        "Danke", "Vielen Dank", "Welches Geräusch", " plus ", " minus ", " mal ",
+    ]
     is_german = any(indicator in question for indicator in german_indicators)
     
     return {

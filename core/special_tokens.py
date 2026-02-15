@@ -100,3 +100,29 @@ SPECIAL_TOKEN_STRINGS = {
     # Control: end of turn separator
     "myPT_eot": "<myPT_eot>",
 }
+
+# ---------------------------------------------------------------------------
+# Canonical ID resolution
+# ---------------------------------------------------------------------------
+# IDs are assigned sequentially starting at BASE_VOCAB_SIZE, following the
+# insertion order of SPECIAL_TOKEN_STRINGS above.  This is the single source
+# of truth -- every script that needs a token ID MUST use get_special_token_ids()
+# instead of hardcoding numeric constants.  Adding or reordering tokens in the
+# dict will automatically propagate to all consumers.
+# ---------------------------------------------------------------------------
+
+BASE_VOCAB_SIZE = 50257  # GPT-2 base vocabulary size
+
+def get_special_token_ids() -> dict:
+    """Return the canonical name -> token-ID mapping.
+
+    Computed from the dict-insertion order of SPECIAL_TOKEN_STRINGS so it
+    stays in sync automatically when tokens are added, removed, or reordered.
+
+    Example::
+
+        ids = get_special_token_ids()
+        ASSISTANT_OPEN_ID = ids["myPT_assistant_open"]   # always correct
+    """
+    return {name: BASE_VOCAB_SIZE + i
+            for i, name in enumerate(SPECIAL_TOKEN_STRINGS)}

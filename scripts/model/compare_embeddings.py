@@ -17,6 +17,19 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.model import GPT
+from core.special_tokens import (
+    SPECIAL_TOKEN_STRINGS, get_special_token_ids, BASE_VOCAB_SIZE,
+)
+
+# Dynamic token ID lookup
+_IDS = get_special_token_ids()
+_N_SPECIAL = len(SPECIAL_TOKEN_STRINGS)
+_SPECIAL_START = BASE_VOCAB_SIZE
+_SPECIAL_END = BASE_VOCAB_SIZE + _N_SPECIAL
+
+# Token names: id -> string (built dynamically)
+_TOKEN_NAMES = {tid: SPECIAL_TOKEN_STRINGS[name]
+                for name, tid in _IDS.items()}
 
 
 def main():
@@ -47,28 +60,10 @@ def main():
     print(f"\nEmbedding shape: {emb_before.shape}")
     print(f"LM head shape: {lm_before.shape}")
     
-    # Compare special tokens (50257-50271)
-    special_start = 50257
-    special_end = 50272
-    
-    # Token names
-    token_names = {
-        50257: "<myPT_system>",
-        50258: "</myPT_system>",
-        50259: "<myPT_user>",
-        50260: "</myPT_user>",
-        50261: "<myPT_user_context>",
-        50262: "</myPT_user_context>",
-        50263: "<myPT_assistant>",
-        50264: "</myPT_assistant>",
-        50265: "<myPT_toolcall>",
-        50266: "</myPT_toolcall>",
-        50267: "<myPT_toolresult>",
-        50268: "</myPT_toolresult>",
-        50269: "<myPT_thinking>",
-        50270: "</myPT_thinking>",
-        50271: "<myPT_eot>",
-    }
+    # Compare special tokens (dynamic range)
+    special_start = _SPECIAL_START
+    special_end = _SPECIAL_END
+    token_names = _TOKEN_NAMES
     
     print("\n" + "=" * 70)
     print("INPUT EMBEDDINGS (token_embedding_table)")

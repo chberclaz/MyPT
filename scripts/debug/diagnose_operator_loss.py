@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.model import GPT, GPTConfig
 from core.episode_data_loader import GPTEpisodeDataLoader
+from core.special_tokens import BASE_VOCAB_SIZE
 from core.tokenizer import Tokenizer
 from core.checkpoint import CheckpointManager
 
@@ -309,7 +310,7 @@ def _show_episode_detail(tokenizer, x_seq, y_seq, m_seq, l_seq,
             in_assistant = False
         elif tok_id == eot_id:
             tok_type = "EOT"
-        elif tok_id >= 50257:
+        elif tok_id >= BASE_VOCAB_SIZE:
             tok_type = "SPECIAL"
         elif in_assistant:
             tok_type = "CONTENT"

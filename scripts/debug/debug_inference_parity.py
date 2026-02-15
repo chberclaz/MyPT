@@ -24,7 +24,7 @@ import torch
 from contextlib import nullcontext
 
 from core import load_model, GPT, Tokenizer
-from core.special_tokens import SPECIAL_TOKEN_STRINGS
+from core.special_tokens import SPECIAL_TOKEN_STRINGS, get_special_token_ids
 
 
 def print_header(title: str):
@@ -523,14 +523,14 @@ def stop_token_lookup_test(model: GPT, tokenizer: Tokenizer, verbose: bool = Fal
         print(f"      myPT_assistant_close: {expected_assistant_close}")
         print(f"      myPT_eot: {expected_eot}")
     
-    # Verify these match the known correct values
-    # (This would catch if token registration order changed)
-    if expected_assistant_close != 50264:
-        print_fail("assistant_close ID", f"Expected 50264, got {expected_assistant_close}")
+    # Verify tokenizer IDs match the canonical source of truth
+    canonical = get_special_token_ids()
+    if expected_assistant_close != canonical["myPT_assistant_close"]:
+        print_fail("assistant_close ID", f"Expected {canonical['myPT_assistant_close']}, got {expected_assistant_close}")
         return False
     
-    if expected_eot != 50271:
-        print_fail("eot ID", f"Expected 50271, got {expected_eot}")
+    if expected_eot != canonical["myPT_eot"]:
+        print_fail("eot ID", f"Expected {canonical['myPT_eot']}, got {expected_eot}")
         return False
     
     # Test that generation actually stops on these tokens

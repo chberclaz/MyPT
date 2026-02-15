@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Use canonical system prompt from core
 from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
+from core.special_tokens import BASE_VOCAB_SIZE
 SYSTEM_PROMPT = CONVERSATION_SYSTEM_PROMPT
 
 # =============================================================================
@@ -255,7 +256,7 @@ def generate_bpe_safe_gibberish(
     # Start with pre-defined safe words
     for word in BPE_SAFE_GIBBERISH_WORDS:
         tokens = tokenizer.encode(word)
-        if len(tokens) <= max_tokens and all(t < 50257 for t in tokens):
+        if len(tokens) <= max_tokens and all(t < BASE_VOCAB_SIZE for t in tokens):
             results.append(word)
             if len(results) >= count:
                 return results[:count]
@@ -303,7 +304,7 @@ def generate_bpe_safe_gibberish(
         # Check token count
         try:
             tokens = tokenizer.encode(word)
-            if len(tokens) <= max_tokens and all(t < 50257 for t in tokens):
+            if len(tokens) <= max_tokens and all(t < BASE_VOCAB_SIZE for t in tokens):
                 if word not in results:
                     results.append(word)
         except Exception:
