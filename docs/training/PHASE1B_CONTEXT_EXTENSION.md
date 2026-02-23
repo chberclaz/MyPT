@@ -66,10 +66,10 @@ With `scale=4.0`, position 4095 maps to effective position 1023.75 -- safely wit
 
 ### Config Additions
 
-| Field | Value | Effect |
-|:--|:--|:--|
-| `rope_scale` | 4.0 | Position Interpolation factor (new_context / old_context) |
-| `block_size` | 4096 | New context window |
+| Field        | Value | Effect                                                    |
+| :----------- | :---- | :-------------------------------------------------------- |
+| `rope_scale` | 4.0   | Position Interpolation factor (new_context / old_context) |
+| `block_size` | 4096  | New context window                                        |
 
 All other architecture parameters (n_embd, n_head, n_layer, etc.) remain identical to pre-training. No new parameters are introduced -- PI only changes how existing RoPE buffers are computed.
 
@@ -108,14 +108,14 @@ PI's primary job is adapting the RoPE frequencies to work at 4096 positions. Tha
 
 ### QA Source Detail (40% of dataset)
 
-| # | Source | Episodes | Est. Tokens | Role |
-|:--|:--|:--|:--|:--|
-| 1 | **HotpotQA (distractor)** | ~90K | ~108M | Long multi-passage, position-varied gold paragraphs |
-| 2 | **MS MARCO v2.1** | ~100K | ~100M | 10-passage search results, position-varied, real Bing queries |
-| 3 | **TriviaQA (evidence)** | ~130K | ~78M | Medium-long trivia grounded in Wikipedia |
-| 4 | **SQuAD v2** | ~130K | ~32M | Short extractive EN QA (incl. unanswerable) |
-| 5 | **MuSiQue** | ~20K | ~20M | Hard multi-hop EN (2-4 hops) |
-| 6 | **GermanQuAD** | ~6K | ~1.5M | Short extractive DE QA (reduced) |
+| #   | Source                    | Episodes | Est. Tokens | Role                                                          |
+| :-- | :------------------------ | :------- | :---------- | :------------------------------------------------------------ |
+| 1   | **HotpotQA (distractor)** | ~90K     | ~108M       | Long multi-passage, position-varied gold paragraphs           |
+| 2   | **MS MARCO v2.1**         | ~100K    | ~100M       | 10-passage search results, position-varied, real Bing queries |
+| 3   | **TriviaQA (evidence)**   | ~130K    | ~78M        | Medium-long trivia grounded in Wikipedia                      |
+| 4   | **SQuAD v2**              | ~130K    | ~32M        | Short extractive EN QA (incl. unanswerable)                   |
+| 5   | **MuSiQue**               | ~20K     | ~20M        | Hard multi-hop EN (2-4 hops)                                  |
+| 6   | **GermanQuAD**            | ~6K      | ~1.5M       | Short extractive DE QA (reduced)                              |
 
 ### General Text (60% of dataset)
 
@@ -128,12 +128,14 @@ PI's primary job is adapting the RoPE frequencies to work at 4096 positions. Tha
 **What it is:** 130K+ questions on Wikipedia paragraphs. Each question is paired with a single paragraph. ~80% answerable (answer is a span in the paragraph), ~20% unanswerable (paragraph does not contain the answer).
 
 **Why it's here:**
+
 - Provides the highest volume of clean, short passage → question → answer episodes
 - The unanswerable subset (~26K questions) teaches a critical RAG skill: recognizing when provided context does NOT contain the answer. Without this signal, the model learns to always extract something, even when nothing is relevant (a form of hallucination)
 - Short episodes (~150-300 tokens) pack efficiently into 4096 blocks, giving the model many training examples per step
 - English, high quality, widely benchmarked
 
 **Episode format:**
+
 ```
 Passage: In meteorology, precipitation is any product of the condensation
 of atmospheric water vapor that falls under gravity. The main forms of
@@ -144,6 +146,7 @@ Answer: gravity
 ```
 
 **Unanswerable format:**
+
 ```
 Passage: The Norman dynasty had a major political, cultural and military
 impact on medieval Europe and even the Near East...
@@ -157,12 +160,14 @@ Answer: The passage does not contain enough information to answer this question.
 **What it is:** 90K+ multi-hop questions requiring reasoning over exactly 2 Wikipedia paragraphs, presented alongside 8 distractor paragraphs (10 total). Each example has explicit `supporting_facts` annotations identifying which paragraphs and sentences are needed.
 
 **Why it's here:**
+
 - Provides the primary signal for **long-context attention training**. With 10 paragraphs per episode (~800-2000 tokens), these episodes actually exercise the extended context window
 - The distractor setting is critical: the model must learn to attend to the RIGHT paragraphs among irrelevant ones -- exactly the skill needed for RAG where retrieved passages vary in relevance
 - **Position control:** We shuffle distractor paragraphs randomly and place gold paragraphs in 4 uniform position buckets. This forces the model to find relevant content regardless of where it appears in the 4096-token window. Without this, the model would develop a "primacy/recency" bias (attend to beginning and end, ignore middle)
 - Multi-hop: some questions require combining facts from 2 different paragraphs, training cross-passage attention
 
 **Episode format (gold at end bucket):**
+
 ```
 [Distractor Title 1]
 Distractor paragraph text...
@@ -183,6 +188,7 @@ Answer: Brazil
 ```
 
 **Position bucket distribution:**
+
 - Bucket 0 (beginning, 0-25%): ~25% of episodes — gold paragraphs first
 - Bucket 1 (early-middle, 25-50%): ~25% — gold in first third of distractors
 - Bucket 2 (late-middle, 50-75%): ~25% — gold in second third
@@ -193,6 +199,7 @@ Answer: Brazil
 **What it is:** ~25K questions requiring 2-4 genuine reasoning hops across multiple documents. Created by composing single-hop questions to ensure each hop is necessary. Includes both answerable and unanswerable variants.
 
 **Why it's here:**
+
 - **Hardest retrieval signal** in the dataset. While HotpotQA mostly requires 2-hop reasoning, MuSiQue includes 3-hop and 4-hop chains where missing any step produces a wrong answer
 - Tests whether the model can maintain attention chains across multiple documents: Document A mentions entity X → Document B links X to Y → Document C answers about Y
 - Same position-control strategy as HotpotQA (4 uniform buckets) to prevent positional bias
@@ -206,6 +213,7 @@ At 750M parameters, there's a ceiling on multi-hop reasoning depth. Over-weighti
 **What it is:** ~13.7K German extractive QA questions over German Wikipedia paragraphs, following the SQuAD format but in German.
 
 **Why it's here:**
+
 - The pre-trained model was trained on 15% bilingual Wikipedia (EN+DE) and 7% Swiss German law text. German capability is a first-class feature
 - Without German data in this phase, the extended context would only be exercised on English text, and the model might lose some German positional patterns during PI adaptation
 - Uses German-language labels (`Frage:` / `Antwort:` instead of `Question:` / `Answer:`) to preserve the model's German language patterns
@@ -218,6 +226,7 @@ GermanQuAD has ~13.7K training examples. We use ~6K to maintain bilingual presen
 **What it is:** Microsoft's MS MARCO v2.1 dataset. Real Bing search queries paired with 10 web-retrieved passages per query. Each passage has a binary relevance label (`is_selected`). ~1M training examples; we cap at ~100K for balance.
 
 **Why it's here:**
+
 - **Closest match to production RAG:** Each example mirrors the actual retrieval pipeline -- a user query with multiple retrieved passages of varying relevance. This is exactly the skill the model needs for `toolresult`-based RAG in production
 - **10 passages per example** produce naturally long episodes (~1500-3000 tokens), filling 4096-token blocks far better than single-passage datasets
 - **Position control:** Same 4-bucket strategy as HotpotQA -- selected (relevant) passages are placed at beginning, early-middle, late-middle, or end among unselected passages. This trains position-invariant attention across the long context
@@ -225,6 +234,7 @@ GermanQuAD has ~13.7K training examples. We use ~6K to maintain bilingual presen
 - **Clean Parquet format** on HuggingFace -- no schema issues, reliable loading
 
 **Episode format (selected passage at late-middle bucket):**
+
 ```
 [Source 1]
 Passage text from unselected search result...
@@ -254,6 +264,7 @@ NQ requires a 45+ GB download, has a complex nested schema that fails with moder
 **What it is:** Trivia questions paired with Wikipedia evidence passages that contain the answer. ~130K training examples. Only grounded examples (answer appears in passage) are used.
 
 **Why it's here:**
+
 - Medium-length passages (~600 tokens average) fill the gap between short SQuAD episodes and long HotpotQA episodes
 - The grounding filter ensures 100% of examples are genuinely extractive (no hallucination signal)
 - Already proven effective in pre-training (used in the retrieval portion of the pre-training mix)
@@ -262,15 +273,15 @@ NQ requires a 45+ GB download, has a complex nested schema that fails with moder
 
 The six QA sources provide overlapping and complementary training signals:
 
-| Signal | SQuAD v2 | HotpotQA | MuSiQue | MS MARCO | TriviaQA | GermanQuAD |
-|:--|:--|:--|:--|:--|:--|:--|
-| Short-range extraction | **Strong** | Moderate | Moderate | **Strong** | **Strong** | **Strong** |
-| Long-range attention | Weak | **Strong** | **Strong** | **Strong** | Moderate | Weak |
-| Position invariance | N/A | **Strong** (4 buckets) | **Strong** (4 buckets) | **Strong** (4 buckets) | N/A | N/A |
-| Multi-hop reasoning | None | Moderate (2 hops) | **Strong** (2-4 hops) | None | None | None |
-| Multi-passage retrieval | None | **Strong** (10 passages) | Moderate | **Strong** (10 passages) | None | None |
-| Negative retrieval | **Strong** (20% unans.) | Weak | Moderate | **Strong** (20% no-ans.) | None | None |
-| Bilingual | None | None | None | None | None | **Strong** |
+| Signal                  | SQuAD v2                | HotpotQA                 | MuSiQue                | MS MARCO                 | TriviaQA   | GermanQuAD |
+| :---------------------- | :---------------------- | :----------------------- | :--------------------- | :----------------------- | :--------- | :--------- |
+| Short-range extraction  | **Strong**              | Moderate                 | Moderate               | **Strong**               | **Strong** | **Strong** |
+| Long-range attention    | Weak                    | **Strong**               | **Strong**             | **Strong**               | Moderate   | Weak       |
+| Position invariance     | N/A                     | **Strong** (4 buckets)   | **Strong** (4 buckets) | **Strong** (4 buckets)   | N/A        | N/A        |
+| Multi-hop reasoning     | None                    | Moderate (2 hops)        | **Strong** (2-4 hops)  | None                     | None       | None       |
+| Multi-passage retrieval | None                    | **Strong** (10 passages) | Moderate               | **Strong** (10 passages) | None       | None       |
+| Negative retrieval      | **Strong** (20% unans.) | Weak                     | Moderate               | **Strong** (20% no-ans.) | None       | None       |
+| Bilingual               | None                    | None                     | None                   | None                     | None       | **Strong** |
 
 **Combined coverage:** Every critical retrieval skill is covered by at least 2 sources. MS MARCO adds the strongest multi-passage retrieval signal (10 real search results per query with position control), complementing HotpotQA's multi-hop focus. TriviaQA fills the medium-length gap.
 
@@ -280,23 +291,23 @@ The six QA sources provide overlapping and complementary training signals:
 
 ### Hyperparameters
 
-| Parameter | Value | Rationale |
-|:--|:--|:--|
-| `learning_rate` | 3e-5 | 5x lower than pre-training (1.5e-4). PI fine-tuning is a small adaptation, not training from scratch. Too high would destroy pre-trained knowledge. |
-| `warmup_iters` | 400 | ~3% of training. Short warmup sufficient for fine-tuning. |
-| `max_iters` | 12,000 | Optimizer steps. ~800M tokens total. Enough for ~1 full epoch of the combined QA+general dataset. |
-| `batch_size` | 4 | Micro-batch of 4 sequences at 4096 tokens = 16,384 tokens. Fits in VRAM with bf16. |
-| `grad_accum_steps` | 4 | Effective batch: 4 * 4 = 16 sequences = 65,536 tokens/step. |
-| `dropout` | 0.05 | Lower than pre-training (0.1). Fine-tuning benefits from less regularization -- the model has already learned features. |
-| `weight_decay` | 0.05 | Lower than pre-training (0.1). Same reasoning as dropout. |
-| `grad_clip` | 1.0 | Standard gradient clipping. |
-| `use_amp` | true (bf16) | Mixed precision for speed and memory. |
-| `eval_interval` | 500 | Every 500 steps = 24 evaluations over 12,000 steps. |
-| `use_loss_mask` | true | Mask=1 on all real tokens, mask=0 on block padding. Every content token trains the model. |
-| `batch_sampling_mode` | "epoch" | Deterministic epoch-based coverage. Each packed block seen exactly once per epoch. |
-| `pad_token_id` | 50256 | GPT-2 EOS used as padding in packed blocks. |
-| `rope_scale` | 4.0 | Position Interpolation factor: 4096 / 1024 = 4.0. |
-| `segment_position_reset` | false | Keep absolute positions 0..4095 across packed blocks (do NOT reset per episode). Critical for actually training on extended positions. |
+| Parameter                | Value       | Rationale                                                                                                                                           |
+| :----------------------- | :---------- | :-------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `learning_rate`          | 3e-5        | 5x lower than pre-training (1.5e-4). PI fine-tuning is a small adaptation, not training from scratch. Too high would destroy pre-trained knowledge. |
+| `warmup_iters`           | 400         | ~3% of training. Short warmup sufficient for fine-tuning.                                                                                           |
+| `max_iters`              | 12,000      | Optimizer steps. ~800M tokens total. Enough for ~1 full epoch of the combined QA+general dataset.                                                   |
+| `batch_size`             | 4           | Micro-batch of 4 sequences at 4096 tokens = 16,384 tokens. Fits in VRAM with bf16.                                                                  |
+| `grad_accum_steps`       | 4           | Effective batch: 4 \* 4 = 16 sequences = 65,536 tokens/step.                                                                                        |
+| `dropout`                | 0.05        | Lower than pre-training (0.1). Fine-tuning benefits from less regularization -- the model has already learned features.                             |
+| `weight_decay`           | 0.05        | Lower than pre-training (0.1). Same reasoning as dropout.                                                                                           |
+| `grad_clip`              | 1.0         | Standard gradient clipping.                                                                                                                         |
+| `use_amp`                | true (bf16) | Mixed precision for speed and memory.                                                                                                               |
+| `eval_interval`          | 500         | Every 500 steps = 24 evaluations over 12,000 steps.                                                                                                 |
+| `use_loss_mask`          | true        | Mask=1 on all real tokens, mask=0 on block padding. Every content token trains the model.                                                           |
+| `batch_sampling_mode`    | "epoch"     | Deterministic epoch-based coverage. Each packed block seen exactly once per epoch.                                                                  |
+| `pad_token_id`           | 50256       | GPT-2 EOS used as padding in packed blocks.                                                                                                         |
+| `rope_scale`             | 4.0         | Position Interpolation factor: 4096 / 1024 = 4.0.                                                                                                   |
+| `segment_position_reset` | false       | Keep absolute positions 0..4095 across packed blocks (do NOT reset per episode). Critical for actually training on extended positions.              |
 
 ### VRAM Estimation
 
@@ -347,7 +358,7 @@ python scripts/data_prep/prepare_context_extension.py \
     --general_target_tokens 480000000
 ```
 
-Tokenizes QA episodes, samples ~480M tokens of general text from pre-training shards (split at EOS document boundaries, short documents concatenated into ~4096-token mega-episodes), combines both, diversity-interleaves (short/medium/long round-robin), then greedy-packs into 4096-token blocks with padding masked out. Prints length distribution histograms for both QA and general episodes to verify long-context coverage:
+Tokenizes QA episodes, samples ~480M tokens of general text from pre-training shards (EOS-delimited mode if boundaries exist, continuous-stream fallback otherwise), combines both, diversity-interleaves (short/medium/long round-robin), then packs complete episodes into 4096-token blocks with padding masked out. Prints length distribution histograms for both QA and general episodes to verify long-context coverage:
 
 ```
 data/context_extension/
@@ -368,6 +379,12 @@ data/context_extension/
 **Why episode-indexed (not token-stream)?**
 
 Token-stream mode samples random windows from a continuous byte stream. A random 4096-token window can start mid-episode, so the model would see a question without its passage (teaching hallucination) or a passage without its question (wasted signal). Episode-indexed packing guarantees every block contains complete episodes only.
+
+**Memory behavior (single-file vs sharded):**
+
+Phase 1b writes each split as one large `tokens.bin`/`mask.bin`/`segment_ids.bin` plus `episodes.idx`. This is still low-memory at training time because `GPTEpisodeDataLoader` uses `np.memmap` for all binary files and only materializes the sampled batch slices. The full dataset is not loaded into RAM at once.
+
+This differs from Phase 1's many `shard_*.bin` files on disk, but runtime memory behavior is equivalent (file-backed paging + per-batch reads). If needed for operations/upload convenience, the same episode-indexed format also supports multi-shard layout (`train/shard_00000/...`).
 
 **Why a custom tokenizer script instead of `prepare_chat_sft.py`?**
 
@@ -406,13 +423,13 @@ The `init_from_model` path triggers checkpoint loading, which detects the block_
 
 ### What to Watch For
 
-| Signal | Healthy | Concerning |
-|:--|:--|:--|
-| Initial loss | ~4-6 (spike from new context) | >8 (RoPE scaling broken) |
-| Loss at step 1000 | Decreasing rapidly, ~3-4 | Still >5 (PI not converging) |
-| Loss at step 4000 | Near pre-training level (~2.5-3) | Plateaued >3.5 |
-| Loss at step 12000 | Stable or slowly improving | Rising (overfitting) |
-| Train/val gap | <0.15 | >0.3 (overfitting) |
+| Signal             | Healthy                          | Concerning                   |
+| :----------------- | :------------------------------- | :--------------------------- |
+| Initial loss       | ~4-6 (spike from new context)    | >8 (RoPE scaling broken)     |
+| Loss at step 1000  | Decreasing rapidly, ~3-4         | Still >5 (PI not converging) |
+| Loss at step 4000  | Near pre-training level (~2.5-3) | Plateaued >3.5               |
+| Loss at step 12000 | Stable or slowly improving       | Rising (overfitting)         |
+| Train/val gap      | <0.15                            | >0.3 (overfitting)           |
 
 ### Post-Training Validation
 
@@ -457,14 +474,14 @@ After Phase 1b, the model should:
 
 After Phase 1b, ALL subsequent SFT phases run at 4096 context:
 
-| Phase | Config Change | Effect |
-|:--|:--|:--|
-| Phase 1 (Format Lock) | `rope_scale: 4.0` (block_size stays 512) | Short episodes, but RoPE scaling matches |
-| Phase 2 (Operators) | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 16→8`, `grad_accum: +2` | Operators at full context |
-| Phase 3 (Chat SFT) | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 10→4`, `grad_accum: +3` | RAG episodes can include full passages |
-| Phase 4 (Multi-turn) | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 8→4`, `grad_accum: +2` | Multi-turn conversations fit completely |
-| Phase 5 (Toolcall) | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 6→3`, `grad_accum: +2` | Tool chains with context fit |
-| Phase 6 (Agentic RAG) | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 6→3`, `grad_accum: +2` | Full agentic episodes at 4096 |
+| Phase                 | Config Change                                                               | Effect                                   |
+| :-------------------- | :-------------------------------------------------------------------------- | :--------------------------------------- |
+| Phase 1 (Format Lock) | `rope_scale: 4.0` (block_size stays 512)                                    | Short episodes, but RoPE scaling matches |
+| Phase 2 (Operators)   | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 16→8`, `grad_accum: +2` | Operators at full context                |
+| Phase 3 (Chat SFT)    | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 10→4`, `grad_accum: +3` | RAG episodes can include full passages   |
+| Phase 4 (Multi-turn)  | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 8→4`, `grad_accum: +2`  | Multi-turn conversations fit completely  |
+| Phase 5 (Toolcall)    | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 6→3`, `grad_accum: +2`  | Tool chains with context fit             |
+| Phase 6 (Agentic RAG) | `block_size: 4096`, `rope_scale: 4.0`, `batch_size: 6→3`, `grad_accum: +2`  | Full agentic episodes at 4096            |
 
 Batch sizes are reduced to maintain VRAM budget (4x context = 4x activation memory per sequence). `grad_accum_steps` increased to maintain comparable effective batch sizes.
 
@@ -472,14 +489,14 @@ Batch sizes are reduced to maintain VRAM budget (4x context = 4x activation memo
 
 ## File References
 
-| File | Description |
-|:--|:--|
-| `configs/phase1b_context_extension.json` | Training configuration |
-| `scripts/data_prep/build_context_extension_dataset.py` | HuggingFace QA dataset builder (6 sources → plain text) |
-| `scripts/data_prep/prepare_context_extension.py` | Tokenizer + packer (QA text + general shards → episode-indexed with segment IDs) |
-| `core/model.py` | PI implementation (`rope_scale` in `GPTConfig`, `precompute_rope_frequencies`) |
-| `core/checkpoint.py` | Context extension handling in `initialize_for_training` |
-| `data/context_extension_raw/context_ext.txt` | Raw QA text with EOS delimiters (generated) |
-| `data/context_extension/` | Episode-indexed dataset: tokens.bin, mask.bin, segment_ids.bin, episodes.idx (generated) |
-| `logs/train/phase1b_context_extension.jsonl` | Training log output |
-| `docs/sft/SFT_PIPELINE_GUIDE.md` | Updated pipeline guide with Phase 1b section |
+| File                                                   | Description                                                                              |
+| :----------------------------------------------------- | :--------------------------------------------------------------------------------------- |
+| `configs/phase1b_context_extension.json`               | Training configuration                                                                   |
+| `scripts/data_prep/build_context_extension_dataset.py` | HuggingFace QA dataset builder (6 sources → plain text)                                  |
+| `scripts/data_prep/prepare_context_extension.py`       | Tokenizer + packer (QA text + general shards → episode-indexed with segment IDs)         |
+| `core/model.py`                                        | PI implementation (`rope_scale` in `GPTConfig`, `precompute_rope_frequencies`)           |
+| `core/checkpoint.py`                                   | Context extension handling in `initialize_for_training`                                  |
+| `data/context_extension_raw/context_ext.txt`           | Raw QA text with EOS delimiters (generated)                                              |
+| `data/context_extension/`                              | Episode-indexed dataset: tokens.bin, mask.bin, segment_ids.bin, episodes.idx (generated) |
+| `logs/train/phase1b_context_extension.jsonl`           | Training log output                                                                      |
+| `docs/sft/SFT_PIPELINE_GUIDE.md`                       | Updated pipeline guide with Phase 1b section                                             |

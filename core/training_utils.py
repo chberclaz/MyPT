@@ -5,7 +5,7 @@ Includes functions for calculating dataset coverage, training statistics, etc.
 """
 
 
-def calculate_episode_coverage(max_iters, batch_size, total_episodes):
+def calculate_episode_coverage(max_iters, batch_size, total_episodes, grad_accum_steps=1):
     """
     Calculate dataset coverage for episode-indexed (sequential) datasets.
     
@@ -22,8 +22,8 @@ def calculate_episode_coverage(max_iters, batch_size, total_episodes):
     Returns:
         dict with coverage statistics
     """
-    # Episodes processed per iteration
-    episodes_per_iter = batch_size
+    # Episodes processed per optimizer iteration (includes micro-steps)
+    episodes_per_iter = batch_size * grad_accum_steps
     
     # Total episodes that will be viewed
     total_episodes_viewed = max_iters * episodes_per_iter
@@ -31,8 +31,8 @@ def calculate_episode_coverage(max_iters, batch_size, total_episodes):
     # Coverage ratio (how many times dataset is seen)
     coverage_ratio = total_episodes_viewed / total_episodes if total_episodes > 0 else 0
     
-    # Batches needed for one epoch
-    batches_per_epoch = total_episodes // batch_size
+    # Optimizer steps needed for one epoch at current accumulation setting
+    batches_per_epoch = total_episodes // max(1, episodes_per_iter)
     
     # Calculate recommended iterations for 2-5x coverage
     iters_for_1x = batches_per_epoch
@@ -42,6 +42,7 @@ def calculate_episode_coverage(max_iters, batch_size, total_episodes):
     
     return {
         'episodes_per_iter': episodes_per_iter,
+        'grad_accum_steps': grad_accum_steps,
         'total_episodes_viewed': total_episodes_viewed,
         'dataset_episodes': total_episodes,
         'batches_per_epoch': batches_per_epoch,
@@ -69,7 +70,10 @@ def print_episode_coverage_analysis(coverage, current_iters):
     
     # Basic stats
     print(f"Dataset size:           {coverage['dataset_episodes']:,} episodes")
-    print(f"Episodes per batch:     {coverage['episodes_per_iter']:,}")
+    print(f"Episodes per opt step:  {coverage['episodes_per_iter']:,}")
+    if coverage.get('grad_accum_steps', 1) > 1:
+        micro_bs = coverage['episodes_per_iter'] // coverage['grad_accum_steps']
+        print(f"  ({micro_bs} x {coverage['grad_accum_steps']} micro-steps)")
     print(f"Batches per epoch:      {coverage['batches_per_epoch']:,}")
     print(f"Total iterations:       {current_iters:,}")
     print(f"Total episodes to view: {coverage['total_episodes_viewed']:,}")
@@ -144,7 +148,7 @@ def print_episode_coverage_analysis(coverage, current_iters):
     print()
 
 
-def calculate_dataset_coverage(max_iters, batch_size, block_size, total_tokens):
+def calculate_dataset_coverage(max_iters, batch_size, block_size, total_tokens, grad_accum_steps=1):
     """
     Calculate how many times the dataset will be viewed during training.
     
@@ -157,8 +161,8 @@ def calculate_dataset_coverage(max_iters, batch_size, block_size, total_tokens):
     Returns:
         dict with coverage statistics
     """
-    # Tokens processed per iteration
-    tokens_per_iter = batch_size * block_size
+    # Tokens processed per optimizer iteration (includes micro-steps)
+    tokens_per_iter = batch_size * block_size * grad_accum_steps
     
     # Total tokens that will be viewed
     total_tokens_viewed = max_iters * tokens_per_iter
@@ -173,6 +177,7 @@ def calculate_dataset_coverage(max_iters, batch_size, block_size, total_tokens):
     
     return {
         'tokens_per_iter': tokens_per_iter,
+        'grad_accum_steps': grad_accum_steps,
         'total_tokens_viewed': total_tokens_viewed,
         'dataset_tokens': total_tokens,
         'coverage_ratio': coverage_ratio,
@@ -198,7 +203,10 @@ def print_coverage_analysis(coverage, current_iters):
     
     # Basic stats
     print(f"Dataset size:           {coverage['dataset_tokens']:,} tokens")
-    print(f"Tokens per iteration:   {coverage['tokens_per_iter']:,} tokens")
+    print(f"Tokens per opt step:    {coverage['tokens_per_iter']:,} tokens")
+    if coverage.get('grad_accum_steps', 1) > 1:
+        micro_tokens = coverage['tokens_per_iter'] // coverage['grad_accum_steps']
+        print(f"  ({micro_tokens:,} x {coverage['grad_accum_steps']} micro-steps)")
     print(f"Total iterations:       {current_iters:,}")
     print(f"Total tokens to view:   {coverage['total_tokens_viewed']:,} tokens")
     print()

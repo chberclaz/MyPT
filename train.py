@@ -417,7 +417,8 @@ def main():
         coverage = calculate_episode_coverage(
             max_iters=effective_max_iters,
             batch_size=model.config.batch_size,
-            total_episodes=total_episodes
+            total_episodes=total_episodes,
+            grad_accum_steps=effective_grad_accum_steps,
         )
         print_episode_coverage_analysis(coverage, effective_max_iters)
         
@@ -435,7 +436,8 @@ def main():
             max_iters=effective_max_iters,
             batch_size=model.config.batch_size,
             block_size=model.config.block_size,
-            total_tokens=total_tokens
+            total_tokens=total_tokens,
+            grad_accum_steps=effective_grad_accum_steps,
         )
         print_coverage_analysis(coverage, effective_max_iters)
         

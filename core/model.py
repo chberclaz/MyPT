@@ -711,8 +711,9 @@ class GPT(nn.Module):
             attn_mask = self._build_segment_attention_mask(segment_ids)  # (B, 1, T, T)
             if not getattr(self, '_segment_attn_logged', False):
                 n_segments = segment_ids.max().item()
+                pos_mode = "positions reset per episode" if getattr(self.config, 'segment_position_reset', True) else "absolute positions preserved across block"
                 print(f"  Segment-isolated attention ACTIVE: {n_segments} segments/pack, "
-                      f"mask shape {attn_mask.shape}, positions reset per episode")
+                      f"mask shape {attn_mask.shape}, {pos_mode}")
                 self._segment_attn_logged = True
 
         # Run blocks
