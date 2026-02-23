@@ -5,30 +5,31 @@ into an agentic RAG assistant. Covers architecture, data flow, every phase,
 exact commands, and success criteria.
 
 **Last updated:** February 2026
-**Base model:** `checkpoints/GOLD_unified_v1` (LLaMA-2 style, 750M params)
-**Architecture:** RoPE + SwiGLU + RMSNorm, tie_weights=true, 1280d/20h/32L
+**Base model:** `checkpoints/phase1b_context_ext` (LLaMA-2 style, 750M params, 4096 context via PI)
+**Architecture:** RoPE + SwiGLU + RMSNorm, tie_weights=true, 1280d/20h/32L, rope_scale=4.0
 
 ---
 
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
-2. [Data Flow: Generator to Training](#2-data-flow-generator-to-training)
-3. [Special Tokens and Loss Masking](#3-special-tokens-and-loss-masking)
-4. [Phase 1: Format Lock](#4-phase-1-format-lock)
-5. [Phase 2: Operators](#5-phase-2-operators)
-6. [Phase 3: Chat SFT](#6-phase-3-chat-sft)
-7. [Phase 4: Multi-turn Boundaries](#7-phase-4-multi-turn-boundaries)
-8. [Phase 5: Simple Toolcall](#8-phase-5-simple-toolcall)
-9. [Phase 6: Agentic RAG](#9-phase-6-agentic-rag)
-10. [HuggingFace Dataset Integration](#10-huggingface-dataset-integration)
-11. [System Prompt Strategy](#11-system-prompt-strategy-loss-mask-optimization)
-12. [Anti-Forgetting Strategies](#12-anti-forgetting-strategies)
-13. [NEFTune Embedding Noise](#13-neftune-embedding-noise)
-14. [Weighted Loss Masking](#14-weighted-loss-masking)
-15. [Scripts Reference](#15-scripts-reference)
-16. [Configs Reference](#16-configs-reference)
-17. [Troubleshooting](#17-troubleshooting)
+2. [Phase 1b: Context Extension (1024 → 4096)](#2-phase-1b-context-extension)
+3. [Data Flow: Generator to Training](#3-data-flow-generator-to-training)
+4. [Special Tokens and Loss Masking](#4-special-tokens-and-loss-masking)
+5. [Phase 1: Format Lock](#5-phase-1-format-lock)
+6. [Phase 2: Operators](#6-phase-2-operators)
+7. [Phase 3: Chat SFT](#7-phase-3-chat-sft)
+8. [Phase 4: Multi-turn Boundaries](#8-phase-4-multi-turn-boundaries)
+9. [Phase 5: Simple Toolcall](#9-phase-5-simple-toolcall)
+10. [Phase 6: Agentic RAG](#10-phase-6-agentic-rag)
+11. [HuggingFace Dataset Integration](#11-huggingface-dataset-integration)
+12. [System Prompt Strategy](#12-system-prompt-strategy-loss-mask-optimization)
+13. [Anti-Forgetting Strategies](#13-anti-forgetting-strategies)
+14. [NEFTune Embedding Noise](#14-neftune-embedding-noise)
+15. [Weighted Loss Masking](#15-weighted-loss-masking)
+16. [Scripts Reference](#16-scripts-reference)
+17. [Configs Reference](#17-configs-reference)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -40,7 +41,7 @@ checkpoint; the SFT config only needs to match so `train.py` can reconstruct the
 ```
 Model:   GPT-750M (LLaMA-2 style)
 Params:  ~700M
-Context: 1024 tokens
+Context: 4096 tokens (extended from 1024 via Position Interpolation in Phase 1b)
 Vocab:   50304 (50257 base GPT-2 + 19 myPT special tokens, padded to 64)
 
 Architecture fields (must be in every SFT config):
@@ -53,13 +54,72 @@ Architecture fields (must be in every SFT config):
   mlp_type: "swiglu"
   norm_type: "rmsnorm"
   rope_theta: 10000.0
+  rope_scale: 4.0
 ```
 
 SFT configs live in `configs/sft/` -- one file per phase (`phase1_format_lock.json` through `phase6_agentic_rag.json`).
 
 ---
 
-## 2. Data Flow: Generator to Training
+## 2. Phase 1b: Context Extension (1024 → 4096)
+
+**Runs BEFORE any SFT.** Extends the pre-trained model's context window from 1024 to 4096 using Position Interpolation (PI).
+
+### Why
+
+At 1024 tokens, the model cannot fit a meaningful RAG episode: system prompt + retrieved passages + question + answer + tool calls exceed 1024 in nearly all production scenarios. At 4096, all SFT phases and production inference have room for multi-passage retrieval, multi-step tool chains, and detailed answers.
+
+### Method: Position Interpolation (PI)
+
+PI compresses position indices by the extension factor: positions `[0, 1, ..., 4095]` are mapped to `[0, 0.25, 0.5, ..., 1023.75]`. This lets the model interpolate between positions it learned during pre-training. Implemented as `rope_scale: 4.0` in the config, which divides the position vector by 4.0 in `precompute_rope_frequencies()`.
+
+### Dataset
+
+Two-part dataset (~800M tokens, no myPT tags -- the model has no tag knowledge at this point):
+
+**QA episodes (40%, ~320M tokens):** 6 HuggingFace sources for structured retrieval training:
+
+| Source | Tokens | Role |
+|:--|:--|:--|
+| HotpotQA (distractor) | ~108M | Long multi-passage, position-varied gold paragraphs |
+| MS MARCO v2.1 | ~100M | 10-passage search results, position-varied, real Bing queries |
+| TriviaQA (evidence) | ~78M | Medium-long grounded trivia |
+| SQuAD v2 | ~32M | Short extractive EN QA (incl. unanswerable) |
+| MuSiQue | ~20M | Hard multi-hop (2-4 hops) |
+| GermanQuAD | ~1.5M | Short extractive DE QA |
+
+**General text (60%, ~480M tokens):** Sampled from pre-training shards. Short documents concatenated into ~4096-token mega-episodes for full-length attention spans during RoPE adaptation.
+
+Built by `scripts/data_prep/build_context_extension_dataset.py` (QA), tokenized and combined with general text by `scripts/data_prep/prepare_context_extension.py`. Uses episode-indexed format with greedy bin-packing and diversity interleaving. Padding masked out, all real tokens are loss targets.
+
+### Config and Training
+
+```bash
+# Build QA dataset
+python scripts/data_prep/build_context_extension_dataset.py
+
+# Tokenize QA + sample general text, pack into episode-indexed format
+python scripts/data_prep/prepare_context_extension.py \
+  --general_shards_dir data/unified_6B \
+  --general_target_tokens 480000000
+
+# Train
+python train.py \
+  --model_name phase1b_context_ext \
+  --config_file configs/phase1b_context_extension.json \
+  --dataset_dir data/context_extension \
+  --init_from_model GOLD_unified_v1
+```
+
+Config: `configs/phase1b_context_extension.json` -- B=4, T=4096, grad_accum=4, LR=3e-5, 12K iters, rope_scale=4.0, episode-indexed with epoch sampling. ~800M tokens (40% QA, 60% general).
+
+After this phase, ALL subsequent SFT phases use `block_size: 4096` and `rope_scale: 4.0`.
+
+See `docs/training/PHASE1B_CONTEXT_EXTENSION.md` for the full training document.
+
+---
+
+## 3. Data Flow: Generator to Training
 
 All SFT data follows the same pipeline, regardless of phase:
 

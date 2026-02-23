@@ -2,8 +2,8 @@
   "name": "Phase 3: Chat SFT",
   "description": "Conversational fine-tuning on gold bilingual (EN+DE) Q&A episodes with RAG context. Introduces user_context and assistant_context patterns.",
 
-  "batch_size": 10,
-  "block_size": 1024,
+  "batch_size": 4,
+  "block_size": 4096,
   "vocab_size": 50304,
   "n_embd": 1280,
   "n_head": 20,
@@ -15,6 +15,7 @@
   "mlp_type": "swiglu",
   "norm_type": "rmsnorm",
   "rope_theta": 10000.0,
+  "rope_scale": 4.0,
 
   "learning_rate": 3e-5,
   "max_iters": 5000,
@@ -23,6 +24,7 @@
   "warmup_iters": 150,
   "use_amp": true,
   "amp_dtype": "bf16",
+  "grad_accum_steps": 3,
 
   "use_loss_mask": true,
 

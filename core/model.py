@@ -59,6 +59,12 @@ class GPTConfig:
     mlp_type: str = "gelu"             # "gelu" (standard 2-layer) or "swiglu" (gated, LLaMA-style)
     norm_type: str = "layernorm"       # "layernorm" or "rmsnorm"
     rope_theta: float = 10000.0        # RoPE base frequency (only used when pos_encoding="rope")
+    rope_scale: float = 1.0            # Position Interpolation factor (context_new / context_old, e.g. 4.0 for 1024->4096)
+    segment_position_reset: bool = True # Reset positions to 0 at each episode boundary in packed sequences.
+                                        # True (default): each episode starts at position 0 (correct for SFT).
+                                        # False: keep absolute positions 0..T-1 across the full block
+                                        # (correct for context extension where you need the model to
+                                        # actually train on high position indices).
     
     # NEFTune: Noisy Embedding Fine-Tuning (arXiv:2310.05914)
     # Adds uniform noise to token embeddings during training for regularization.
@@ -141,7 +147,7 @@ class RMSNorm(nn.Module):
 # Rotary Position Embeddings (RoPE)
 # ---------------------------------------------------------------------------
 
-def precompute_rope_frequencies(head_dim, max_seq_len, theta=10000.0, device=None):
+def precompute_rope_frequencies(head_dim, max_seq_len, theta=10000.0, device=None, scale=1.0):
     """Precompute cos/sin tables for Rotary Position Embeddings.
     
     Args:
@@ -149,6 +155,10 @@ def precompute_rope_frequencies(head_dim, max_seq_len, theta=10000.0, device=Non
         max_seq_len: Maximum sequence length (block_size)
         theta: RoPE base frequency (default 10000.0)
         device: Torch device
+        scale: Position Interpolation factor (default 1.0 = no scaling).
+               For context extension from L to L', set scale = L'/L.
+               Compresses position indices so the model interpolates between
+               positions it saw during pre-training (Chen et al., 2023).
     
     Returns:
         cos, sin: Each (max_seq_len, head_dim // 2)
@@ -156,8 +166,8 @@ def precompute_rope_frequencies(head_dim, max_seq_len, theta=10000.0, device=Non
     half_dim = head_dim // 2
     # Frequency bands: theta^(-2i/d) for i = 0, 1, ..., half_dim-1
     freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
-    # Position indices
-    t = torch.arange(max_seq_len, device=device).float()
+    # Position indices (divided by scale for Position Interpolation)
+    t = torch.arange(max_seq_len, device=device).float() / scale
     # Outer product: (max_seq_len, half_dim)
     angles = torch.outer(t, freqs)
     return angles.cos(), angles.sin()
@@ -478,8 +488,9 @@ class GPT(nn.Module):
             # Precompute RoPE cos/sin tables as non-learnable buffers
             head_dim = self.config.n_embd // self.config.n_head
             rope_theta = getattr(self.config, 'rope_theta', 10000.0)
+            rope_scale = getattr(self.config, 'rope_scale', 1.0)
             cos, sin = precompute_rope_frequencies(
-                head_dim, self.config.block_size, theta=rope_theta
+                head_dim, self.config.block_size, theta=rope_theta, scale=rope_scale
             )
             self.register_buffer('rope_cos', cos, persistent=False)
             self.register_buffer('rope_sin', sin, persistent=False)
@@ -637,8 +648,11 @@ class GPT(nn.Module):
         segment_ids: Optional (B, T) tensor for packed sequences.
             segment_id 0 = padding, 1+ = episode index within pack.
             When provided:
-            - Builds segment-isolated attention mask (no cross-episode attention)
-            - Resets position embeddings at each episode boundary
+            - Always builds segment-isolated attention mask (no cross-episode attention)
+            - If config.segment_position_reset=True (default): resets position embeddings
+              at each episode boundary (correct for SFT where each conversation starts at 0)
+            - If config.segment_position_reset=False: keeps absolute positions 0..T-1
+              (correct for context extension where training on high positions is the goal)
             When None: standard causal attention with global positions (backward compatible).
         """
         B, T = idx.shape
@@ -650,8 +664,8 @@ class GPT(nn.Module):
         rope_cos = None
         rope_sin = None
         
-        if segment_ids is not None:
-            # PACKED MODE: reset positions at each episode boundary
+        if segment_ids is not None and getattr(self.config, 'segment_position_reset', True):
+            # PACKED MODE with position reset: each episode starts at position 0
             position_ids = self._compute_segment_positions(segment_ids)  # (B, T)
         elif kv_cache is not None and use_cache:
             pos_start = cache_pos

@@ -2,8 +2,8 @@
   "name": "Phase 6: Agentic RAG",
   "description": "Multi-step agentic RAG. Search -> read -> reason -> cite. Uses <myPT_think> for reasoning and <myPT_cite> for attribution. Full tool chain.",
 
-  "batch_size": 6,
-  "block_size": 1024,
+  "batch_size": 3,
+  "block_size": 4096,
   "vocab_size": 50304,
   "n_embd": 1280,
   "n_head": 20,
@@ -15,6 +15,7 @@
   "mlp_type": "swiglu",
   "norm_type": "rmsnorm",
   "rope_theta": 10000.0,
+  "rope_scale": 4.0,
 
   "learning_rate": 1.5e-5,
   "max_iters": 4000,
@@ -23,6 +24,7 @@
   "warmup_iters": 120,
   "use_amp": true,
   "amp_dtype": "bf16",
+  "grad_accum_steps": 2,
 
   "use_loss_mask": true,
 

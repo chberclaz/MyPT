@@ -140,6 +140,41 @@ class CheckpointManager:
                 # Disable weight tying: this is tricky, need to un-share
                 print(f"  ⚠️  Cannot disable weight tying on a tied model (weights are shared)")
             
+            # Handle block_size / RoPE changes (context extension)
+            old_block_size = model.config.block_size
+            new_block_size = config.block_size
+            old_rope_scale = getattr(model.config, 'rope_scale', 1.0)
+            new_rope_scale = getattr(config, 'rope_scale', 1.0)
+            old_rope_theta = getattr(model.config, 'rope_theta', 10000.0)
+            new_rope_theta = getattr(config, 'rope_theta', 10000.0)
+            
+            if (new_block_size != old_block_size or 
+                new_rope_scale != old_rope_scale or 
+                new_rope_theta != old_rope_theta):
+                
+                model.config.block_size = new_block_size
+                model.config.rope_scale = new_rope_scale
+                model.config.rope_theta = new_rope_theta
+                
+                if getattr(model, '_use_rope', False):
+                    from .model import precompute_rope_frequencies
+                    head_dim = model.config.n_embd // model.config.n_head
+                    cos, sin = precompute_rope_frequencies(
+                        head_dim, new_block_size, theta=new_rope_theta,
+                        scale=new_rope_scale
+                    )
+                    model.register_buffer('rope_cos', cos, persistent=False)
+                    model.register_buffer('rope_sin', sin, persistent=False)
+                    print(f"  Context extension: block_size {old_block_size} → {new_block_size}, "
+                          f"rope_scale {old_rope_scale} → {new_rope_scale} (Position Interpolation)")
+                elif hasattr(model, 'position_embedding_table'):
+                    old_pos_emb = model.position_embedding_table.weight.data
+                    model.position_embedding_table = torch.nn.Embedding(new_block_size, model.config.n_embd)
+                    copy_len = min(old_block_size, new_block_size)
+                    model.position_embedding_table.weight.data[:copy_len] = old_pos_emb[:copy_len]
+                    print(f"  Context extension: block_size {old_block_size} → {new_block_size} "
+                          f"(learned pos embeddings, copied {copy_len} positions)")
+            
             print(f"  use_loss_mask: {model.config.use_loss_mask}")
             print(f"  dropout: {model.config.dropout}")
             print(f"  batch_size: {model.config.batch_size}")

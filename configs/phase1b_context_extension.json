@@ -1,0 +1,51 @@
+{
+  "name": "Phase 1b: Context Extension (1024 → 4096)",
+  "description": "Position Interpolation continued pre-training. Extends context window from 1024 to 4096 using PI (rope_scale=4.0) on a purpose-built ~800M token dataset: 6 HuggingFace QA sources (SQuAD v2, HotpotQA distractor, MuSiQue, GermanQuAD, MS MARCO v2.1, TriviaQA) plus general text sampled from unified pre-training shards (target ~40/60 QA/general token mix). Episode-indexed with full-episode packing and segment isolation. Loss on all real tokens, mask=0 on padding only. Runs right after pre-training, before any SFT.",
+
+  "batch_size": 4,
+  "block_size": 4096,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.05,
+  "bias": false,
+  "tie_weights": true,
+
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "rope_theta": 10000.0,
+  "rope_scale": 4.0,
+  "segment_position_reset": false,
+
+  "learning_rate": 3e-5,
+  "max_iters": 12000,
+  "eval_interval": 500,
+  "eval_iters": 100,
+  "warmup_iters": 400,
+  "grad_clip": 1.0,
+  "weight_decay": 0.05,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+  "grad_accum_steps": 4,
+
+  "use_loss_mask": true,
+
+  "eval_sets": {
+    "general": "data/general",
+    "domain": "data/domain_161M_corpus_tokenized",
+    "code": "data/code_eval_tokenized",
+    "retrieval": "data/retrieval_eval_tokenized"
+  },
+
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": 50256,
+  "episode_min_tokens": 64,
+  "epoch_seed": 1729,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase1b_context_extension_eval.jsonl"
+}

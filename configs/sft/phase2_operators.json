@@ -2,8 +2,8 @@
   "name": "Phase 2: Operators",
   "description": "Abstract operator learning (COPY, UPCASE, TRANSLATE, etc.) with contrastive templates and packing. Generalizes operators to unseen payloads.",
 
-  "batch_size": 16,
-  "block_size": 1024,
+  "batch_size": 8,
+  "block_size": 4096,
   "vocab_size": 50304,
   "n_embd": 1280,
   "n_head": 20,
@@ -15,6 +15,7 @@
   "mlp_type": "swiglu",
   "norm_type": "rmsnorm",
   "rope_theta": 10000.0,
+  "rope_scale": 4.0,
 
   "learning_rate": 3e-5,
   "max_iters": 1200,
@@ -22,6 +23,7 @@
   "warmup_iters": 120,
   "use_amp": true,
   "amp_dtype": "bf16",
+  "grad_accum_steps": 2,
 
   "use_loss_mask": true,
 
