@@ -1749,6 +1749,32 @@ class GPT(nn.Module):
         total_elapsed = _time.time() - train_start_time
         total_tokens = (max_iters - start_step) * tokens_per_step
         final_losses = self.estimate_loss(data_loader, eval_iters)
+        final_step = max(start_step, max_iters - 1)
+        
+        # Bugfix: GOLD selection previously happened only at eval_interval steps.
+        # If the best val appears on the final step (not aligned with eval_interval),
+        # GOLD was not updated. Promote final checkpoint when it is better.
+        final_val_loss = float(final_losses['val'])
+        if checkpoint_dir and final_val_loss < best_val_loss:
+            best_val_loss = final_val_loss
+            gold_step = final_step
+            self.save_checkpoint_bundle(
+                gold_dir,
+                step=final_step,
+                optimizer_state=optimizer.state_dict(),
+                training_config=training_config,
+                save_dtype=effective_save_dtype
+            )
+            print(f"  GOLD checkpoint updated from final eval: val_loss={final_val_loss:.4f} at step {final_step}")
+            if log_file is not None:
+                final_gold_entry = {
+                    "event": "gold_checkpoint_final_eval",
+                    "iter": final_step,
+                    "timestamp": datetime.datetime.now().isoformat(),
+                    "val_loss": round(final_val_loss, 6),
+                }
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(final_gold_entry) + "\n")
         
         elapsed_h = total_elapsed / 3600
         tokens_b = total_tokens / 1e9

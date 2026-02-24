@@ -18,9 +18,9 @@
   "rope_scale": 4.0,
 
   "learning_rate": 3e-5,
-  "max_iters": 1200,
-  "eval_interval": 100,
-  "warmup_iters": 120,
+  "max_iters": 135,
+  "eval_interval": 15,
+  "warmup_iters": 14,
   "use_amp": true,
   "amp_dtype": "bf16",
   "grad_accum_steps": 2,
@@ -37,7 +37,11 @@
   "weight_decay": 0.05,
 
   "eval_sets": {
-    "phase1_format": "data/sft_phase1_format_lock"
+    "phase1_format": "data/sft_phase1_format_lock",
+    "general": "data/general",
+    "domain": "data/domain_161M_corpus_tokenized",
+    "code": "data/code_eval_tokenized",
+    "retrieval": "data/retrieval_eval_tokenized"
   },
   "eval_seed": 1337,
   "log_file": "logs/train/phase2_operators.jsonl"
