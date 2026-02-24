@@ -299,8 +299,6 @@ def main():
         print(f"Approximate tokens (GPT-2): ~{len(text)//4:,}")
     elif args.dataset_dir:
         # For sharded mode, load tokenizer state from dataset directory
-        import json
-        import os
         tokenizer_state_path = os.path.join(args.dataset_dir, "tokenizer_state.json")
         if os.path.exists(tokenizer_state_path):
             print(f"Loading tokenizer state from {args.dataset_dir}...")
@@ -430,8 +428,6 @@ def main():
             )
         
         # Get dataset info from metadata
-        import json
-        import os
         metadata_path = os.path.join(args.dataset_dir, "dataset_metadata.json")
         total_tokens = None
         total_episodes = None
