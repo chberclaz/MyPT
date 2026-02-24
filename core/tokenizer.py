@@ -152,6 +152,14 @@ class Tokenizer():
                     current_chunk = []
                 # Add special token string
                 result.append(self.special_token_decoder[token_id])
+            elif token_id >= self.base_vocab_size:
+                # Safety fallback for legacy tokenizer states that may miss
+                # newer special token mappings. Never pass out-of-range IDs
+                # to tiktoken decode (would raise KeyError).
+                if current_chunk:
+                    result.append(self.enc.decode(current_chunk))
+                    current_chunk = []
+                result.append(f"<unk_tok_{token_id}>")
             else:
                 current_chunk.append(token_id)
         
@@ -238,6 +246,43 @@ class Tokenizer():
                 # Rebuild decoder from encoder
                 self.special_token_decoder = {v: k for k, v in self.special_token_encoder.items()}
                 
+                # Backward compatibility: older checkpoints may have fewer
+                # special tokens. Merge in any missing current tokens using
+                # canonical IDs when available.
+                canonical_ids = {}
+                next_id = self.base_vocab_size
+                for name in SPECIAL_TOKEN_STRINGS:
+                    canonical_ids[name] = next_id
+                    next_id += 1
+                
+                added_compat = 0
+                for name, tok_str in SPECIAL_TOKEN_STRINGS.items():
+                    # Already present (by string) -> ensure name mapping exists
+                    if tok_str in self.special_token_encoder:
+                        if name not in self.special_tokens:
+                            self.special_tokens[name] = self.special_token_encoder[tok_str]
+                        continue
+                    
+                    preferred_id = canonical_ids[name]
+                    target_id = preferred_id
+                    
+                    # If canonical slot is occupied in legacy mapping, find next free slot.
+                    if target_id in self.special_token_decoder:
+                        target_id = self.base_vocab_size
+                        while target_id in self.special_token_decoder:
+                            target_id += 1
+                    
+                    if target_id >= self.model_vocab_size:
+                        raise ValueError(
+                            f"Cannot add missing special token '{name}' (id {target_id}) "
+                            f"because model_vocab_size={self.model_vocab_size} is too small."
+                        )
+                    
+                    self.special_token_encoder[tok_str] = target_id
+                    self.special_token_decoder[target_id] = tok_str
+                    self.special_tokens[name] = target_id
+                    added_compat += 1
+                
                 # Rebuild regex pattern (sorted by length for safety)
                 tokens_by_length = sorted(self.special_token_encoder.keys(), key=len, reverse=True)
                 escaped_tokens = [re.escape(tok) for tok in tokens_by_length]
@@ -247,7 +292,13 @@ class Tokenizer():
                 assert len(self.special_token_encoder) == len(self.special_token_decoder), \
                     "Special token encoder/decoder size mismatch"
                 
-                print(f"Restored {len(self.special_tokens)} special tokens from saved state")
+                if added_compat > 0:
+                    print(
+                        f"Restored {len(self.special_tokens)} special tokens from saved state "
+                        f"(added {added_compat} missing tokens for compatibility)"
+                    )
+                else:
+                    print(f"Restored {len(self.special_tokens)} special tokens from saved state")
             else:
                 # Legacy checkpoint without saved mappings - regenerate
                 self._register_special_tokens()
