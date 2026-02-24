@@ -81,10 +81,29 @@ def _pair_payload_key(pair: tuple) -> str:
     return str(a).strip()
 
 
+def _pair_template_signature(pair: tuple) -> str:
+    """
+    Normalize a pair question into a template signature by replacing payload
+    spans with a placeholder. This mirrors prepare_chat_sft's template-style
+    overlap checks conceptually.
+    """
+    q, a, cat = pair
+    payload = _pair_payload_key(pair)
+    sig = str(q)
+    if payload:
+        sig = sig.replace(payload, "{PAYLOAD}")
+    # If anti-echo quoted payload remains, normalize quoted spans too.
+    import re
+    sig = re.sub(r'"[^"]+"', '"{PAYLOAD}"', sig)
+    sig = re.sub(r"'[^']+'", "'{PAYLOAD}'", sig)
+    return sig.strip()
+
+
 def _synthesize_anti_pairs(
     tokenizer: Tokenizer,
     needed: int,
     seed: int,
+    forbidden_templates: set | None = None,
 ) -> List[tuple]:
     """
     Build a large anti-echo pool from BPE-safe gibberish + template expansion.
@@ -92,6 +111,7 @@ def _synthesize_anti_pairs(
     """
     if needed <= 0:
         return []
+    forbidden_templates = forbidden_templates or set()
     rng = random.Random(seed)
 
     # Large payload pool (single words + short phrases) that remains tokenization-safe.
@@ -127,7 +147,10 @@ def _synthesize_anti_pairs(
             tpl, ans = rng.choice(tpls)
             q = tpl.replace("{X}", pv)
             cat = "anti_echo_synth_en" if tpls is en_templates else "anti_echo_synth_de"
-            pairs.append((q, ans, cat))
+            cand = (q, ans, cat)
+            if _pair_template_signature(cand) in forbidden_templates:
+                continue
+            pairs.append(cand)
             if len(pairs) >= needed:
                 return pairs
 
@@ -137,7 +160,9 @@ def _synthesize_anti_pairs(
         base = payloads[i % len(payloads)]
         tpl, ans = en_templates[i % len(en_templates)]
         q = tpl.replace("{X}", f"{base}_{i % 97}")
-        pairs.append((q, ans, "anti_echo_synth_en"))
+        cand = (q, ans, "anti_echo_synth_en")
+        if _pair_template_signature(cand) not in forbidden_templates:
+            pairs.append(cand)
         i += 1
     return pairs
 
@@ -185,6 +210,7 @@ def _synthesize_echo_pairs(
     tokenizer: Tokenizer,
     needed: int,
     seed: int,
+    forbidden_templates: set | None = None,
 ) -> List[tuple]:
     """
     Build additional echo pairs when base pool is too small.
@@ -192,6 +218,7 @@ def _synthesize_echo_pairs(
     """
     if needed <= 0:
         return []
+    forbidden_templates = forbidden_templates or set()
     rng = random.Random(seed)
     payloads = generate_bpe_safe_gibberish(
         tokenizer=tokenizer,
@@ -214,11 +241,15 @@ def _synthesize_echo_pairs(
         "Gib nur aus: {X}",
     ]
     out: List[tuple] = []
-    for i in range(needed):
+    i = 0
+    while len(out) < needed:
         x = payloads[i % len(payloads)]
         t = templates[rng.randrange(len(templates))]
         q = t.replace("{X}", x)
-        out.append((q, x, "echo_synth"))
+        cand = (q, x, "echo_synth")
+        if _pair_template_signature(cand) not in forbidden_templates:
+            out.append(cand)
+        i += 1
     return out
 
 
@@ -324,6 +355,8 @@ def main() -> None:
     echo_val_pairs = rng.sample(echo_val_candidates, needed_echo_val)
     echo_val_keys = {(q, a, c) for (q, a, c) in echo_val_pairs}
     echo_val_payloads = {_pair_payload_key(p) for p in echo_val_pairs}
+    val_templates = {_pair_template_signature(p) for p in anti_val_pairs}
+    val_templates.update(_pair_template_signature(p) for p in echo_val_pairs)
 
     val_payloads = anti_val_payloads | echo_val_payloads
 
@@ -332,22 +365,24 @@ def main() -> None:
         p for p in echo_pairs
         if (p[0], p[1], p[2]) not in echo_val_keys
         and _pair_payload_key(p) not in val_payloads
+        and _pair_template_signature(p) not in val_templates
     ]
     # Anti train pool: avoid val payload collisions and exact tuple reuse.
     anti_train_pool = [
         p for p in anti_train_pool
         if _pair_payload_key(p) not in val_payloads
+        and _pair_template_signature(p) not in val_templates
     ]
 
     if len(anti_train_pool) < needed_anti:
         deficit = needed_anti - len(anti_train_pool)
-        synth = _synthesize_anti_pairs(tok, deficit + 1000, args.seed + 49)
+        synth = _synthesize_anti_pairs(tok, deficit + 1000, args.seed + 49, forbidden_templates=val_templates)
         synth = [p for p in synth if _pair_payload_key(p) not in val_payloads]
         anti_train_pool.extend(synth)
         print(f"Anti train pool low after val split; synthesized {len(synth):,} extra")
     if len(echo_train_pool) < needed_echo:
         deficit = needed_echo - len(echo_train_pool)
-        synth = _synthesize_echo_pairs(tok, deficit + 1000, args.seed + 51)
+        synth = _synthesize_echo_pairs(tok, deficit + 1000, args.seed + 51, forbidden_templates=val_templates)
         synth = [p for p in synth if _pair_payload_key(p) not in val_payloads]
         echo_train_pool.extend(synth)
         print(f"Echo train pool low after val split; synthesized {len(synth):,} extra")
