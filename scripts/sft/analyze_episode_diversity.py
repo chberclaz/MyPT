@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 import re
 
 # Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Configure stdout/stderr for UTF-8 on Windows

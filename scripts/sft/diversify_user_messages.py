@@ -6,7 +6,7 @@ Diversify user messages in SFT goldset to reduce templated patterns.
 import json
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDSET_PATH = PROJECT_ROOT / "data" / "sft_conversation_goldset" / "mypt_phase3a_gold_en_v2.jsonl"
 
 # Diverse rewrites for user messages - reducing template overlap

@@ -1,5 +1,8 @@
 # Operator Training Results — Phase 3a Operator Learning Test
 
+> **Legacy note (pre-Phase1b):** This document describes an earlier operator POC run before the 4096 context-extension baseline.
+> Current production SFT uses `configs/sft/phase2_operators.json` with `block_size: 4096` (post-Phase1b pipeline).
+
 **Date:** January 2026  
 **Status:** Proof-of-concept PASSED  
 **Model:** 750M GPT (32L/1280E/20H)
@@ -108,7 +111,7 @@ python train.py \
     --model_name phase3a_operator \
     --init_from_model phase3a1_alpha_v2 \
     --dataset_dir data/sft_operator/prepared \
-    --config_file configs/sft1/750M_phase3a_operator.json \
+    --config_file configs/sft/phase2_operators.json \
     --eval_prompts_file configs/sft_eval/phase3a_operator_eval_prompts.json \
     --learning_rate 7e-5
 ```
@@ -194,7 +197,7 @@ Checks:
 | `scripts/generate_operator_dataset.py` | Generate unique-payload operator dataset |
 | `scripts/prepare_chat_sft.py` | Prepare with strict train/val separation |
 | `scripts/sft_eval_suite.py` | Exact-match operator evaluation |
-| `configs/sft1/750M_phase3a_operator.json` | Training config |
+| `configs/sft/phase2_operators.json` | Current 4096 operator training config (post-Phase1b) |
 | `configs/sft_eval/phase3a_operator_eval_prompts.json` | Runtime eval prompts |
 
 ---

@@ -5,6 +5,54 @@ All notable changes to MyPT will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Planned
+
+- RAG evaluation benchmarks
+- RAG Tool-Calling agent training
+
+## [0.4.1] - 2026-02-23 — Phase 1b Context Extension
+
+Context extension pipeline finalized for 750M pre-SFT adaptation from 1024 to 4096 context,
+including dataset build hardening, packing invariants, low-memory writing, and degradation-aware eval monitoring.
+
+### Added
+
+#### Phase 1b Data Pipeline (4096)
+
+- `scripts/data_prep/build_context_extension_dataset.py` now supports the final QA mix sources used for Phase 1b (`SQuAD v2`, `HotpotQA`, `MuSiQue`, `GermanQuAD`, `MS MARCO v2.1`, `TriviaQA`).
+- `scripts/data_prep/prepare_context_extension.py` supports mixed QA + general-text construction with long-context diagnostics and episode-indexed output:
+  - `tokens.bin` (`uint32`)
+  - `mask.bin` (`uint8`)
+  - `segment_ids.bin` (`uint8`)
+  - `episodes.idx` (`uint64`)
+- Added robust general-shard sampling fallback for continuous token streams (no EOS boundaries), producing full-length 4096-token episodes.
+- Added explicit QA filtering to skip episodes longer than `block_size` (no truncation for oversize QA episodes).
+
+#### Monitoring & Training Safety
+
+- `configs/phase1b_context_extension.json` updated with additional eval sets to monitor degradation during context extension:
+  - `general`
+  - `domain`
+  - `code`
+  - `retrieval`
+- Improved Phase 1b logging metadata and documentation consistency in `docs/training/PHASE1B_CONTEXT_EXTENSION.md`.
+
+### Changed
+
+- Replaced memory-heavy write path in Phase 1b dataset writing with streaming disk writes to avoid large temporary allocations.
+- Updated episode coverage calculations to correctly account for `grad_accum_steps`:
+  - `core/training_utils.py`
+  - `train.py`
+- Updated segment-attention status logging in `core/model.py` to print the actual position mode (`segment_position_reset` true/false) instead of a hardcoded message.
+
+### Fixed
+
+- Fixed `MemoryError` in general-text sampling caused by token-by-token Python list growth on large shard sets.
+- Fixed zero-general-episode extraction when pretraining shards do not contain EOS tokens.
+- Fixed Phase 1b coverage warnings underestimating effective dataset exposure by ignoring gradient accumulation.
+
 ## [0.4.0] - 2026-02-15 — Complete SFT Pipeline
 
 Design and implementation of the complete 6-phase Supervised Fine-Tuning pipeline
@@ -14,6 +62,7 @@ with tool-calling, reasoning, and citation capabilities.
 ### Added
 
 #### SFT Pipeline Architecture
+
 - **6-phase sequential curriculum** taking the base model from raw token prediction to agentic RAG:
   1. **Format Lock** — learn `<myPT_assistant>...<myPT_eot>` skeleton, stop generation
   2. **Operators** — generalize abstract operators (COPY/WRAP/EXTRACT) to unseen payloads
@@ -28,17 +77,20 @@ with tool-calling, reasoning, and citation capabilities.
 - **Complete pipeline guide:** `docs/sft/SFT_PIPELINE_GUIDE.md` (17 sections, ~940 lines) covering architecture, data flow, every phase with exact commands, success gates, HuggingFace dataset integration, anti-forgetting strategies, and troubleshooting
 
 #### Data Generation Scripts
+
 - `scripts/sft/generate_rag_chat_sft.py` — Phase 3 RAG chat episodes with 6 episode patterns (context_answer, context_think, multiturn, extraction, insufficient_context, no_context), 30 EN + 30 DE context question templates, follow-up questions, extraction directives, insufficient-context refusals
 - `scripts/sft/generate_agent_sft.py` — Phase 5-6 agentic tool-calling episodes with 8 patterns (search, list_docs, get_doc, summarize, multi_step, no_results, no_tool, contrastive), think/cite blocks, 4 EN + 4 DE contrastive wrong-tool-then-correction scenarios
 - `scripts/sft/generate_pretrain_replay.py` — samples raw text from pre-training shards for anti-forgetting replay buffers
 
 #### Tokenization & Packing
+
 - `scripts/sft/prepare_chat_sft.py` — Phase 1-4 tokenizer with episode packing, loss masking, weighted masks
 - `scripts/sft/prepare_tool_sft.py` — Phase 5-6 tokenizer handling all 19 tags including toolcall/toolresult roles, packing support, segment_ids for attention isolation
 - `scripts/sft/pack_utils.py` — shared packing utilities: `greedy_bin_pack()`, `group_by_field()`, `compute_packing_stats()`
 - **Episode packing** fills each 1024-token block with multiple episodes (25-50x efficiency gain for Phase 1-2 where episodes are ~30 tokens)
 
 #### Training Configs
+
 - 6 canonical configs in `configs/sft/`: `phase1_format_lock.json` through `phase6_agentic_rag.json`
 - Monotonically decreasing learning rates: 7e-5 → 3e-5 → 3e-5 → 2.5e-5 → 2e-5 → 1.5e-5
 - Phase-appropriate dropout: 0.10 (synthetic) → 0.08 (operators) → 0.12 (chat) → 0.10 → 0.08 → 0.08
@@ -46,12 +98,14 @@ with tool-calling, reasoning, and citation capabilities.
 - NEFTune noise (`neftune_alpha`) per phase
 
 #### Three-Tier System Prompt Strategy
+
 - Phase 1-2: `"You are MyPT."` (~4 tokens) — maximizes loss mask % on ultra-short episodes
 - Phase 3-4: `CHAT_SYSTEM_PROMPT` (~15-20 tokens, 4 short variants) — episodes long enough to absorb
 - Phase 5-6: `AGENTIC_STANDARD_PROMPT` (~80 tokens) — tool episodes are long, need tool list
 - Defined in `core/system_prompts.py`
 
 #### Anti-Forgetting & Evaluation
+
 - **Pre-training replay:** `generate_pretrain_replay.py` for 1-5% raw text mixing per phase
 - **Cross-phase replay:** mandatory schedule (Phase 2: 5% P1, Phase 3: 3% P1 + 3% P2, etc.)
 - **Regression gate:** `scripts/eval/run_regression_gate.py` — automated pass/fail after each phase with cumulative bucket thresholds
@@ -59,19 +113,23 @@ with tool-calling, reasoning, and citation capabilities.
 - **OOD generalization eval:** `data/eval_ood/` — 38 prompts across 4 files using novel phrasings absent from training templates, auto-detected by regression gate for phases ≥ 3
 
 #### Weighted Loss Masking (WeFT-style)
+
 - Control tokens (`<myPT_eot>`, `<myPT_toolcall>`, `<myPT_think>`, `<myPT_cite>`) get 1.5-2.0x loss weight
 - `--weighted_mask` flag writes `mask_weighted.bin` (float32) alongside backward-compatible `mask.bin` (uint8)
 - `core/episode_data_loader.py` auto-detects and prioritizes float32 weights
 
 #### NEFTune Embedding Noise
+
 - `core/model.py`: `neftune_alpha` in `GPTConfig`, uniform noise injection in `forward()` during training only
 - Configurable per phase via config JSON
 
 #### Future-Proof Special Token ID Resolution
+
 - `core/special_tokens.py`: `BASE_VOCAB_SIZE` + `get_special_token_ids()` — single source of truth
 - Migrated 15+ scripts from hardcoded numeric IDs to dynamic lookups
 
 #### Data Quality & Diversity
+
 - **Template diversity:** All template lists in both generators roughly doubled (think templates 2-3→5-7, answer templates 3→6-12, question templates 4-8→8-30)
 - **Question style diversity:** Added casual, imperative, task-oriented, analytical, and extraction styles (previously all neutral/polite)
 - **Contrastive examples:** 8% of Phase 5-6 episodes are wrong-tool-then-correction scenarios
@@ -211,13 +269,3 @@ with tool-calling, reasoning, and citation capabilities.
 - Compliance tracking for data provenance
 - Cross-platform support (Windows/Linux)
 - Modular configuration system (JSON-based)
-
----
-
-## [Unreleased]
-
-### Planned
-
-- Unified 6B token dataset generation (from-scratch training run)
-- RAG evaluation benchmarks
-- RAG Tool-Calling agent training

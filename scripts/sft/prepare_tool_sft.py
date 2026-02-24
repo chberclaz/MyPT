@@ -57,7 +57,7 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from core.special_tokens import SPECIAL_TOKEN_STRINGS, get_special_token_ids
 from core.tokenizer import Tokenizer
@@ -122,8 +122,8 @@ def parse_args():
     # Packing options
     parser.add_argument("--enable_packing", action="store_true",
                         help="Enable sequence packing (fill block_size with multiple episodes)")
-    parser.add_argument("--pack_block_size", type=int, default=1024,
-                        help="Target packed sequence length (default: 1024)")
+    parser.add_argument("--pack_block_size", type=int, default=4096,
+                        help="Target packed sequence length (default: 4096)")
     
     # Weighted loss masking (WeFT-style)
     parser.add_argument("--weighted_mask", action="store_true",

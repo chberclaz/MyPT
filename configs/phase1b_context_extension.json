@@ -47,5 +47,6 @@
   "epoch_drop_last": true,
 
   "eval_seed": 1337,
-  "log_file": "logs/train/phase1b_context_extension_eval.jsonl"
+  "log_file": "logs/train/phase1b_context_extension_eval.jsonl",
+  "terminal_log_file": "logs/train/phase1b_context_extension_terminal.log"
 }

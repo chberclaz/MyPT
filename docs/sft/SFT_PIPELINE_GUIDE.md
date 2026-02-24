@@ -113,7 +113,7 @@ python train.py \
 
 Config: `configs/phase1b_context_extension.json` -- B=4, T=4096, grad_accum=4, LR=3e-5, 12K iters, rope_scale=4.0, episode-indexed with epoch sampling. ~800M tokens (40% QA, 60% general).
 
-After this phase, ALL subsequent SFT phases use `block_size: 4096` and `rope_scale: 4.0`.
+After this phase, ALL SFT phases use `block_size: 4096` and `rope_scale: 4.0`.
 
 See `docs/training/PHASE1B_CONTEXT_EXTENSION.md` for the full training document.
 
@@ -209,8 +209,8 @@ Both produce the same binary format (tokens.bin + mask.bin + episodes.idx).
 
 ### Episode Packing
 
-Without packing, each episode is padded to `block_size` (1024). A 30-token format lock
-episode wastes 97% of compute on padding. Packing fills each 1024-token block with
+Without packing, each episode is padded to `block_size` (4096). A 30-token format lock
+episode wastes >99% of compute on padding. Packing fills each 4096-token block with
 multiple episodes back-to-back, dramatically increasing supervised tokens per training step.
 
 Cross-episode attention is isolated via `segment_ids` -- the attention mask prevents
@@ -227,12 +227,12 @@ episodes within the same packed sequence from attending to each other.
 | 5     | ~400 tokens | 1-5            | 1.5-5x          | N/A (prepare_tool_sft.py, no packing yet) |
 | 6     | ~800 tokens | 1-2            | ~1x             | NO (episodes fill the window) |
 
-**Phase 1-2 are where packing is transformative** -- without it, training is 17-50x slower
-because almost every token in the 1024 window is wasted padding.
+**Phase 1-2 are where packing is transformative** -- without it, training is dramatically slower
+because almost every token in the 4096 window is wasted padding.
 
 ```bash
 # Packing flag (add to prepare_chat_sft.py calls):
---enable_packing --pack_block_size 1024
+--enable_packing --pack_block_size 4096
 
 # Optional: group by field before packing (keeps similar episodes together):
 --pack_by_field "_meta.operator"
@@ -323,12 +323,12 @@ python scripts/sft/mix_sft_jsonl.py \
 
 # 4. Tokenize with loss masking + PACKING (critical for short episodes)
 #    Episodes are ~30 tokens each. Without packing: 97% wasted padding.
-#    With packing: ~30 episodes per 1024 block = 25-50x more efficient.
+#    With packing: many short episodes per 4096 block (critical efficiency gain).
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase1_intermediate/phase1_mixed.jsonl \
     --output_dir data/sft_phase1_format_lock \
     --val_split 0.05 \
-    --enable_packing --pack_block_size 1024
+    --enable_packing --pack_block_size 4096
 ```
 
 ### Train
@@ -378,21 +378,28 @@ python scripts/sft/generate_operator_dataset.py \
 
 # 2. Mix 80% operators + 20% Phase 1 replay
 python scripts/sft/mix_sft_jsonl.py \
-    --inputs data/sft_phase2_intermediate/operators/operators.jsonl:0.8 \
+    --inputs data/sft_phase2_intermediate/operators/operator_train.jsonl:0.8 \
              data/sft_phase1_intermediate/phase1_mixed.jsonl:0.2 \
     --output data/sft_phase2_intermediate/phase2_mixed.jsonl --shuffle
 
 # 3. Tokenize with PACKING (critical for short operator episodes)
 #    Operator episodes average ~45 tokens. Without packing: 96% wasted padding.
-#    With packing: ~20 episodes per 1024 block = 17-34x more efficient.
+#    With packing: many short episodes per 4096 block (critical efficiency gain).
 #
-#    The --enable_packing flag concatenates multiple episodes into each 1024-token
+#    The --enable_packing flag concatenates multiple episodes into each 4096-token
 #    block, separated by segment_ids to prevent cross-episode attention bleed.
 #    This is the single most impactful flag for Phase 1-2 training speed.
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase2_intermediate/phase2_mixed.jsonl \
     --output_dir data/sft_phase2_operators \
-    --enable_packing --pack_block_size 1024
+    --enable_packing --pack_block_size 4096
+```
+
+```powershell
+# PowerShell equivalent (single-line commands)
+py.exe scripts/sft/generate_operator_dataset.py --output_dir data/sft_phase2_intermediate/operators
+py.exe scripts/sft/mix_sft_jsonl.py --inputs data/sft_phase2_intermediate/operators/operator_train.jsonl:0.8 data/sft_phase1_intermediate/phase1_mixed.jsonl:0.2 --output data/sft_phase2_intermediate/phase2_mixed.jsonl --shuffle
+py.exe scripts/sft/prepare_chat_sft.py --input data/sft_phase2_intermediate/phase2_mixed.jsonl --output_dir data/sft_phase2_operators --enable_packing --pack_block_size 4096
 ```
 
 ### Train
@@ -464,7 +471,7 @@ python scripts/sft/mix_sft_jsonl.py \
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase3_intermediate/phase3_mixed.jsonl \
     --output_dir data/sft_phase3_chat \
-    --enable_packing --pack_block_size 1024
+    --enable_packing --pack_block_size 4096
 ```
 
 ### Train
@@ -518,7 +525,7 @@ python scripts/sft/mix_sft_jsonl.py \
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase4_intermediate/phase4_mixed.jsonl \
     --output_dir data/sft_phase4_multiturn \
-    --enable_packing --pack_block_size 1024
+    --enable_packing --pack_block_size 4096
 ```
 
 ### Train
@@ -943,12 +950,12 @@ All SFT configs include the LLaMA-2 architecture fields. Key configs by phase:
 
 | Phase | Config File | LR | Iters | Block |
 |-------|-------------|-----|-------|-------|
-| 1 | `configs/sft/phase1_format_lock.json` | 7e-5 | 2000 | 512 |
-| 2 | `configs/sft/phase2_operators.json` | 3e-5 | 1200 | 1024 |
-| 3 | `configs/sft/phase3_chat_sft.json` | 3e-5 | 5000 | 1024 |
-| 4 | `configs/sft/phase4_multiturn.json` | 2.5e-5 | 3000 | 1024 |
-| 5 | `configs/sft/phase5_simple_toolcall.json` | 2e-5 | 3000 | 1024 |
-| 6 | `configs/sft/phase6_agentic_rag.json` | 1.5e-5 | 4000 | 1024 |
+| 1 | `configs/sft/phase1_format_lock.json` | 7e-5 | 2000 | 4096 |
+| 2 | `configs/sft/phase2_operators.json` | 3e-5 | 1200 | 4096 |
+| 3 | `configs/sft/phase3_chat_sft.json` | 3e-5 | 5000 | 4096 |
+| 4 | `configs/sft/phase4_multiturn.json` | 2.5e-5 | 3000 | 4096 |
+| 5 | `configs/sft/phase5_simple_toolcall.json` | 2e-5 | 3000 | 4096 |
+| 6 | `configs/sft/phase6_agentic_rag.json` | 1.5e-5 | 4000 | 4096 |
 
 All configs use:
 - `use_loss_mask: true`

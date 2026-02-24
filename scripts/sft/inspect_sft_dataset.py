@@ -14,9 +14,11 @@ import os
 import sys
 import json
 import numpy as np
+from pathlib import Path
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.tokenizer import Tokenizer
 from core.model import GPTConfig

@@ -683,7 +683,7 @@ def main():
     tokenizer = None
     if not args.no_bpe_filter:
         import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         from core.tokenizer import Tokenizer
         from core.model import GPTConfig
         config = GPTConfig(vocab_size=50304)

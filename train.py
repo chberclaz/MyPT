@@ -3,6 +3,9 @@
 # choco needs to be installed to install python
 # pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 import argparse
+import os
+import sys
+import json
 import torch
 import torch.nn as nn
 from core import (
@@ -90,15 +93,68 @@ def parse_args():
                         help="JSON file with eval prompts for training-time inference testing")
     parser.add_argument("--eval_max_new_tokens", type=int, default=64,
                         help="Max tokens to generate during eval (default: 64)")
+    parser.add_argument("--terminal_log_file", type=str, default=None,
+                        help="Optional path to mirror terminal stdout/stderr to a file (tee-style)")
     
     return parser.parse_args()
 
 
+class _TeeStream:
+    """Mirror writes to original stream and log file."""
+    def __init__(self, original_stream, log_stream):
+        self._orig = original_stream
+        self._log = log_stream
+
+    def write(self, data):
+        self._orig.write(data)
+        self._log.write(data)
+        self.flush()
+
+    def flush(self):
+        self._orig.flush()
+        self._log.flush()
+
+
+def _setup_terminal_mirror(log_path: str):
+    """Mirror stdout/stderr to log file while keeping terminal output."""
+    log_dir = os.path.dirname(log_path)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
+    # Line-buffered text file for near real-time logging.
+    log_stream = open(log_path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _TeeStream(sys.stdout, log_stream)
+    sys.stderr = _TeeStream(sys.stderr, log_stream)
+    print(f"[terminal_log] mirroring stdout/stderr to: {log_path}")
+
+
+def _resolve_terminal_log_file(args):
+    """
+    Resolve terminal log file with precedence:
+    CLI --terminal_log_file > config_file terminal_log_file > None.
+    """
+    if args.terminal_log_file:
+        return args.terminal_log_file
+    if args.config_file and os.path.exists(args.config_file):
+        try:
+            with open(args.config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            return cfg.get("terminal_log_file", None)
+        except Exception:
+            return None
+    return None
+
+
 def main():
     """Main training entry point"""
-    banner_train()
-    
     args = parse_args()
+
+    # Optional: tee-style terminal mirror to file (CLI or config file)
+    effective_terminal_log_file = _resolve_terminal_log_file(args)
+    if effective_terminal_log_file:
+        _setup_terminal_mirror(effective_terminal_log_file)
+
+    banner_train()
     
     # Load config from file or use CLI arguments
     # Training hyperparameters from config file (can be overridden by CLI)
@@ -106,9 +162,6 @@ def main():
     
     if args.config_file:
         print(f"Loading configuration from: {args.config_file}")
-        import json
-        import os
-        
         if not os.path.exists(args.config_file):
             raise FileNotFoundError(f"Config file not found: {args.config_file}")
         
@@ -120,7 +173,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "terminal_log_file", "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)

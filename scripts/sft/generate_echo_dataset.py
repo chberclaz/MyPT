@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 
 # Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # Use canonical system prompt from core
 from core.system_prompts import CONVERSATION_SYSTEM_PROMPT

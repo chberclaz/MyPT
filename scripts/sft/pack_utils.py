@@ -90,8 +90,9 @@ def greedy_bin_pack(
             mask = mask[-block_size:]
             ep_len = block_size
 
-        # Would adding this episode exceed block_size?
-        if len(current_tokens) + ep_len > block_size:
+        # Would adding this episode exceed block_size or uint8 segment_id capacity?
+        # segment_id=0 is reserved for padding; real episodes use 1..255.
+        if len(current_tokens) + ep_len > block_size or current_episode_count >= 255:
             # Finalize current pack (if non-empty)
             if current_tokens:
                 pad_len = block_size - len(current_tokens)

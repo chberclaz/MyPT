@@ -15,8 +15,9 @@ import torch.nn.functional as F
 import numpy as np
 import sys
 import os
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from core.model import GPT
 from core.episode_data_loader import GPTEpisodeDataLoader

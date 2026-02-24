@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 # Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # System prompt - keep consistent for format locking
 from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
@@ -1227,7 +1227,7 @@ def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> Li
         "Schlange": "Zischen", "Biene": "Summen", "Wolf": "Heulen",
         "Frosch": "Quaken", "Eule": "Huhu", "Pferd": "Wiehern",
         "Schaf": "Mäh", "Hahn": "Kikeriki",
-    ]
+    }
     
     GERMAN_SOUND_TEMPLATES = [
         "{animal} Geräusch?",

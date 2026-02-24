@@ -8,6 +8,8 @@ from dataclasses import asdict
 from contextlib import nullcontext
 import os
 import json
+import random
+import numpy as np
 # some tests
 # Local imports are placed here to avoid circulars when tooling loads files out of order
 from .tokenizer import Tokenizer
@@ -710,9 +712,16 @@ class GPT(nn.Module):
         if segment_ids is not None:
             attn_mask = self._build_segment_attention_mask(segment_ids)  # (B, 1, T, T)
             if not getattr(self, '_segment_attn_logged', False):
-                n_segments = segment_ids.max().item()
+                if segment_ids.dim() == 2:
+                    segs_per_sample = segment_ids.max(dim=1).values
+                    n_segments = int(segs_per_sample.max().item())
+                    avg_segments = float(segs_per_sample.float().mean().item())
+                    seg_stats = f"avg {avg_segments:.2f}, max {n_segments}"
+                else:
+                    n_segments = int(segment_ids.max().item())
+                    seg_stats = f"max {n_segments}"
                 pos_mode = "positions reset per episode" if getattr(self.config, 'segment_position_reset', True) else "absolute positions preserved across block"
-                print(f"  Segment-isolated attention ACTIVE: {n_segments} segments/pack, "
+                print(f"  Segment-isolated attention ACTIVE: {seg_stats} segments/pack, "
                       f"mask shape {attn_mask.shape}, {pos_mode}")
                 self._segment_attn_logged = True
 
@@ -1434,11 +1443,15 @@ class GPT(nn.Module):
                 tokens_processed = (iter - start_step) * tokens_per_step
                 progress_pct = (iter - start_step) / max(1, max_iters - start_step) * 100
                 
-                # Set eval seed for reproducibility if specified
+                # Set eval seed for reproducibility across all loader types.
+                # Torch-only seeding is not enough because some loaders sample via NumPy.
                 if eval_seed is not None:
+                    random.seed(eval_seed)
+                    np.random.seed(eval_seed)
                     torch.manual_seed(eval_seed)
                     if torch.cuda.is_available():
                         torch.cuda.manual_seed(eval_seed)
+                        torch.cuda.manual_seed_all(eval_seed)
                 
                 # Evaluate on main data loader (train split for train_loss reference)
                 losses = self.estimate_loss(data_loader, eval_iters, splits=['val'])
@@ -1462,9 +1475,12 @@ class GPT(nn.Module):
                     for eval_name, eval_loader in eval_data_loaders.items():
                         # Set eval seed for reproducibility if specified
                         if eval_seed is not None:
+                            random.seed(eval_seed)
+                            np.random.seed(eval_seed)
                             torch.manual_seed(eval_seed)
                             if torch.cuda.is_available():
                                 torch.cuda.manual_seed(eval_seed)
+                                torch.cuda.manual_seed_all(eval_seed)
                         
                         eval_loss = self.estimate_loss(eval_loader, eval_iters, splits=['val'])
                         eval_losses[eval_name] = float(eval_loss['val'])

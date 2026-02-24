@@ -24,7 +24,7 @@ import numpy as np
 from collections import defaultdict
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # Dynamic token ID lookup -- never hardcode IDs!
 from core.special_tokens import get_special_token_ids

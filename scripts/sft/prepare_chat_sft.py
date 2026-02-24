@@ -64,7 +64,7 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from core.special_tokens import SPECIAL_TOKEN_STRINGS
 from core.tokenizer import Tokenizer
@@ -246,8 +246,8 @@ def parse_args():
     # Packing options
     parser.add_argument("--enable_packing", action="store_true",
                         help="Enable sequence packing (fill block_size with multiple episodes)")
-    parser.add_argument("--pack_block_size", type=int, default=1024,
-                        help="Target packed sequence length (default: 1024)")
+    parser.add_argument("--pack_block_size", type=int, default=4096,
+                        help="Target packed sequence length (default: 4096)")
     parser.add_argument("--pack_by_field", type=str, default=None,
                         help="Group episodes by this metadata field before packing (e.g., '_meta.operator')")
     parser.add_argument("--pack_shuffle", action="store_true", default=True,
@@ -502,8 +502,10 @@ def greedy_bin_pack(
             mask = mask[-block_size:]
             ep_len = block_size
         
-        # Would adding this episode exceed block_size?
-        if len(current_tokens) + ep_len > block_size:
+        # Would adding this episode exceed block_size or uint8 segment_id capacity?
+        # segment_id=0 is reserved for padding; real episodes use 1..255.
+        # If we already have 255 episodes in this pack, flush before adding more.
+        if len(current_tokens) + ep_len > block_size or current_episode_count >= 255:
             # Finalize current pack (if non-empty)
             if current_tokens:
                 # Pad to block_size

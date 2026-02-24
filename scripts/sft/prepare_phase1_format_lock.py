@@ -11,7 +11,7 @@ Pipeline:
     3. Mix datasets (70% format lock + 30% echo, shuffled)
     4. Tokenize mixed dataset with loss masking + PACKING (via prepare_chat_sft.py)
        Packing is ON by default: Phase 1 episodes are ~30 tokens each, so packing
-       fits ~30 episodes per 1024-token block (25-50x training efficiency gain).
+       fits many episodes per 4096-token block (major training efficiency gain).
     5. Print stats and validate output
 
 Usage:
@@ -33,9 +33,23 @@ import subprocess
 import sys
 import json
 import shutil
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _abs_path(p: Path) -> Path:
+    """Resolve path relative to project root if not absolute."""
+    return p if p.is_absolute() else (PROJECT_ROOT / p)
+
+
+def _resolve_existing_path(candidates):
+    """Return first existing path from candidate list, else None."""
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
 
 
 def run_cmd(cmd: list, description: str, dry_run: bool = False):
@@ -50,7 +64,16 @@ def run_cmd(cmd: list, description: str, dry_run: bool = False):
         print("  [DRY RUN] Skipping execution")
         return True
 
-    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=False)
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    project_root_str = str(PROJECT_ROOT)
+    if existing_pythonpath:
+        if project_root_str not in existing_pythonpath.split(os.pathsep):
+            env["PYTHONPATH"] = project_root_str + os.pathsep + existing_pythonpath
+    else:
+        env["PYTHONPATH"] = project_root_str
+
+    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=env, capture_output=False)
     if result.returncode != 0:
         print(f"  ERROR: Command failed with exit code {result.returncode}")
         return False
@@ -111,14 +134,14 @@ def main():
                         help="Stop after mixing (don't tokenize)")
     parser.add_argument("--no_packing", action="store_true",
                         help="Disable episode packing (packing is ON by default for Phase 1)")
-    parser.add_argument("--pack_block_size", type=int, default=1024,
-                        help="Block size for episode packing (default: 1024)")
+    parser.add_argument("--pack_block_size", type=int, default=4096,
+                        help="Block size for episode packing (default: 4096)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
     args = parser.parse_args()
 
-    intermediate = Path(args.intermediate_dir)
-    output = Path(args.output_dir)
+    intermediate = _abs_path(Path(args.intermediate_dir))
+    output = _abs_path(Path(args.output_dir))
     py = sys.executable
 
     print("\n" + "="*70)
@@ -172,22 +195,37 @@ def main():
     if not ok:
         return 1
 
+    # Resolve mixed output path robustly (some scripts may resolve relative paths differently)
+    mixed_file_resolved = mixed_file
+    if not args.dry_run:
+        alt_mixed = PROJECT_ROOT / "scripts" / Path(args.intermediate_dir) / "phase1_mixed.jsonl"
+        found = _resolve_existing_path([mixed_file, alt_mixed])
+        if found is not None:
+            mixed_file_resolved = found
+            if found != mixed_file:
+                print(f"  Note: using mixed file from alternate path: {found}")
+        else:
+            print(f"  ERROR: mixed output not found at expected locations:")
+            print(f"    - {mixed_file}")
+            print(f"    - {alt_mixed}")
+            return 1
+
     # Print mix stats
-    if not args.dry_run and mixed_file.exists():
-        total, en, de = count_jsonl(mixed_file)
+    if not args.dry_run and mixed_file_resolved.exists():
+        total, en, de = count_jsonl(mixed_file_resolved)
         de_pct = (de / total * 100) if total > 0 else 0
         print(f"\n  Mixed dataset: {total:,} episodes")
         print(f"    English: {en:,}  German: {de:,} ({de_pct:.1f}%)")
 
     if args.skip_tokenize:
         print(f"\n  Skipping tokenization (--skip_tokenize)")
-        print(f"  Mixed JSONL ready at: {mixed_file}")
+        print(f"  Mixed JSONL ready at: {mixed_file_resolved}")
         return 0
 
     # Step 4: Tokenize with loss masking + packing
     tokenize_cmd = [
         py, "scripts/sft/prepare_chat_sft.py",
-        "--input", str(mixed_file),
+        "--input", str(mixed_file_resolved),
         "--output_dir", str(output),
         "--val_split", str(args.val_split),
     ]
@@ -209,9 +247,16 @@ def main():
         if (output / "dataset_metadata.json").exists():
             with open(output / "dataset_metadata.json") as f:
                 meta = json.load(f)
-            print(f"  Total tokens:      {meta.get('total_tokens', '?'):,}")
-            print(f"  Train episodes:    {meta.get('train_episodes', '?'):,}")
-            print(f"  Val episodes:      {meta.get('val_episodes', '?'):,}")
+            def _fmt_num(val):
+                return f"{val:,}" if isinstance(val, int) else str(val)
+
+            total_tokens = meta.get('total_tokens', meta.get('num_train_tokens', '?'))
+            train_eps = meta.get('train_episodes', meta.get('num_train_episodes', '?'))
+            val_eps = meta.get('val_episodes', meta.get('num_val_episodes', '?'))
+
+            print(f"  Total tokens:      {_fmt_num(total_tokens)}")
+            print(f"  Train episodes:    {_fmt_num(train_eps)}")
+            print(f"  Val episodes:      {_fmt_num(val_eps)}")
 
         print(f"\n  Next step:")
         print(f"    python train.py \\")
