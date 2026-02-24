@@ -1394,6 +1394,7 @@ class GPT(nn.Module):
         train_start_dt = datetime.datetime.now()
         current_phase = initial_phase if initial_phase is not None else "default"
         tokens_per_step = self.config.batch_size * grad_accum_steps * self.config.block_size
+        auto_checkpoint_enabled = False
         
         # Write training header to log
         if log_file is not None:
@@ -1695,6 +1696,24 @@ class GPT(nn.Module):
                 with ctx:
                     if isinstance(batch, (tuple, list)) and len(batch) == 4:
                         xb, yb, loss_mask, segment_ids = batch
+                        # Long-context packed training with segment-isolated masks is much more
+                        # memory-intensive in backward. Auto-enable activation checkpointing to
+                        # avoid OOM when configs forgot to set use_checkpoint=true.
+                        if (
+                            (not auto_checkpoint_enabled)
+                            and self.training
+                            and segment_ids is not None
+                            and self.config.block_size >= 2048
+                            and (not getattr(self.config, "use_checkpoint", False))
+                        ):
+                            self.config.use_checkpoint = True
+                            for block in self.blocks:
+                                block.use_checkpoint = True
+                            auto_checkpoint_enabled = True
+                            print(
+                                "  Auto-enabled activation checkpointing for long-context "
+                                "segment-isolated training (memory safeguard)."
+                            )
                         _, loss, _ = self(xb, yb, loss_mask=loss_mask, segment_ids=segment_ids)
                     elif isinstance(batch, (tuple, list)) and len(batch) == 3:
                         xb, yb, loss_mask = batch
