@@ -437,22 +437,23 @@ python scripts/eval/eval_operator.py --model phase2_operators -v
 
 ---
 
-## 5.5 Phase 2.5: WRAP + Anti-Echo (Optional Bridge)
+## 5.5 Refinement Bridge (Optional): Phase 2.5 + 2.6
 
-**Goal:** Harden WRAP delimiter behavior and anti-echo constraints before Phase 3.
+**Why this section exists:**  
+After Phase 2, operator abstraction is usually strong, but edge behavior may still lag:
+- WRAP can underperform COPY/EXTRACT on delimiter variants
+- model may mirror nonce/gibberish instead of refusing/returning safe outputs
+- broad chat SFT (Phase 3+) can amplify those weaknesses if not corrected early
 
-Use this bridge phase when:
-- WRAP lags behind COPY/EXTRACT in Phase 2 eval
-- model tends to mirror user text for gibberish / unknown tokens
-- you want extra robustness before broad chat SFT
+Use this bridge only when eval shows those gaps.
 
-### Generate & Prepare
+### Phase 2.5 — WRAP + Anti-Echo Hardening
 
 ```bash
-# 1. Build Phase 2.5 intermediate JSONL sources:
-#    - WRAP-focused dataset (high delimiter/template diversity)
-#    - echo + anti-echo dataset
-#    - 20% replay from current phase2 operator train set
+# 1) Build intermediate data:
+#    - WRAP-focused dataset (delimiter/template diversity)
+#    - echo + anti-echo set
+#    - 20% replay from phase2 operators
 python scripts/sft/prepare_phase2_5_wrap_antiecho.py \
     --output_dir data/sft_phase2_5_intermediate \
     --replay_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
@@ -464,18 +465,15 @@ python scripts/sft/prepare_phase2_5_wrap_antiecho.py \
     --echo_anti_ratio 0.40 \
     --echo_contrast_ratio 0.35
 
-# 2. Tokenize + pack for 4096 SFT
+# 2) Tokenize + pack
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl \
     --output_dir data/sft_phase2_5_wrap_antiecho \
     --val_file data/sft_phase2_5_intermediate/wrap_focus_val.jsonl \
     --no_system_prompt \
     --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
-```
 
-### Train
-
-```bash
+# 3) Train
 python train.py \
     --model_name phase2_5_wrap_antiecho \
     --config_file configs/sft/phase2_5_wrap_antiecho.json \
@@ -483,11 +481,49 @@ python train.py \
     --init_from_model checkpoints/phase2_operators_gold
 ```
 
-### Success Gate
+### Phase 2.6 — Anti-Echo Micro-Phase (Targeted)
+
+Use when anti-echo still fails after 2.5.
 
 ```bash
+# 1) Build targeted anti-echo dataset
+#    target mix: 60% anti-echo, 20% echo, 20% operator replay
+python scripts/sft/prepare_phase2_6_antiecho.py \
+    --output_dir data/sft_phase2_6_intermediate \
+    --replay_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
+    --target_train_size 60000 \
+    --val_size 3000 \
+    --strict_safe_samples 1800
+
+# 2) Tokenize + pack
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl \
+    --output_dir data/sft_phase2_6_antiecho \
+    --val_file data/sft_phase2_6_intermediate/phase2_6_val.jsonl \
+    --no_system_prompt \
+    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+
+# 3) Train (short micro-phase)
+python train.py \
+    --model_name phase2_6_antiecho \
+    --config_file configs/sft/phase2_6_antiecho.json \
+    --dataset_dir data/sft_phase2_6_antiecho \
+    --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
+```
+
+### Refinement Success Gates
+
+```bash
+# Primary bridge gate
 python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_5_wrap_antiecho -v
 # Target: WRAP exact match >= 90% and anti-echo >= 75%
+
+# Optional integrated regression gate with 2.5 check
+python scripts/eval/run_regression_gate.py \
+    --model phase2_5_wrap_antiecho \
+    --phase 2 \
+    --run_phase2_5_wrap_gate \
+    --phase2_5_no_system_prompt -v
 ```
 
 ---
