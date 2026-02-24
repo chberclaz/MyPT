@@ -34,7 +34,16 @@ def normalize_output(text: str) -> str:
     # Remove closing tag if present
     if '</myPT_assistant>' in text:
         text = text.split('</myPT_assistant>')[0]
-    return text.strip()
+    text = text.strip()
+    # Be lenient for benign quote wrappers around COPY payloads:
+    # e.g., "'cascade'" or "`cascade`" should count as "cascade".
+    if len(text) >= 2:
+        quote_pairs = {("'", "'"), ('"', '"'), ("`", "`")}
+        left = text[0]
+        right = text[-1]
+        if (left, right) in quote_pairs:
+            text = text[1:-1].strip()
+    return text
 
 
 def exact_match(generated: str, expected: str) -> bool:
