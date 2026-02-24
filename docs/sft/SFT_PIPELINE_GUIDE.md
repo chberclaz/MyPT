@@ -321,23 +321,39 @@ python scripts/sft/mix_sft_jsonl.py \
     --output data/sft_phase1_intermediate/phase1_mixed.jsonl \
     --shuffle
 
-# 4. Tokenize with loss masking + PACKING (critical for short episodes)
-#    Episodes are ~30 tokens each. Without packing: 97% wasted padding.
-#    With packing: many short episodes per 4096 block (critical efficiency gain).
+# 4A. Tokenize with loss masking + PACKING (default)
+#     Episodes are short; packing improves token utilization.
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase1_intermediate/phase1_mixed.jsonl \
     --output_dir data/sft_phase1_format_lock \
     --val_split 0.05 \
     --enable_packing --pack_block_size 4096
+
+# 4B. Tokenize with loss masking + NO PACKING (A/B variant)
+#     Use a separate output dir so you can compare packed vs non-packed runs.
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase1_intermediate/phase1_mixed.jsonl \
+    --output_dir data/sft_phase1_format_lock_nopack \
+    --val_split 0.05
 ```
 
 ### Train
 
 ```bash
+# Packed variant (default)
 python train.py \
     --model_name phase1_format_lock \
     --config_file configs/sft/phase1_format_lock.json \
     --dataset_dir data/sft_phase1_format_lock \
+    --init_from_model checkpoints/GOLD_unified_v1
+
+# Non-packed variant (A/B)
+# Uses a dedicated short-context config. Without packing, 4096 would waste too much padding.
+# Expect more iterations than packed mode for similar token budget.
+python train.py \
+    --model_name phase1_format_lock_nopack \
+    --config_file configs/sft/phase1_format_lock_nopack_shortctx.json \
+    --dataset_dir data/sft_phase1_format_lock_nopack \
     --init_from_model checkpoints/GOLD_unified_v1
 ```
 
