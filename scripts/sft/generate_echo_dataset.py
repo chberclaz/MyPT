@@ -538,8 +538,9 @@ def main():
     if args.bpe_safe and args.gibberish in ["include", "only"]:
         print("Loading tokenizer for BPE-safe filtering...")
         try:
-            from core import Tokenizer
-            tokenizer = Tokenizer()
+            from core import Tokenizer, GPTConfig
+            tok_cfg = GPTConfig(vocab_size=50304)
+            tokenizer = Tokenizer(tok_cfg, "gpt2")
             print(f"  Tokenizer loaded, vocab size: {tokenizer.vocab_size}")
         except Exception as e:
             print(f"  Warning: Could not load tokenizer ({e})")

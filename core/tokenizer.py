@@ -1,6 +1,6 @@
 import re
 import tiktoken
-from .special_tokens import SPECIAL_TOKEN_STRINGS
+from .special_tokens import SPECIAL_TOKEN_STRINGS, get_special_token_ids
 
 
 class Tokenizer():
@@ -43,22 +43,21 @@ class Tokenizer():
         
         The regex pattern for fast encoding is also built dynamically from the same source.
         """
-        next_id = self.base_vocab_size  # Start after base vocab (50257 for GPT-2)
+        special_ids = get_special_token_ids()
         
-        # Dynamically register all tokens defined in special_tokens.py
+        # Register all tokens using pinned canonical IDs
         for name, tok_str in SPECIAL_TOKEN_STRINGS.items():
-            if next_id >= self.model_vocab_size:
+            token_id = special_ids[name]
+            if token_id >= self.model_vocab_size:
                 raise ValueError(
                     f"Not enough reserved vocab slots for special tokens! "
                     f"Need {len(SPECIAL_TOKEN_STRINGS)} slots, but only "
                     f"{self.model_vocab_size - self.base_vocab_size} available. "
                     f"Increase config.vocab_size (currently {self.model_vocab_size})."
                 )
-            
-            self.special_token_encoder[tok_str] = next_id
-            self.special_token_decoder[next_id] = tok_str
-            self.special_tokens[name] = next_id
-            next_id += 1
+            self.special_token_encoder[tok_str] = token_id
+            self.special_token_decoder[token_id] = tok_str
+            self.special_tokens[name] = token_id
         
         # Build regex pattern dynamically from registered tokens
         # Pattern: (<system>|</system>|<user>|</user>|...) - matches any special token
@@ -69,7 +68,8 @@ class Tokenizer():
         escaped_tokens = [re.escape(tok) for tok in tokens_by_length]
         self._special_token_pattern = re.compile('|'.join(escaped_tokens))
         
-        print(f"Registered {len(self.special_tokens)} special tokens (IDs {self.base_vocab_size}-{next_id-1})")
+        ids = sorted(self.special_token_decoder.keys())
+        print(f"Registered {len(self.special_tokens)} special tokens (IDs {ids[0]}-{ids[-1]})")
         
     def forward(self, kind):
         self.__set_encoding(kind)
@@ -246,14 +246,14 @@ class Tokenizer():
                 # Rebuild decoder from encoder
                 self.special_token_decoder = {v: k for k, v in self.special_token_encoder.items()}
                 
-                # Canonical ID map from current special_tokens.py
+                # Canonical ID map from pinned mapping in special_tokens.py
+                canonical_ids = get_special_token_ids()
                 canonical_encoder = {}
                 canonical_by_name = {}
-                next_id = self.base_vocab_size
                 for name, tok_str in SPECIAL_TOKEN_STRINGS.items():
-                    canonical_encoder[tok_str] = next_id
-                    canonical_by_name[name] = next_id
-                    next_id += 1
+                    cid = canonical_ids[name]
+                    canonical_encoder[tok_str] = cid
+                    canonical_by_name[name] = cid
                 
                 # Detect legacy mismatch (e.g., old 15-token mapping shifted IDs).
                 # In that case, force canonical IDs so generation stop tokens and

@@ -113,16 +113,41 @@ SPECIAL_TOKEN_STRINGS = {
 
 BASE_VOCAB_SIZE = 50257  # GPT-2 base vocabulary size
 
+# ---------------------------------------------------------------------------
+# IMPORTANT: Static (pinned) ID mapping
+# ---------------------------------------------------------------------------
+# IDs are explicitly pinned to prevent semantic drift across checkpoints.
+# Never reorder existing IDs. For new tokens, append by assigning a NEW ID.
+# ---------------------------------------------------------------------------
+SPECIAL_TOKEN_IDS = {
+    "myPT_system_open": 50257,
+    "myPT_system_close": 50258,
+    "myPT_user_open": 50259,
+    "myPT_user_close": 50260,
+    "myPT_assistant_open": 50261,
+    "myPT_assistant_close": 50262,
+    "myPT_user_context_open": 50263,
+    "myPT_user_context_close": 50264,
+    "myPT_assistant_context_open": 50265,
+    "myPT_assistant_context_close": 50266,
+    "myPT_toolcall_open": 50267,
+    "myPT_toolcall_close": 50268,
+    "myPT_toolresult_open": 50269,
+    "myPT_toolresult_close": 50270,
+    "myPT_think_open": 50271,
+    "myPT_think_close": 50272,
+    "myPT_cite_open": 50273,
+    "myPT_cite_close": 50274,
+    "myPT_eot": 50275,
+}
+
 def get_special_token_ids() -> dict:
-    """Return the canonical name -> token-ID mapping.
-
-    Computed from the dict-insertion order of SPECIAL_TOKEN_STRINGS so it
-    stays in sync automatically when tokens are added, removed, or reordered.
-
-    Example::
-
-        ids = get_special_token_ids()
-        ASSISTANT_OPEN_ID = ids["myPT_assistant_open"]   # always correct
-    """
-    return {name: BASE_VOCAB_SIZE + i
-            for i, name in enumerate(SPECIAL_TOKEN_STRINGS)}
+    """Return canonical, static name -> token-ID mapping."""
+    # Guard against accidental mismatch between token strings and pinned IDs.
+    missing = [k for k in SPECIAL_TOKEN_STRINGS.keys() if k not in SPECIAL_TOKEN_IDS]
+    extra = [k for k in SPECIAL_TOKEN_IDS.keys() if k not in SPECIAL_TOKEN_STRINGS]
+    if missing or extra:
+        raise ValueError(
+            f"Special token ID map mismatch. missing_ids={missing}, extra_ids={extra}"
+        )
+    return SPECIAL_TOKEN_IDS.copy()
