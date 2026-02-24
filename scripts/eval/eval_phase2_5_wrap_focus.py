@@ -79,7 +79,12 @@ def generate(model, prompt: str, max_new_tokens: int) -> str:
     return normalize(gen)
 
 
-def run_eval(model_name: str, max_new_tokens: int, no_system_prompt: bool, verbose: bool) -> int:
+def evaluate_phase2_5(
+    model_name: str,
+    max_new_tokens: int = 48,
+    no_system_prompt: bool = True,
+    verbose: bool = False,
+) -> dict:
     model = load_model(model_name)
     model.eval()
 
@@ -137,7 +142,28 @@ def run_eval(model_name: str, max_new_tokens: int, no_system_prompt: bool, verbo
 
     overall_ok = wrap_ok and anti_ok
     print(f"OVERALL: {'PASS' if overall_ok else 'FAIL'}")
-    return 0 if overall_ok else 1
+
+    return {
+        "wrap_passed": wrap_pass,
+        "wrap_total": wrap_total,
+        "wrap_pass_rate": round(wrap_pct, 1),
+        "anti_passed": anti_pass,
+        "anti_total": anti_total,
+        "anti_pass_rate": round(anti_pct, 1),
+        "wrap_threshold": 90.0,
+        "anti_threshold": 75.0,
+        "passed": overall_ok,
+    }
+
+
+def run_eval(model_name: str, max_new_tokens: int, no_system_prompt: bool, verbose: bool) -> int:
+    result = evaluate_phase2_5(
+        model_name=model_name,
+        max_new_tokens=max_new_tokens,
+        no_system_prompt=no_system_prompt,
+        verbose=verbose,
+    )
+    return 0 if result["passed"] else 1
 
 
 def main() -> None:

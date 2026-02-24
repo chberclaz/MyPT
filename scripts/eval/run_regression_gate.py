@@ -90,6 +90,8 @@ def run_gate(
     verbose: bool = False,
     max_new_tokens: int = 64,
     skills_eval_dir: Optional[str] = None,
+    run_phase2_5_wrap_gate: bool = False,
+    phase2_5_no_system_prompt: bool = True,
 ) -> Dict:
     """Run the regression gate for a given model and phase.
     
@@ -200,6 +202,43 @@ def run_gate(
             print(f"  [WARN] ood_phase{phase}: {ood_result['pass_rate']:.1f}% (threshold: {ood_threshold:.0f}%) - novel template generalization")
         else:
             print(f"  [PASS] ood_phase{phase}: {ood_result['pass_rate']:.1f}% (threshold: {ood_threshold:.0f}%)")
+
+    # Optional Phase 2.5 bridge gate: WRAP + anti-echo
+    if run_phase2_5_wrap_gate:
+        print("\n  Running optional Phase 2.5 WRAP + anti-echo gate...")
+        from scripts.eval.eval_phase2_5_wrap_focus import evaluate_phase2_5
+        p25 = evaluate_phase2_5(
+            model_name=model_name,
+            max_new_tokens=max_new_tokens,
+            no_system_prompt=phase2_5_no_system_prompt,
+            verbose=verbose,
+        )
+        gate_results["phase2_5_wrap_gate"] = p25
+        if not p25.get("passed", False):
+            gate_results["gate_passed"] = False
+            gate_results["regressions"].append({
+                "bucket": "phase2_5_wrap_gate",
+                "expected_min": {
+                    "wrap_pass_rate": p25.get("wrap_threshold", 90.0),
+                    "anti_pass_rate": p25.get("anti_threshold", 75.0),
+                },
+                "actual": {
+                    "wrap_pass_rate": p25.get("wrap_pass_rate", 0.0),
+                    "anti_pass_rate": p25.get("anti_pass_rate", 0.0),
+                },
+                "description": "Optional Phase 2.5 WRAP + anti-echo bridge gate",
+            })
+            print(
+                f"  [FAIL] phase2_5_wrap_gate: "
+                f"wrap={p25.get('wrap_pass_rate', 0.0):.1f}% "
+                f"anti={p25.get('anti_pass_rate', 0.0):.1f}%"
+            )
+        else:
+            print(
+                f"  [PASS] phase2_5_wrap_gate: "
+                f"wrap={p25.get('wrap_pass_rate', 0.0):.1f}% "
+                f"anti={p25.get('anti_pass_rate', 0.0):.1f}%"
+            )
     
     # Final verdict
     print("\n" + "=" * 60)
@@ -402,6 +441,12 @@ def main():
                         help="Show all results including passes")
     parser.add_argument("--skills_eval", type=str, default=None,
                         help="Path to pre-training skills eval directory")
+    parser.add_argument("--run_phase2_5_wrap_gate", action="store_true",
+                        help="Also run optional Phase 2.5 WRAP + anti-echo gate")
+    parser.add_argument("--phase2_5_no_system_prompt", action="store_true", default=True,
+                        help="Run Phase 2.5 gate without system prompt (default: True)")
+    parser.add_argument("--phase2_5_with_system_prompt", action="store_false", dest="phase2_5_no_system_prompt",
+                        help="Run Phase 2.5 gate with system prompt")
     
     args = parser.parse_args()
     
@@ -411,6 +456,8 @@ def main():
         verbose=args.verbose,
         max_new_tokens=args.max_new_tokens,
         skills_eval_dir=args.skills_eval,
+        run_phase2_5_wrap_gate=args.run_phase2_5_wrap_gate,
+        phase2_5_no_system_prompt=args.phase2_5_no_system_prompt,
     )
     
     # Save results
