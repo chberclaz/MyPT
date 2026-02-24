@@ -82,11 +82,18 @@ except ImportError:
 # Get tags from special_tokens.py
 SYSTEM_OPEN = SPECIAL_TOKEN_STRINGS["myPT_system_open"]
 SYSTEM_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_system_close"]
-# NOTE: CONTEXT tags NOT used in Phase 3a - reserved for Phase 3b agentic SFT
 USER_OPEN = SPECIAL_TOKEN_STRINGS["myPT_user_open"]
 USER_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_user_close"]
+USER_CONTEXT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_user_context_open"]
+USER_CONTEXT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_user_context_close"]
 ASSISTANT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_assistant_open"]
 ASSISTANT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_assistant_close"]
+ASSISTANT_CONTEXT_OPEN = SPECIAL_TOKEN_STRINGS["myPT_assistant_context_open"]
+ASSISTANT_CONTEXT_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_assistant_context_close"]
+THINK_OPEN = SPECIAL_TOKEN_STRINGS["myPT_think_open"]
+THINK_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_think_close"]
+CITE_OPEN = SPECIAL_TOKEN_STRINGS["myPT_cite_open"]
+CITE_CLOSE = SPECIAL_TOKEN_STRINGS["myPT_cite_close"]
 EOT = SPECIAL_TOKEN_STRINGS["myPT_eot"]
 
 
@@ -260,6 +267,13 @@ def parse_args():
                         help="Skip system prompt (for operators/mechanical tasks to maximize mask ratio)")
     parser.add_argument("--system_prompt", type=str, default=None,
                         help="Override system prompt (default: use CONVERSATION_SYSTEM_PROMPT)")
+    parser.add_argument("--enable_rag_tags", action="store_true",
+                        help="Enable chat serialization of optional RAG fields: "
+                             "user.context -> <myPT_user_context>, "
+                             "assistant.think -> <myPT_think>, "
+                             "assistant.cite -> <myPT_cite>, "
+                             "role=assistant_context -> <myPT_assistant_context>. "
+                             "Disabled by default to preserve legacy behavior.")
     
     # Weighted loss masking (WeFT-style)
     parser.add_argument("--weighted_mask", action="store_true",
@@ -273,7 +287,8 @@ def parse_args():
 def serialize_conversation(
     item: Dict[str, Any],
     skip_system: bool = False,
-    system_prompt_override: Optional[str] = None
+    system_prompt_override: Optional[str] = None,
+    enable_rag_tags: bool = False,
 ) -> Tuple[str, str]:
     """
     Serialize a conversation to text + char-level mask.
@@ -297,27 +312,43 @@ def serialize_conversation(
         text_parts.append(s)
         mask_parts.append("0" * len(s))
     
-    # NOTE: We do NOT include <myPT_user_context> here!
-    # The JSONL "context" field is just metadata (episode_id, language), NOT RAG context.
-    # <myPT_user_context> is reserved for Phase 3b agentic SFT where actual RAG data goes.
-    
     # Messages
     for msg in item.get("messages", []):
         role = msg.get("role", "user")
         content = msg.get("content", "")
         
         if role == "user":
-            u = f"{USER_OPEN}{content}{USER_CLOSE}"
+            user_context = msg.get("context", "") if enable_rag_tags else ""
+            if user_context:
+                inner = f"{USER_CONTEXT_OPEN}{user_context}{USER_CONTEXT_CLOSE}{content}"
+            else:
+                inner = content
+            u = f"{USER_OPEN}{inner}{USER_CLOSE}"
             text_parts.append(u)
             mask_parts.append("0" * len(u))  # Don't train on user messages
+
+        elif role == "assistant_context":
+            if enable_rag_tags:
+                ac = f"{ASSISTANT_CONTEXT_OPEN}{content}{ASSISTANT_CONTEXT_CLOSE}"
+                text_parts.append(ac)
+                mask_parts.append("0" * len(ac))
         
         elif role == "assistant":
+            think_text = msg.get("think", "") if enable_rag_tags else ""
+            cite_text = msg.get("cite", "") if enable_rag_tags else ""
+            inner = ""
+            if think_text:
+                inner += f"{THINK_OPEN}{think_text}{THINK_CLOSE}"
+            inner += content
+            if cite_text:
+                inner += f"{CITE_OPEN}{cite_text}{CITE_CLOSE}"
+
             # Opening tag: mask=0 (given in prompt, don't predict it)
             # Content + closing tag: mask=1 (model learns what to say and when to stop)
             text_parts.append(ASSISTANT_OPEN)
             mask_parts.append("0" * len(ASSISTANT_OPEN))  # Don't train on opening tag!
             
-            content_and_close = f"{content}{ASSISTANT_CLOSE}"
+            content_and_close = f"{inner}{ASSISTANT_CLOSE}"
             text_parts.append(content_and_close)
             mask_parts.append("1" * len(content_and_close))  # Train on content + closing tag
     
@@ -410,6 +441,147 @@ def char_mask_to_token_mask(
             token_mask.append(W_OFF)
     
     return token_ids, token_mask
+
+
+def collect_rag_field_stats(convs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Collect coverage statistics for optional RAG-style fields in chat JSONL."""
+    stats: Dict[str, Any] = {
+        "conversations": len(convs),
+        "messages_total": 0,
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "assistant_context_messages": 0,
+        "user_with_context": 0,
+        "assistant_with_think": 0,
+        "assistant_with_cite": 0,
+        "context_turns_total": 0,
+        "context_turns_with_cite": 0,
+        "conversations_with_user_context": 0,
+        "conversations_with_think": 0,
+        "conversations_with_cite": 0,
+        "sources": {},
+    }
+
+    for conv in convs:
+        source = conv.get("mix_source") or conv.get("source") or "unknown"
+        src = stats["sources"].setdefault(source, {
+            "conversations": 0,
+            "messages_total": 0,
+            "user_messages": 0,
+            "assistant_messages": 0,
+            "assistant_context_messages": 0,
+            "user_with_context": 0,
+            "assistant_with_think": 0,
+            "assistant_with_cite": 0,
+            "context_turns_total": 0,
+            "context_turns_with_cite": 0,
+        })
+        src["conversations"] += 1
+
+        conv_has_ctx = False
+        conv_has_think = False
+        conv_has_cite = False
+
+        messages = conv.get("messages", [])
+        for idx, msg in enumerate(messages):
+            stats["messages_total"] += 1
+            src["messages_total"] += 1
+
+            role = msg.get("role", "user")
+            if role == "user":
+                stats["user_messages"] += 1
+                src["user_messages"] += 1
+                if str(msg.get("context", "")).strip():
+                    stats["user_with_context"] += 1
+                    src["user_with_context"] += 1
+                    conv_has_ctx = True
+                    # Grounding quality proxy: if this user turn has context,
+                    # check whether the immediate next assistant turn carries cite.
+                    for j in range(idx + 1, len(messages)):
+                        next_msg = messages[j]
+                        if next_msg.get("role") != "assistant":
+                            continue
+                        stats["context_turns_total"] += 1
+                        src["context_turns_total"] += 1
+                        if str(next_msg.get("cite", "")).strip():
+                            stats["context_turns_with_cite"] += 1
+                            src["context_turns_with_cite"] += 1
+                        break
+            elif role == "assistant":
+                stats["assistant_messages"] += 1
+                src["assistant_messages"] += 1
+                if str(msg.get("think", "")).strip():
+                    stats["assistant_with_think"] += 1
+                    src["assistant_with_think"] += 1
+                    conv_has_think = True
+                if str(msg.get("cite", "")).strip():
+                    stats["assistant_with_cite"] += 1
+                    src["assistant_with_cite"] += 1
+                    conv_has_cite = True
+            elif role == "assistant_context":
+                stats["assistant_context_messages"] += 1
+                src["assistant_context_messages"] += 1
+
+        if conv_has_ctx:
+            stats["conversations_with_user_context"] += 1
+        if conv_has_think:
+            stats["conversations_with_think"] += 1
+        if conv_has_cite:
+            stats["conversations_with_cite"] += 1
+
+    return stats
+
+
+def print_rag_field_stats(stats: Dict[str, Any], split_name: str, rag_tags_enabled: bool) -> None:
+    """Print concise coverage report for context/think/cite fields."""
+    def _pct(part: int, total: int) -> str:
+        return f"{(100.0 * part / total):.1f}%" if total > 0 else "0.0%"
+
+    print(f"\nRAG Field Audit ({split_name}):")
+    print(f"  Conversations: {stats['conversations']:,}, messages: {stats['messages_total']:,}")
+    print(
+        f"  user.context: {stats['user_with_context']:,}/{stats['user_messages']:,} "
+        f"({_pct(stats['user_with_context'], stats['user_messages'])})"
+    )
+    print(
+        f"  assistant.think: {stats['assistant_with_think']:,}/{stats['assistant_messages']:,} "
+        f"({_pct(stats['assistant_with_think'], stats['assistant_messages'])})"
+    )
+    print(
+        f"  assistant.cite: {stats['assistant_with_cite']:,}/{stats['assistant_messages']:,} "
+        f"({_pct(stats['assistant_with_cite'], stats['assistant_messages'])})"
+    )
+    print(
+        f"  context->assistant cite coverage: {stats['context_turns_with_cite']:,}/"
+        f"{stats['context_turns_total']:,} "
+        f"({_pct(stats['context_turns_with_cite'], stats['context_turns_total'])})"
+    )
+    print(f"  assistant_context role: {stats['assistant_context_messages']:,}")
+
+    sources = list(stats["sources"].items())
+    sources.sort(key=lambda kv: kv[1]["conversations"], reverse=True)
+    if sources:
+        print("  By source (top 8):")
+        for source_name, src in sources[:8]:
+            print(
+                f"    - {source_name}: conv={src['conversations']:,}, "
+                f"ctx={src['user_with_context']:,}, think={src['assistant_with_think']:,}, "
+                f"cite={src['assistant_with_cite']:,}, "
+                f"ctx->cite={src['context_turns_with_cite']:,}/{src['context_turns_total']:,}"
+            )
+
+    if not rag_tags_enabled:
+        dropped_fields = (
+            stats["user_with_context"] +
+            stats["assistant_with_think"] +
+            stats["assistant_with_cite"] +
+            stats["assistant_context_messages"]
+        )
+        if dropped_fields > 0:
+            print(
+                "  ⚠️  RAG fields are present but --enable_rag_tags is OFF; "
+                "these fields will be ignored during serialization."
+            )
 
 
 # =============================================================================
@@ -823,6 +995,7 @@ def main():
         print(f"  System prompt: Custom override ({len(args.system_prompt)} chars)")
     else:
         print(f"  System prompt: Default (CONVERSATION_SYSTEM_PROMPT)")
+    print(f"  RAG tags: {'ENABLED' if args.enable_rag_tags else 'disabled (legacy chat mode)'}")
     print()
     
     # Load conversations
@@ -844,6 +1017,8 @@ def main():
     print("Loading conversations...")
     conversations = load_jsonl(args.input)
     print(f"  Loaded {len(conversations)} conversations from {args.input}")
+    input_rag_stats = collect_rag_field_stats(conversations)
+    print_rag_field_stats(input_rag_stats, "input", args.enable_rag_tags)
     
     if not conversations:
         error_msg = "No valid conversations found in input file"
@@ -862,11 +1037,14 @@ def main():
     # Handle train/val split
     payload_overlap_count = 0
     template_overlap_count = 0
+    val_rag_stats = None
     
     if args.val_file:
         # Separate validation file provided
         val_conversations = load_jsonl(args.val_file)
         print(f"  Loaded {len(val_conversations)} validation conversations from {args.val_file}")
+        val_rag_stats = collect_rag_field_stats(val_conversations)
+        print_rag_field_stats(val_rag_stats, "val_file", args.enable_rag_tags)
         train_conversations = conversations
         val_indices = set()  # Not used when val_file is provided
         use_separate_val = True
@@ -956,7 +1134,8 @@ def main():
         text, char_mask = serialize_conversation(
             conv,
             skip_system=args.no_system_prompt,
-            system_prompt_override=args.system_prompt
+            system_prompt_override=args.system_prompt,
+            enable_rag_tags=args.enable_rag_tags,
         )
         tokens, mask = char_mask_to_token_mask(
             text, char_mask, tokenizer,
@@ -1121,7 +1300,8 @@ def main():
                 text, char_mask = serialize_conversation(
                     conv,
                     skip_system=args.no_system_prompt,
-                    system_prompt_override=args.system_prompt
+                    system_prompt_override=args.system_prompt,
+                    enable_rag_tags=args.enable_rag_tags,
                 )
                 
                 episode_idx = writer.total_episodes
@@ -1211,6 +1391,9 @@ def main():
         # System prompt settings
         "skip_system_prompt": args.no_system_prompt,
         "system_prompt_override": args.system_prompt,
+        "enable_rag_tags": args.enable_rag_tags,
+        "input_rag_field_stats": input_rag_stats,
+        "val_rag_field_stats": val_rag_stats if use_separate_val else None,
     }
     
     # Add packing metadata

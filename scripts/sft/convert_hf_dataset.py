@@ -54,7 +54,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterable
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -66,6 +66,113 @@ from core.system_prompts import CONVERSATION_SYSTEM_PROMPT, AGENTIC_STANDARD_PRO
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
+
+# =============================================================================
+# OPTIONAL FIELD EXTRACTION (context / think / cite)
+# =============================================================================
+
+CONTEXT_KEYS = (
+    "context", "contexts", "passage", "passages",
+    "document", "documents", "evidence", "retrieved_context",
+)
+THINK_KEYS = (
+    "think", "reasoning", "rationale", "analysis", "scratchpad", "cot",
+)
+CITE_KEYS = (
+    "cite", "citation", "citations", "reference", "references",
+    "source_url", "source_urls", "url", "urls", "doc_id", "document_id",
+)
+
+
+def _normalize_field_text(value: Any) -> str:
+    """Normalize common field value types into compact text."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value).strip()
+    if isinstance(value, dict):
+        # Common structures: {"text": "..."} / {"content": "..."} / {"id": "..."}
+        for k in ("text", "content", "id", "title", "url", "source", "citation"):
+            v = value.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (list, tuple)):
+        parts = [_normalize_field_text(v) for v in value]
+        parts = [p for p in parts if p]
+        if not parts:
+            return ""
+        # Cites are usually more readable line-separated than JSON arrays.
+        return " | ".join(parts)
+    return str(value).strip()
+
+
+def _extract_first_text(obj: Dict[str, Any], keys: Iterable[str]) -> str:
+    """Return first non-empty normalized value among candidate keys."""
+    for k in keys:
+        if k in obj:
+            v = _normalize_field_text(obj.get(k))
+            if v:
+                return v
+    return ""
+
+
+def _build_user_message(content: str, raw_msg: Optional[Dict[str, Any]] = None, raw_row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Build canonical user message and preserve retrieval context when available."""
+    msg = {"role": "user", "content": content}
+    user_context = ""
+    if raw_msg:
+        user_context = _extract_first_text(raw_msg, CONTEXT_KEYS)
+    if (not user_context) and raw_row:
+        user_context = _extract_first_text(raw_row, CONTEXT_KEYS)
+    if user_context:
+        msg["context"] = user_context
+    return msg
+
+
+def _build_assistant_message(
+    content: str,
+    raw_msg: Optional[Dict[str, Any]] = None,
+    raw_row: Optional[Dict[str, Any]] = None,
+    add_think: bool = False,
+) -> Dict[str, Any]:
+    """Build canonical assistant message with optional think/cite extraction."""
+    msg = {"role": "assistant", "content": content}
+
+    think = ""
+    cite = ""
+    if raw_msg:
+        think = _extract_first_text(raw_msg, THINK_KEYS)
+        cite = _extract_first_text(raw_msg, CITE_KEYS)
+    if raw_row:
+        if not think:
+            think = _extract_first_text(raw_row, THINK_KEYS)
+        if not cite:
+            cite = _extract_first_text(raw_row, CITE_KEYS)
+
+    # Keep optional explicit chain-of-thought only when present in source,
+    # or when user explicitly requested extraction mode.
+    if think and think.strip() != content.strip():
+        msg["think"] = think
+    elif add_think and len(content) > 220:
+        # Conservative fallback: only if explicit add_think is requested.
+        # We avoid synthetic CoT generation; this is just a weak splitter.
+        for sep in ("\n\n", ". "):
+            if sep in content:
+                left, right = content.split(sep, 1)
+                left = left.strip()
+                if 30 <= len(left) <= 240:
+                    msg["think"] = left
+                    msg["content"] = right.strip()
+                    break
+
+    if cite:
+        msg["cite"] = cite
+
+    return msg
 
 
 # =============================================================================
@@ -136,7 +243,10 @@ def parse_oasst2(dataset, languages: List[str], max_examples: int, add_think: bo
             content = msg.get('text', '').strip()
             if not content:
                 continue
-            messages.append({"role": role, "content": content})
+            if role == "user":
+                messages.append(_build_user_message(content, raw_msg=msg))
+            else:
+                messages.append(_build_assistant_message(content, raw_msg=msg, add_think=add_think))
         
         if len(messages) >= 2:
             episodes.append({
@@ -173,9 +283,9 @@ def parse_dolci_instruct(dataset, languages: List[str], max_examples: int, add_t
             if role == 'system':
                 system_text = content
             elif role == 'user':
-                messages.append({"role": "user", "content": content})
+                messages.append(_build_user_message(content, raw_msg=msg, raw_row=row))
             elif role == 'assistant':
-                messages.append({"role": "assistant", "content": content})
+                messages.append(_build_assistant_message(content, raw_msg=msg, raw_row=row, add_think=add_think))
         
         if len(messages) >= 2:
             episodes.append({
@@ -217,7 +327,7 @@ def parse_dolci_tool_use(dataset, languages: List[str], max_examples: int, add_t
             if role == 'system':
                 system_text = content
             elif role == 'user':
-                messages.append({"role": "user", "content": content})
+                messages.append(_build_user_message(content, raw_msg=msg, raw_row=row))
             elif role == 'assistant':
                 if function_calls:
                     # Parse XML function call to JSON
@@ -231,7 +341,7 @@ def parse_dolci_tool_use(dataset, languages: List[str], max_examples: int, add_t
                     else:
                         messages.append({"role": "assistant", "content": content or str(function_calls)})
                 elif content:
-                    messages.append({"role": "assistant", "content": content})
+                    messages.append(_build_assistant_message(content, raw_msg=msg, raw_row=row, add_think=add_think))
             elif role == 'tool':
                 messages.append({
                     "role": "toolresult",
@@ -297,8 +407,8 @@ def parse_alpaca_format(dataset, languages: List[str], max_examples: int,
         lang = "de" if "_de" in source_name or "german" in source_name.lower() else "en"
         
         messages = [
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": output}
+            _build_user_message(user_content, raw_row=row),
+            _build_assistant_message(output, raw_row=row, add_think=add_think),
         ]
         
         episodes.append({
@@ -332,17 +442,12 @@ def parse_orca_format(dataset, languages: List[str], max_examples: int, add_thin
         if not system:
             system = CONVERSATION_SYSTEM_PROMPT
         
-        msg_entry = {"role": "assistant", "content": response}
-        
-        if add_think and len(response) > 200:
-            # For longer responses, try to extract a "reasoning" prefix
-            # Many Orca responses start with explanatory text
-            pass  # Future: heuristic extraction of reasoning prefix
+        msg_entry = _build_assistant_message(response, raw_row=row, add_think=add_think)
         
         episodes.append({
             "system": system,
             "messages": [
-                {"role": "user", "content": question},
+                _build_user_message(question, raw_row=row),
                 msg_entry
             ],
             "language": _detect_language(question),
@@ -381,9 +486,9 @@ def parse_sharegpt_format(dataset, languages: List[str], max_examples: int,
             if sender in ('system', 'System'):
                 system_text = value
             elif sender in ('human', 'user', 'Human', 'User'):
-                messages.append({"role": "user", "content": value})
+                messages.append(_build_user_message(value, raw_msg=msg, raw_row=row))
             elif sender in ('gpt', 'assistant', 'GPT', 'Assistant', 'bot'):
-                messages.append({"role": "assistant", "content": value})
+                messages.append(_build_assistant_message(value, raw_msg=msg, raw_row=row, add_think=add_think))
         
         if len(messages) >= 2:
             lang = _detect_language(messages[0].get('content', ''))
@@ -423,7 +528,7 @@ def parse_dolly(dataset, languages: List[str], max_examples: int, add_think: boo
         if context:
             user_context = context
         
-        msg = {"role": "user", "content": user_content}
+        msg = _build_user_message(user_content, raw_row=row)
         if user_context:
             msg["context"] = user_context
         
@@ -431,7 +536,7 @@ def parse_dolly(dataset, languages: List[str], max_examples: int, add_think: boo
             "system": CONVERSATION_SYSTEM_PROMPT,
             "messages": [
                 msg,
-                {"role": "assistant", "content": response}
+                _build_assistant_message(response, raw_row=row, add_think=add_think),
             ],
             "language": "en",
             "source": "dolly"
@@ -490,6 +595,31 @@ def filter_episodes(episodes: List[dict], min_response_tokens: int = 5,
         filtered.append(ep)
     
     return filtered
+
+
+def summarize_optional_fields(episodes: List[dict]) -> Dict[str, int]:
+    """Count how often optional fields are present in converted episodes."""
+    stats = {
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "user_with_context": 0,
+        "assistant_with_think": 0,
+        "assistant_with_cite": 0,
+    }
+    for ep in episodes:
+        for msg in ep.get("messages", []):
+            role = msg.get("role")
+            if role == "user":
+                stats["user_messages"] += 1
+                if str(msg.get("context", "")).strip():
+                    stats["user_with_context"] += 1
+            elif role == "assistant":
+                stats["assistant_messages"] += 1
+                if str(msg.get("think", "")).strip():
+                    stats["assistant_with_think"] += 1
+                if str(msg.get("cite", "")).strip():
+                    stats["assistant_with_cite"] += 1
+    return stats
 
 
 # =============================================================================
@@ -590,6 +720,15 @@ def main():
         lang = ep.get("language", "?")
         lang_counts[lang] = lang_counts.get(lang, 0) + 1
     print(f"  Languages: {lang_counts}")
+
+    # Optional field coverage (for prepare_chat_sft --enable_rag_tags)
+    opt = summarize_optional_fields(episodes)
+    print(
+        "  Optional field coverage: "
+        f"user.context={opt['user_with_context']}/{opt['user_messages']}, "
+        f"assistant.think={opt['assistant_with_think']}/{opt['assistant_messages']}, "
+        f"assistant.cite={opt['assistant_with_cite']}/{opt['assistant_messages']}"
+    )
     
     # Write output
     output_path = Path(args.output)

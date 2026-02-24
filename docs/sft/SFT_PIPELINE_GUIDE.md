@@ -191,15 +191,16 @@ For tool-calling episodes (Phase 5-6):
 ```
 
 Optional fields on messages:
-- `"context"` on user messages -- becomes `<myPT_user_context>` (Phase 5-6)
-- `"think"` on assistant messages -- becomes `<myPT_think>` (Phase 3+)
-- `"cite"` on assistant messages -- becomes `<myPT_cite>` (Phase 3+)
+- `"context"` on user messages -- becomes `<myPT_user_context>` when `prepare_chat_sft.py` is run with `--enable_rag_tags`
+- `"think"` on assistant messages -- becomes `<myPT_think>` when `prepare_chat_sft.py` is run with `--enable_rag_tags`
+- `"cite"` on assistant messages -- becomes `<myPT_cite>` when `prepare_chat_sft.py` is run with `--enable_rag_tags`
 
 ### Tokenization: Chat vs Tool
 
 - **`prepare_chat_sft.py`** -- For Phase 1-4 (no toolcall/toolresult roles). Uses token-ID-based
   masking: assistant content = train, everything else = mask. Supports packing (multiple short
-  episodes per block) for efficiency.
+  episodes per block) for efficiency. Optional RAG-tag serialization is gated behind
+  `--enable_rag_tags` and includes an automatic dataset audit printout (context/think/cite by source).
 
 - **`prepare_tool_sft.py`** -- For Phase 5-6 (has toolcall/toolresult roles). Handles all 19 tags
   including think, cite, user_context, assistant_context. Char-level masking converted to token-level.
@@ -578,7 +579,8 @@ python scripts/sft/mix_sft_jsonl.py \
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase3_intermediate/phase3_mixed.jsonl \
     --output_dir data/sft_phase3_chat \
-    --enable_packing --pack_block_size 4096
+    --enable_packing --pack_block_size 4096 \
+    --enable_rag_tags
 ```
 
 ### Train
@@ -632,7 +634,8 @@ python scripts/sft/mix_sft_jsonl.py \
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase4_intermediate/phase4_mixed.jsonl \
     --output_dir data/sft_phase4_multiturn \
-    --enable_packing --pack_block_size 4096
+    --enable_packing --pack_block_size 4096 \
+    --enable_rag_tags
 ```
 
 ### Train

@@ -18,6 +18,7 @@ import json
 import random
 import sys
 import uuid
+import re
 from pathlib import Path
 from typing import Dict, List
 
@@ -32,6 +33,9 @@ from scripts.sft.generate_echo_dataset import (
     ANTI_ECHO_TEMPLATES_EN,
     ANTI_ECHO_TEMPLATES_DE,
 )
+
+DOUBLE_QUOTED_RE = re.compile(r'"[^"]+"')
+SINGLE_QUOTED_RE = re.compile(r"'[^']+'")
 
 
 def _read_jsonl(path: Path) -> List[Dict]:
@@ -71,13 +75,17 @@ def _pair_payload_key(pair: tuple) -> str:
     """
     q, a, cat = pair
     if "anti_echo" in cat:
-        import re
-        m = re.search(r'"([^"]+)"', q)
-        if m:
-            return m.group(1).strip()
-        m = re.search(r"'([^']+)'", q)
-        if m:
-            return m.group(1).strip()
+        # Fast quoted payload extraction without regex backtracking overhead.
+        i = q.find('"')
+        if i >= 0:
+            j = q.find('"', i + 1)
+            if j > i + 1:
+                return q[i + 1:j].strip()
+        i = q.find("'")
+        if i >= 0:
+            j = q.find("'", i + 1)
+            if j > i + 1:
+                return q[i + 1:j].strip()
     return str(a).strip()
 
 
@@ -92,10 +100,9 @@ def _pair_template_signature(pair: tuple) -> str:
     sig = str(q)
     if payload:
         sig = sig.replace(payload, "{PAYLOAD}")
-    # If anti-echo quoted payload remains, normalize quoted spans too.
-    import re
-    sig = re.sub(r'"[^"]+"', '"{PAYLOAD}"', sig)
-    sig = re.sub(r"'[^']+'", "'{PAYLOAD}'", sig)
+    # Normalize remaining quoted spans.
+    sig = DOUBLE_QUOTED_RE.sub('"{PAYLOAD}"', sig)
+    sig = SINGLE_QUOTED_RE.sub("'{PAYLOAD}'", sig)
     return sig.strip()
 
 
@@ -104,6 +111,7 @@ def _synthesize_anti_pairs(
     needed: int,
     seed: int,
     forbidden_templates: set | None = None,
+    template_tag: str = "P26_AE",
 ) -> List[tuple]:
     """
     Build a large anti-echo pool from BPE-safe gibberish + template expansion.
@@ -125,16 +133,18 @@ def _synthesize_anti_pairs(
     if not payloads:
         return []
 
+    # Use explicit phase marker to keep synthetic templates disjoint from val templates.
+    tag = template_tag.strip() if template_tag else "P26_AE"
     en_templates = list(ANTI_ECHO_TEMPLATES_EN) + [
-        ('Is "{X}" meaningful?', "No."),
-        ('Can you explain "{X}"?', "Unknown."),
-        ('Is "{X}" a dictionary word?', "No."),
-        ('What is the meaning of "{X}"?', "Unknown."),
-        ('Give the definition of "{X}".', "Unknown."),
+        (f'[{tag}] Is "{{X}}" meaningful?', "No."),
+        (f'[{tag}] Can you explain "{{X}}"?', "Unknown."),
+        (f'[{tag}] Is "{{X}}" a dictionary word?', "No."),
+        (f'[{tag}] What is the meaning of "{{X}}"?', "Unknown."),
+        (f'[{tag}] Give the definition of "{{X}}".', "Unknown."),
     ]
     de_templates = list(ANTI_ECHO_TEMPLATES_DE) + [
-        ('Ist "{X}" sinnvoll?', "Nein."),
-        ('Was heißt "{X}"?', "Unbekannt."),
+        (f'[{tag}] Ist "{{X}}" sinnvoll?', "Nein."),
+        (f'[{tag}] Was heißt "{{X}}"?', "Unbekannt."),
     ]
 
     pairs: List[tuple] = []
@@ -148,7 +158,7 @@ def _synthesize_anti_pairs(
             q = tpl.replace("{X}", pv)
             cat = "anti_echo_synth_en" if tpls is en_templates else "anti_echo_synth_de"
             cand = (q, ans, cat)
-            if _pair_template_signature(cand) in forbidden_templates:
+            if forbidden_templates and _pair_template_signature(cand) in forbidden_templates:
                 continue
             pairs.append(cand)
             if len(pairs) >= needed:
@@ -156,14 +166,24 @@ def _synthesize_anti_pairs(
 
     # Fallback (if pool unexpectedly too small): recycle with deterministic jitter.
     i = 0
+    attempts = 0
+    max_attempts = max(needed * 20, 20000)
     while len(pairs) < needed:
+        attempts += 1
+        if attempts > max_attempts:
+            break
         base = payloads[i % len(payloads)]
         tpl, ans = en_templates[i % len(en_templates)]
         q = tpl.replace("{X}", f"{base}_{i % 97}")
         cand = (q, ans, "anti_echo_synth_en")
-        if _pair_template_signature(cand) not in forbidden_templates:
+        if (not forbidden_templates) or (_pair_template_signature(cand) not in forbidden_templates):
             pairs.append(cand)
         i += 1
+    if len(pairs) < needed:
+        raise RuntimeError(
+            f"Anti synth could not satisfy target {needed} with current template constraints "
+            f"(generated {len(pairs)}). Try a different template_tag."
+        )
     return pairs
 
 
@@ -211,6 +231,7 @@ def _synthesize_echo_pairs(
     needed: int,
     seed: int,
     forbidden_templates: set | None = None,
+    template_tag: str = "P26_ECHO",
 ) -> List[tuple]:
     """
     Build additional echo pairs when base pool is too small.
@@ -230,26 +251,37 @@ def _synthesize_echo_pairs(
     if not payloads:
         return []
 
+    tag = template_tag.strip() if template_tag else "P26_ECHO"
     templates = [
-        "Say: {X}",
-        "Reply with only: {X}",
-        "Return exactly: {X}",
-        "Output only {X}",
-        "Repeat exactly: {X}",
-        "Type exactly {X}",
-        "Antworte nur mit: {X}",
-        "Gib nur aus: {X}",
+        f"[{tag}] Say: {{X}}",
+        f"[{tag}] Reply with only: {{X}}",
+        f"[{tag}] Return exactly: {{X}}",
+        f"[{tag}] Output only {{X}}",
+        f"[{tag}] Repeat exactly: {{X}}",
+        f"[{tag}] Type exactly {{X}}",
+        f"[{tag}] Antworte nur mit: {{X}}",
+        f"[{tag}] Gib nur aus: {{X}}",
     ]
     out: List[tuple] = []
     i = 0
+    attempts = 0
+    max_attempts = max(needed * 20, 20000)
     while len(out) < needed:
+        attempts += 1
+        if attempts > max_attempts:
+            break
         x = payloads[i % len(payloads)]
         t = templates[rng.randrange(len(templates))]
         q = t.replace("{X}", x)
         cand = (q, x, "echo_synth")
-        if _pair_template_signature(cand) not in forbidden_templates:
+        if (not forbidden_templates) or (_pair_template_signature(cand) not in forbidden_templates):
             out.append(cand)
         i += 1
+    if len(out) < needed:
+        raise RuntimeError(
+            f"Echo synth could not satisfy target {needed} with current template constraints "
+            f"(generated {len(out)}). Try a different template_tag."
+        )
     return out
 
 
@@ -376,13 +408,25 @@ def main() -> None:
 
     if len(anti_train_pool) < needed_anti:
         deficit = needed_anti - len(anti_train_pool)
-        synth = _synthesize_anti_pairs(tok, deficit + 1000, args.seed + 49, forbidden_templates=val_templates)
+        synth = _synthesize_anti_pairs(
+            tok,
+            deficit + 1000,
+            args.seed + 49,
+            forbidden_templates=val_templates,
+            template_tag="P26_AE_TRAIN2",
+        )
         synth = [p for p in synth if _pair_payload_key(p) not in val_payloads]
         anti_train_pool.extend(synth)
         print(f"Anti train pool low after val split; synthesized {len(synth):,} extra")
     if len(echo_train_pool) < needed_echo:
         deficit = needed_echo - len(echo_train_pool)
-        synth = _synthesize_echo_pairs(tok, deficit + 1000, args.seed + 51, forbidden_templates=val_templates)
+        synth = _synthesize_echo_pairs(
+            tok,
+            deficit + 1000,
+            args.seed + 51,
+            forbidden_templates=val_templates,
+            template_tag="P26_ECHO_TRAIN2",
+        )
         synth = [p for p in synth if _pair_payload_key(p) not in val_payloads]
         echo_train_pool.extend(synth)
         print(f"Echo train pool low after val split; synthesized {len(synth):,} extra")
