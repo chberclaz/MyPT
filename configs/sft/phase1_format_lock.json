@@ -19,9 +19,9 @@
   "rope_scale": 4.0,
 
   "learning_rate": 7e-5,
-  "max_iters": 300,
-  "eval_interval": 25,
-  "warmup_iters": 20,
+  "max_iters": 15,
+  "eval_interval": 5,
+  "warmup_iters": 2,
   "use_amp": true,
   "amp_dtype": "bf16",
   "grad_accum_steps": 4,
