@@ -56,7 +56,8 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from core import load_model
 from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
