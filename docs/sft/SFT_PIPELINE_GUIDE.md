@@ -437,6 +437,61 @@ python scripts/eval/eval_operator.py --model phase2_operators -v
 
 ---
 
+## 5.5 Phase 2.5: WRAP + Anti-Echo (Optional Bridge)
+
+**Goal:** Harden WRAP delimiter behavior and anti-echo constraints before Phase 3.
+
+Use this bridge phase when:
+- WRAP lags behind COPY/EXTRACT in Phase 2 eval
+- model tends to mirror user text for gibberish / unknown tokens
+- you want extra robustness before broad chat SFT
+
+### Generate & Prepare
+
+```bash
+# 1. Build Phase 2.5 intermediate JSONL sources:
+#    - WRAP-focused dataset (high delimiter/template diversity)
+#    - echo + anti-echo dataset
+#    - 20% replay from current phase2 operator train set
+python scripts/sft/prepare_phase2_5_wrap_antiecho.py \
+    --output_dir data/sft_phase2_5_intermediate \
+    --replay_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
+    --replay_ratio 0.20 \
+    --wrap_train_payloads 9000 \
+    --wrap_val_payloads 800 \
+    --wrap_reps_per_style 2 \
+    --echo_max_examples 70000 \
+    --echo_anti_ratio 0.40 \
+    --echo_contrast_ratio 0.35
+
+# 2. Tokenize + pack for 4096 SFT
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl \
+    --output_dir data/sft_phase2_5_wrap_antiecho \
+    --val_file data/sft_phase2_5_intermediate/wrap_focus_val.jsonl \
+    --no_system_prompt \
+    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+```
+
+### Train
+
+```bash
+python train.py \
+    --model_name phase2_5_wrap_antiecho \
+    --config_file configs/sft/phase2_5_wrap_antiecho.json \
+    --dataset_dir data/sft_phase2_5_wrap_antiecho \
+    --init_from_model checkpoints/phase2_operators_gold
+```
+
+### Success Gate
+
+```bash
+python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_5_wrap_antiecho -v
+# Target: WRAP exact match >= 90% and anti-echo >= 75%
+```
+
+---
+
 ## 6. Phase 3: Chat SFT
 
 **Goal:** Natural conversation, bilingual (DE/EN), system prompt adherence, basic think + cite.

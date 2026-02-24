@@ -217,6 +217,11 @@ def main() -> None:
     _write_jsonl(wrap_train_file, wrap_train)
     _write_jsonl(wrap_val_file, wrap_val)
     print(f"WRAP focus:   {len(wrap_train):,} train, {len(wrap_val):,} val")
+    wrap_val_payloads = {
+        ep.get("_meta", {}).get("payload")
+        for ep in wrap_val
+        if ep.get("_meta", {}).get("payload") is not None
+    }
 
     # 2) Echo + anti-echo dataset
     echo_pairs = generate_echo_pairs(
@@ -244,15 +249,32 @@ def main() -> None:
     # 3) Replay sample from current operator train set
     replay_path = (PROJECT_ROOT / args.replay_file).resolve()
     replay_eps = _read_jsonl(replay_path)
+    # Critical for clean benchmarking: replay must not leak any payload
+    # that appears in WRAP validation set.
+    replay_filtered = []
+    replay_dropped = 0
+    for ep in replay_eps:
+        payload = ep.get("_meta", {}).get("payload")
+        if payload is not None and payload in wrap_val_payloads:
+            replay_dropped += 1
+            continue
+        replay_filtered.append(ep)
+    if replay_dropped > 0:
+        print(f"Replay filter: dropped {replay_dropped:,} episodes overlapping WRAP val payloads")
+
     rng = random.Random(args.seed + 333)
-    replay_n = max(1, int(len(replay_eps) * args.replay_ratio))
-    replay_sample = rng.sample(replay_eps, replay_n) if replay_n < len(replay_eps) else replay_eps
+    replay_n = max(1, int(len(replay_filtered) * args.replay_ratio))
+    replay_sample = (
+        rng.sample(replay_filtered, replay_n)
+        if replay_n < len(replay_filtered)
+        else replay_filtered
+    )
     for ep in replay_sample:
         ep.setdefault("_meta", {})
         ep["_meta"]["phase"] = "phase2_replay"
     replay_file = out_dir / "operator_replay_20pct.jsonl"
     _write_jsonl(replay_file, replay_sample)
-    print(f"Replay:       {len(replay_sample):,} sampled from {len(replay_eps):,}")
+    print(f"Replay:       {len(replay_sample):,} sampled from {len(replay_filtered):,} (post-filter)")
 
     # 4) Mix all train sources
     mixed = []
@@ -281,6 +303,8 @@ def main() -> None:
             "echo_antiecho_train": len(echo_eps),
             "operator_replay_20pct": len(replay_sample),
             "phase2_5_mixed": len(mixed),
+            "replay_filtered_source_size": len(replay_filtered),
+            "replay_dropped_overlap": replay_dropped,
         },
         "replay_ratio": args.replay_ratio,
         "wrap_meta": wrap_meta,
