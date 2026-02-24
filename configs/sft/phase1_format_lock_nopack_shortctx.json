@@ -14,6 +14,7 @@
   "pos_encoding": "rope",
   "mlp_type": "swiglu",
   "norm_type": "rmsnorm",
+  "use_checkpoint": true,
   "rope_theta": 10000.0,
   "rope_scale": 4.0,
 
