@@ -246,42 +246,39 @@ class Tokenizer():
                 # Rebuild decoder from encoder
                 self.special_token_decoder = {v: k for k, v in self.special_token_encoder.items()}
                 
-                # Backward compatibility: older checkpoints may have fewer
-                # special tokens. Merge in any missing current tokens using
-                # canonical IDs when available.
-                canonical_ids = {}
+                # Canonical ID map from current special_tokens.py
+                canonical_encoder = {}
+                canonical_by_name = {}
                 next_id = self.base_vocab_size
-                for name in SPECIAL_TOKEN_STRINGS:
-                    canonical_ids[name] = next_id
+                for name, tok_str in SPECIAL_TOKEN_STRINGS.items():
+                    canonical_encoder[tok_str] = next_id
+                    canonical_by_name[name] = next_id
                     next_id += 1
                 
-                added_compat = 0
-                for name, tok_str in SPECIAL_TOKEN_STRINGS.items():
-                    # Already present (by string) -> ensure name mapping exists
-                    if tok_str in self.special_token_encoder:
-                        if name not in self.special_tokens:
-                            self.special_tokens[name] = self.special_token_encoder[tok_str]
-                        continue
-                    
-                    preferred_id = canonical_ids[name]
-                    target_id = preferred_id
-                    
-                    # If canonical slot is occupied in legacy mapping, find next free slot.
-                    if target_id in self.special_token_decoder:
-                        target_id = self.base_vocab_size
-                        while target_id in self.special_token_decoder:
-                            target_id += 1
-                    
-                    if target_id >= self.model_vocab_size:
+                # Detect legacy mismatch (e.g., old 15-token mapping shifted IDs).
+                # In that case, force canonical IDs so generation stop tokens and
+                # decoding semantics stay correct across the pipeline.
+                mismatch = False
+                for tok_str, cid in canonical_encoder.items():
+                    rid = self.special_token_encoder.get(tok_str)
+                    if rid != cid:
+                        mismatch = True
+                        break
+                
+                if mismatch:
+                    if self.base_vocab_size + len(SPECIAL_TOKEN_STRINGS) > self.model_vocab_size:
                         raise ValueError(
-                            f"Cannot add missing special token '{name}' (id {target_id}) "
-                            f"because model_vocab_size={self.model_vocab_size} is too small."
+                            f"Cannot canonicalize special tokens: need "
+                            f"{len(SPECIAL_TOKEN_STRINGS)} slots from base_vocab_size "
+                            f"{self.base_vocab_size}, but model_vocab_size={self.model_vocab_size}."
                         )
-                    
-                    self.special_token_encoder[tok_str] = target_id
-                    self.special_token_decoder[target_id] = tok_str
-                    self.special_tokens[name] = target_id
-                    added_compat += 1
+                    self.special_token_encoder = canonical_encoder.copy()
+                    self.special_tokens = canonical_by_name.copy()
+                    self.special_token_decoder = {v: k for k, v in self.special_token_encoder.items()}
+                    print(
+                        "Detected legacy special-token ID mapping in checkpoint; "
+                        "canonicalized to current IDs from special_tokens.py."
+                    )
                 
                 # Rebuild regex pattern (sorted by length for safety)
                 tokens_by_length = sorted(self.special_token_encoder.keys(), key=len, reverse=True)
@@ -292,13 +289,7 @@ class Tokenizer():
                 assert len(self.special_token_encoder) == len(self.special_token_decoder), \
                     "Special token encoder/decoder size mismatch"
                 
-                if added_compat > 0:
-                    print(
-                        f"Restored {len(self.special_tokens)} special tokens from saved state "
-                        f"(added {added_compat} missing tokens for compatibility)"
-                    )
-                else:
-                    print(f"Restored {len(self.special_tokens)} special tokens from saved state")
+                print(f"Restored {len(self.special_tokens)} special tokens from saved state")
             else:
                 # Legacy checkpoint without saved mappings - regenerate
                 self._register_special_tokens()
