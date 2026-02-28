@@ -30,6 +30,7 @@ from scripts.sft.generate_echo_dataset import (
     generate_echo_pairs,
     create_episode as create_echo_episode,
 )
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
 
 
 def _read_jsonl(path: Path) -> List[Dict]:
@@ -275,6 +276,30 @@ def main() -> None:
         "counts": stream_counts,
         "output_file": str(out_file),
     }
+    lineage_inputs = [{
+        "path": str(operators_path),
+        "sampled_rows": stream_counts.get("operators", 0),
+        "effective_ratio": stream_counts.get("operators", 0) / max(1, len(mixed)),
+    }]
+    if code_path is not None:
+        lineage_inputs.append({
+            "path": str(code_path),
+            "sampled_rows": stream_counts.get("code", 0),
+            "effective_ratio": stream_counts.get("code", 0) / max(1, len(mixed)),
+        })
+    lineage = merge_lineage(
+        inputs=lineage_inputs,
+        output_rows=len(mixed),
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/sft/prepare_phase2_7_rebalance.py",
+            "args": vars(args),
+            "synthetic_components": [
+                {"name": "anti_echo_generated", "rows": stream_counts.get("anti_echo", 0)},
+            ],
+        },
+    )
+    meta["lineage"] = lineage
     meta_path = out_dir / "phase2_7_meta.json"
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -282,6 +307,8 @@ def main() -> None:
     print(f"\nWritten: {out_file}")
     print(f"Counts: anti={stream_counts['anti_echo']:,}, op={stream_counts['operators']:,}, code={stream_counts['code']:,}")
     print(f"Meta: {meta_path}")
+    lineage_path = write_lineage_sidecar(out_file, lineage)
+    print(f"Lineage: {lineage_path}")
 
 
 if __name__ == "__main__":

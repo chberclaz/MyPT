@@ -61,6 +61,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.system_prompts import CONVERSATION_SYSTEM_PROMPT, AGENTIC_STANDARD_PROMPT
+from core.dataset_lineage import iso_now, write_lineage_sidecar
 
 # Fix Windows console encoding
 if sys.platform == "win32":
@@ -737,9 +738,33 @@ def main():
     with open(output_path, 'w', encoding='utf-8') as f:
         for ep in episodes:
             f.write(json.dumps(ep, ensure_ascii=False) + '\n')
+    lineage = {
+        "direct_inputs": [{
+            "path": f"hf://{args.dataset}" + (f"/{args.subset}" if args.subset else ""),
+            "sampled_rows": len(episodes),
+            "effective_ratio": 1.0,
+        }],
+        "recursive_origins": [{
+            "origin_path": f"hf://{args.dataset}" + (f"/{args.subset}" if args.subset else ""),
+            "rows": len(episodes),
+        }],
+        "flattened_contributions": [{
+            "origin_path": f"hf://{args.dataset}" + (f"/{args.subset}" if args.subset else ""),
+            "effective_rows": len(episodes),
+            "effective_percent": 100.0,
+        }],
+        "creation_context": {
+            "timestamp": iso_now(),
+            "script": "scripts/sft/convert_hf_dataset.py",
+            "args": vars(args),
+        },
+        "upstream_configs": [],
+    }
+    lineage_path = write_lineage_sidecar(output_path, lineage)
     
     print(f"\n  Output: {output_path}")
     print(f"  Total episodes: {len(episodes)}")
+    print(f"  Lineage: {lineage_path}")
     
     # Show samples
     print(f"\nSample episodes:")

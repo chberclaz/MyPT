@@ -34,6 +34,7 @@ import random
 import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+from core.dataset_lineage import iso_now, write_lineage_sidecar
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -399,12 +400,16 @@ def load_workspace_docs(docs_dir: str) -> List[Dict[str, Any]]:
         if first_line and len(first_line) < 80:
             title = first_line
 
+        passages = extract_passages(text)
+        for i, p in enumerate(passages):
+            p["chunk_id"] = f"{fpath.stem}#c{i+1:03d}"
+
         docs.append({
             "filename": fpath.name,
             "title": title,
             "text": text,
             "topics": extract_topics(text, fpath.stem),
-            "passages": extract_passages(text),
+            "passages": passages,
         })
 
     return docs
@@ -427,9 +432,9 @@ def extract_topics(text: str, stem: str) -> List[str]:
     return list(topics)
 
 
-def extract_passages(text: str, min_len: int = 80, max_len: int = 500) -> List[str]:
+def extract_passages(text: str, min_len: int = 80, max_len: int = 500) -> List[Dict[str, str]]:
     """Extract coherent passages (paragraph-level) from document text."""
-    passages = []
+    passages: List[Dict[str, str]] = []
     paragraphs = text.split("\n\n")
 
     for para in paragraphs:
@@ -443,9 +448,9 @@ def extract_passages(text: str, min_len: int = 80, max_len: int = 500) -> List[s
 
         clean = para.replace("\n", " ").strip()
         if min_len <= len(clean) <= max_len:
-            passages.append(clean)
+            passages.append({"text": clean, "chunk_id": ""})
         elif len(clean) > max_len:
-            passages.append(clean[:max_len].rsplit(" ", 1)[0] + "...")
+            passages.append({"text": clean[:max_len].rsplit(" ", 1)[0] + "...", "chunk_id": ""})
 
     return passages
 
@@ -477,8 +482,11 @@ def generate_context_answer(
     if not doc["passages"] or not doc["topics"]:
         return None
 
-    passage = rng.choice(doc["passages"])
-    topic = rng.choice(doc["topics"])
+    passage_obj = rng.choice(doc["passages"])
+    passage = passage_obj["text"]
+    chunk_id = passage_obj["chunk_id"]
+    # Adversarial negative retrieval: ask plausible but irrelevant topic.
+    distractor_topic = rng.choice(GENERAL_TOPICS_DE if lang == "de" else GENERAL_TOPICS_EN)[0]
 
     if lang == "de":
         question = rng.choice(CONTEXT_QUESTIONS_DE).format(topic=topic)
@@ -489,8 +497,8 @@ def generate_context_answer(
         answer_raw = make_answer_from_passage(passage, rng)
         answer = rng.choice(ANSWER_PREFIX_EN).format(answer=answer_raw)
 
-    msg_user = {"role": "user", "content": question, "context": passage}
-    msg_assistant = {"role": "assistant", "content": answer, "cite": doc["filename"]}
+    msg_user = {"role": "user", "content": question, "context": f"[CID:{chunk_id}] {passage}"}
+    msg_assistant = {"role": "assistant", "content": answer, "cite": chunk_id}
 
     if use_think:
         if lang == "de":
@@ -513,7 +521,9 @@ def generate_multiturn_context(
     if not doc["passages"] or not doc["topics"] or len(doc["passages"]) < 2:
         return None
 
-    passage = rng.choice(doc["passages"])
+    passage_obj = rng.choice(doc["passages"])
+    passage = passage_obj["text"]
+    chunk_id_1 = passage_obj["chunk_id"]
     topic = rng.choice(doc["topics"])
 
     if lang == "de":
@@ -528,18 +538,20 @@ def generate_multiturn_context(
         followup = rng.choice(FOLLOWUP_QUESTIONS_EN)
 
     # Second answer draws from a different passage in the same doc
-    other_passages = [p for p in doc["passages"] if p != passage]
-    passage2 = rng.choice(other_passages) if other_passages else passage
+    other_passages = [p for p in doc["passages"] if p["chunk_id"] != chunk_id_1]
+    passage2_obj = rng.choice(other_passages) if other_passages else passage_obj
+    passage2 = passage2_obj["text"]
+    chunk_id_2 = passage2_obj["chunk_id"]
     answer2_raw = make_answer_from_passage(passage2, rng)
     if lang == "de":
         answer2 = rng.choice(ANSWER_PREFIX_DE).format(answer=answer2_raw)
     else:
         answer2 = rng.choice(ANSWER_PREFIX_EN).format(answer=answer2_raw)
 
-    msg_user1 = {"role": "user", "content": question, "context": passage}
-    msg_assistant1 = {"role": "assistant", "content": answer1, "cite": doc["filename"]}
+    msg_user1 = {"role": "user", "content": question, "context": f"[CID:{chunk_id_1}] {passage}"}
+    msg_assistant1 = {"role": "assistant", "content": answer1, "cite": chunk_id_1}
     msg_user2 = {"role": "user", "content": followup}
-    msg_assistant2 = {"role": "assistant", "content": answer2, "cite": doc["filename"]}
+    msg_assistant2 = {"role": "assistant", "content": answer2, "cite": chunk_id_2}
 
     if use_think:
         think = (rng.choice(THINK_TEMPLATES_DE) if lang == "de"
@@ -563,7 +575,9 @@ def generate_insufficient_context(
     if not doc["passages"] or not doc["topics"]:
         return None
 
-    passage = rng.choice(doc["passages"])
+    passage_obj = rng.choice(doc["passages"])
+    passage = passage_obj["text"]
+    chunk_id = passage_obj["chunk_id"]
     topic = rng.choice(doc["topics"])
     sentences = [s.strip() + "." for s in passage.replace("\n", " ").split(".")
                  if len(s.strip()) > 15]
@@ -572,21 +586,21 @@ def generate_insufficient_context(
     partial = sentences[0]
 
     if lang == "de":
-        question = rng.choice(CONTEXT_QUESTIONS_DE).format(topic=topic)
-        answer = rng.choice(INSUFFICIENT_CONTEXT_DE).format(topic=topic, partial=partial)
+        question = rng.choice(CONTEXT_QUESTIONS_DE).format(topic=distractor_topic)
+        answer = rng.choice(INSUFFICIENT_CONTEXT_DE).format(topic=distractor_topic, partial=partial)
     else:
-        question = rng.choice(CONTEXT_QUESTIONS_EN).format(topic=topic)
-        answer = rng.choice(INSUFFICIENT_CONTEXT_EN).format(topic=topic, partial=partial)
+        question = rng.choice(CONTEXT_QUESTIONS_EN).format(topic=distractor_topic)
+        answer = rng.choice(INSUFFICIENT_CONTEXT_EN).format(topic=distractor_topic, partial=partial)
 
-    msg_user = {"role": "user", "content": question, "context": passage}
-    msg_assistant = {"role": "assistant", "content": answer}
+    msg_user = {"role": "user", "content": question, "context": f"[CID:{chunk_id}] {passage}"}
+    msg_assistant = {"role": "assistant", "content": answer, "cite": chunk_id}
 
     if use_think:
         msg_assistant["think"] = (
-            f"Der Kontext erwaehnt {topic}, liefert aber keine vollstaendige Antwort. "
+            f"Der Kontext beantwortet {distractor_topic} nicht direkt. "
             "Ich sollte ehrlich sagen, was der Text hergibt."
             if lang == "de" else
-            f"The context mentions {topic} but doesn't fully answer the question. "
+            f"The context does not provide enough information about {distractor_topic}. "
             "I should be honest about what the text provides."
         )
 
@@ -604,7 +618,9 @@ def generate_extraction(
     if not doc["passages"] or not doc["topics"]:
         return None
 
-    passage = rng.choice(doc["passages"])
+    passage_obj = rng.choice(doc["passages"])
+    passage = passage_obj["text"]
+    chunk_id = passage_obj["chunk_id"]
     topic = rng.choice(doc["topics"])
 
     if lang == "de":
@@ -616,8 +632,8 @@ def generate_extraction(
         answer_raw = make_answer_from_passage(passage, rng)
         answer = rng.choice(ANSWER_PREFIX_EN).format(answer=answer_raw)
 
-    msg_user = {"role": "user", "content": question, "context": passage}
-    msg_assistant = {"role": "assistant", "content": answer, "cite": doc["filename"]}
+    msg_user = {"role": "user", "content": question, "context": f"[CID:{chunk_id}] {passage}"}
+    msg_assistant = {"role": "assistant", "content": answer, "cite": chunk_id}
 
     if use_think:
         think = (rng.choice(THINK_TEMPLATES_DE) if lang == "de"
@@ -627,6 +643,45 @@ def generate_extraction(
     return {
         "system": rng.choice(CHAT_SYSTEM_PROMPTS),
         "messages": [msg_user, msg_assistant],
+        "language": lang,
+    }
+
+
+def generate_conflicting_context(
+    docs: List[Dict[str, Any]], rng: random.Random, lang: str
+) -> Optional[Dict]:
+    """Generate two-source conflict episodes with explicit dual citation."""
+    viable = [d for d in docs if d.get("passages")]
+    if len(viable) < 2:
+        return None
+    doc_a, doc_b = rng.sample(viable, 2)
+    p_a = rng.choice(doc_a["passages"])
+    p_b = rng.choice(doc_b["passages"])
+    cida, cidb = p_a["chunk_id"], p_b["chunk_id"]
+    a_text = make_answer_from_passage(p_a["text"], rng)
+    b_text = make_answer_from_passage(p_b["text"], rng)
+
+    if lang == "de":
+        q = "Die Quellen scheinen sich zu widersprechen. Antworte nur anhand des Kontexts."
+        ans = (
+            "Die bereitgestellten Quellen widersprechen sich. "
+            f"Quelle A: {a_text} Quelle B: {b_text} "
+            "Ich kann keine eindeutige Antwort geben."
+        )
+    else:
+        q = "The sources appear to disagree. Answer only from provided context."
+        ans = (
+            "The provided sources disagree. "
+            f"Source A: {a_text} Source B: {b_text} "
+            "I cannot provide a single definitive answer."
+        )
+    ctx = f"[CID:{cida}] {p_a['text']}\n[CID:{cidb}] {p_b['text']}"
+    return {
+        "system": rng.choice(CHAT_SYSTEM_PROMPTS),
+        "messages": [
+            {"role": "user", "content": q, "context": ctx},
+            {"role": "assistant", "content": ans, "cite": f"{cida},{cidb}"},
+        ],
         "language": lang,
     }
 
@@ -682,8 +737,10 @@ def parse_args():
                         help="Fraction EXTRACTION directive questions (default: 0.10)")
     parser.add_argument("--insufficient_ratio", type=float, default=0.08,
                         help="Fraction INSUFFICIENT_CONTEXT honest-refusal (default: 0.08)")
-    parser.add_argument("--no_context_ratio", type=float, default=0.10,
-                        help="Fraction NO_CONTEXT general knowledge (default: 0.10)")
+    parser.add_argument("--conflicting_ratio", type=float, default=0.05,
+                        help="Fraction CONFLICTING_CONTEXT source-disagreement episodes (default: 0.05)")
+    parser.add_argument("--no_context_ratio", type=float, default=0.05,
+                        help="Fraction NO_CONTEXT general knowledge (default: 0.05)")
     parser.add_argument("--think_omit_ratio", type=float, default=0.15,
                         help="When in CONTEXT_THINK_ANSWER pattern, randomly omit the think "
                              "block from this fraction of episodes to teach the model that "
@@ -722,7 +779,7 @@ def main():
     episodes = []
     pattern_names = [
         "context_answer", "context_think_answer", "multiturn",
-        "extraction", "insufficient", "no_context",
+        "extraction", "insufficient", "conflicting", "no_context",
     ]
     pattern_counts = {p: 0 for p in pattern_names}
     # Build cumulative thresholds from ratios
@@ -732,6 +789,7 @@ def main():
         ("multiturn",            args.multiturn_ratio),
         ("extraction",           args.extraction_ratio),
         ("insufficient",         args.insufficient_ratio),
+        ("conflicting",          args.conflicting_ratio),
         ("no_context",           args.no_context_ratio),
     ]
     attempts = 0
@@ -772,6 +830,8 @@ def main():
         elif pattern == "insufficient":
             actually_think = rng.random() > args.think_omit_ratio
             ep = generate_insufficient_context(rng.choice(docs_with_content), rng, lang, use_think=actually_think)
+        elif pattern == "conflicting":
+            ep = generate_conflicting_context(docs_with_content, rng, lang)
         elif pattern == "no_context":
             ep = generate_no_context(rng, lang)
 
@@ -785,8 +845,22 @@ def main():
     with open(args.output, 'w', encoding='utf-8') as f:
         for ep in episodes:
             f.write(json.dumps(ep, ensure_ascii=False) + "\n")
+    out_path = Path(args.output)
+    lineage = {
+        "direct_inputs": [{"path": str(Path(args.workspace_docs).resolve()), "sampled_rows": len(episodes), "effective_ratio": 1.0}],
+        "recursive_origins": [{"origin_path": str(Path(args.workspace_docs).resolve()), "rows": len(episodes)}],
+        "flattened_contributions": [{"origin_path": str(Path(args.workspace_docs).resolve()), "effective_rows": len(episodes), "effective_percent": 100.0}],
+        "creation_context": {"timestamp": iso_now(), "script": "scripts/sft/generate_rag_chat_sft.py", "args": vars(args)},
+        "upstream_configs": [],
+    }
+    meta_path = out_path.with_suffix(".meta.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump({"lineage": lineage, "pattern_counts": pattern_counts, "episodes": len(episodes)}, f, indent=2, ensure_ascii=False)
+    lineage_path = write_lineage_sidecar(out_path, lineage)
 
     print(f"\n  Generated {len(episodes)} episodes -> {args.output}")
+    print(f"  Metadata -> {meta_path}")
+    print(f"  Lineage  -> {lineage_path}")
     print(f"\n  Pattern distribution:")
     for pattern, count in sorted(pattern_counts.items()):
         pct = count / len(episodes) * 100 if episodes else 0

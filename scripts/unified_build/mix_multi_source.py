@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.banner import print_banner
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
 
 
 def get_dataset_info(dataset_dir: Path) -> dict:
@@ -350,9 +351,33 @@ def main():
             },
         },
     }
+    lineage_inputs = []
+    for name in plan:
+        actual = int(plan[name]["actual_tokens"])
+        lineage_inputs.append({
+            "path": str(Path(sources[name]["config"]["directory"]).resolve()),
+            "sampled_rows": actual,
+            "effective_ratio": actual / max(1, stats["total_tokens"]),
+        })
+    lineage = merge_lineage(
+        inputs=lineage_inputs,
+        output_rows=int(stats["total_tokens"]),
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/unified_build/mix_multi_source.py",
+            "args": {
+                "config": str(config_path),
+                "output_dir": str(output_dir),
+                "seed": args.seed,
+                "tokens_per_shard": tokens_per_shard,
+            },
+        },
+    )
+    metadata["lineage"] = lineage
     
     with open(output_dir / "dataset_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
+    lineage_path = write_lineage_sidecar(output_dir, lineage)
     
     # Summary
     print("\n" + "=" * 70)
@@ -369,6 +394,7 @@ def main():
         print(f"    {name:30s} {p['actual_tokens']:>15,} tokens  ({pct:5.1f}%)")
     
     print(f"\n  Done!\n")
+    print(f"  Lineage sidecar: {lineage_path}")
 
 
 if __name__ == "__main__":

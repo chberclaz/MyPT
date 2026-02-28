@@ -82,6 +82,15 @@ from .training_utils import (
     print_training_estimates,
 )
 
+# Dataset lineage / provenance
+from .dataset_lineage import (
+    iso_now,
+    count_jsonl_rows,
+    load_lineage_for_input,
+    merge_lineage,
+    write_lineage_sidecar,
+)
+
 # System prompts (for training scripts and inference)
 from .system_prompts import (
     CONVERSATION_SYSTEM_PROMPT,
@@ -129,6 +138,11 @@ __all__ = [
     'print_episode_coverage_analysis',
     'estimate_training_time',
     'print_training_estimates',
+    'iso_now',
+    'count_jsonl_rows',
+    'load_lineage_for_input',
+    'merge_lineage',
+    'write_lineage_sidecar',
     
     # Banner
     'print_banner',

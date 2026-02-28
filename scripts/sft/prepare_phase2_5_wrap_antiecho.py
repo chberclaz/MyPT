@@ -29,6 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core import GPTConfig, Tokenizer
 from scripts.sft.generate_operator_dataset import generate_unique_payloads, create_episode
 from scripts.sft.generate_echo_dataset import generate_echo_pairs, create_episode as create_echo_episode
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
 
 
 # ASCII-only wrapper styles for broad delimiter coverage.
@@ -315,10 +316,32 @@ def main() -> None:
             "gibberish_mode": args.echo_gibberish_mode,
         },
     }
+    lineage = merge_lineage(
+        inputs=[
+            {
+                "path": str(replay_path),
+                "sampled_rows": len(replay_sample),
+                "effective_ratio": len(replay_sample) / max(1, len(mixed)),
+            }
+        ],
+        output_rows=len(mixed),
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/sft/prepare_phase2_5_wrap_antiecho.py",
+            "args": vars(args),
+            "synthetic_components": [
+                {"name": "wrap_focus_train", "rows": len(wrap_train)},
+                {"name": "echo_antiecho_train", "rows": len(echo_eps)},
+            ],
+        },
+    )
+    meta["lineage"] = lineage
     meta_file = out_dir / "phase2_5_meta.json"
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
     print(f"Metadata:     {meta_file}")
+    lineage_path = write_lineage_sidecar(mixed_file, lineage)
+    print(f"Lineage:      {lineage_path}")
 
     print("\nNext step:")
     print(

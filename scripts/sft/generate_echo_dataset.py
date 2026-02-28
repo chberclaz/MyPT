@@ -17,6 +17,7 @@ import random
 import sys
 from pathlib import Path
 from typing import List, Tuple, Optional
+from core.dataset_lineage import iso_now, write_lineage_sidecar
 
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -572,10 +573,29 @@ def main():
     with open(output_file, 'w', encoding='utf-8') as f:
         for episode in episodes:
             f.write(json.dumps(episode, ensure_ascii=False) + '\n')
+    meta = {
+        "created_at": iso_now(),
+        "script": "scripts/sft/generate_echo_dataset.py",
+        "args": vars(args),
+        "episodes": len(episodes),
+        "lineage": {
+            "direct_inputs": [],
+            "recursive_origins": [{"origin_path": "synthetic://generate_echo_dataset", "rows": len(episodes)}],
+            "flattened_contributions": [{"origin_path": "synthetic://generate_echo_dataset", "effective_rows": len(episodes), "effective_percent": 100.0}],
+            "creation_context": {"timestamp": iso_now(), "script": "scripts/sft/generate_echo_dataset.py", "args": vars(args)},
+            "upstream_configs": [],
+        },
+    }
+    meta_file = output_dir / "mypt_echo_diverse.meta.json"
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    lineage_path = write_lineage_sidecar(output_file, meta["lineage"])
     
     # Stats
     print(f"\n✅ Generated {len(episodes)} echo episodes")
     print(f"   Output: {output_file}")
+    print(f"   Metadata: {meta_file}")
+    print(f"   Lineage: {lineage_path}")
     
     # Category breakdown
     categories = {}

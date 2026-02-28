@@ -50,6 +50,7 @@ import string
 from pathlib import Path
 from typing import List, Tuple, Dict, Set
 from collections import defaultdict
+from core.dataset_lineage import iso_now, write_lineage_sidecar
 
 # =============================================================================
 # TEMPLATE DEFINITIONS - STRICTLY SPLIT BETWEEN TRAIN AND VAL
@@ -738,15 +739,35 @@ def main():
             f.write(json.dumps(episode, ensure_ascii=False) + '\n')
     
     # Write metadata
+    metadata["lineage"] = {
+        "direct_inputs": [],
+        "recursive_origins": [{
+            "origin_path": "synthetic://generate_operator_dataset",
+            "rows": len(train_episodes) + len(val_episodes),
+        }],
+        "flattened_contributions": [{
+            "origin_path": "synthetic://generate_operator_dataset",
+            "effective_rows": len(train_episodes) + len(val_episodes),
+            "effective_percent": 100.0,
+        }],
+        "creation_context": {
+            "timestamp": iso_now(),
+            "script": "scripts/sft/generate_operator_dataset.py",
+            "args": vars(args),
+        },
+        "upstream_configs": [],
+    }
     meta_file = output_dir / "dataset_metadata.json"
     with open(meta_file, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2)
+    lineage_path = write_lineage_sidecar(train_file, metadata["lineage"])
     
     # Statistics
     print("Dataset generated:")
     print(f"  Train: {len(train_episodes)} episodes → {train_file}")
     print(f"  Val: {len(val_episodes)} episodes → {val_file}")
     print(f"  Metadata: {meta_file}")
+    print(f"  Lineage: {lineage_path}")
     print()
     
     # Operator breakdown

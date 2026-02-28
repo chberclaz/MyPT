@@ -300,6 +300,8 @@ python train.py \
 | `scripts/unified_build/build_unified_dataset.py` | Dataset generation pipeline                                 |
 | `scripts/unified_build/download_nq_triviaqa.py`  | TriviaQA + SQuAD v2 downloader with grounded-retrieval formatting   |
 | `scripts/unified_build/mix_multi_source.py`      | Multi-source shard mixer                                    |
+| `core/dataset_lineage.py`                        | Pipeline-core recursive dataset lineage + provenance helper |
+| `docs/training/DATASET_LINEAGE_STANDARD.md`      | Global lineage schema and audit interpretation guide        |
 | `scripts/model/smoke_test_arch.py`               | Architecture verification test suite                        |
 | `core/model.py`                                  | Model implementation (RoPE, SwiGLU, RMSNorm, grad accum)    |
 | `logs/train/unified_v1_eval.jsonl`               | Training log output (JSONL with timestamps, losses, phases) |

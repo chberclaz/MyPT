@@ -62,6 +62,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.special_tokens import SPECIAL_TOKEN_STRINGS, get_special_token_ids
 from core.tokenizer import Tokenizer
 from core.model import GPTConfig
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar, count_jsonl_rows
 
 # Audit logging for compliance
 try:
@@ -734,6 +735,27 @@ def main():
             "myPT_think", "myPT_cite"
         ],
     }
+    lineage = merge_lineage(
+        inputs=[{
+            "path": str(Path(args.input).resolve()),
+            "sampled_rows": int(count_jsonl_rows(Path(args.input))),
+            "effective_ratio": 1.0,
+        }],
+        output_rows=len(conversations),
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/sft/prepare_tool_sft.py",
+            "args": {
+                "input": args.input,
+                "output_dir": args.output_dir,
+                "val_split": args.val_split,
+                "enable_packing": args.enable_packing,
+                "pack_block_size": args.pack_block_size,
+                "seed": args.seed,
+            },
+        },
+    )
+    metadata["lineage"] = lineage
     
     if args.enable_packing:
         metadata["packing_enabled"] = True
@@ -743,6 +765,8 @@ def main():
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
     print(f"  Saved metadata")
+    lineage_path = write_lineage_sidecar(Path(args.output_dir), lineage)
+    print(f"  Saved lineage: {lineage_path}")
     
     # Summary
     print("\n" + "=" * 60)

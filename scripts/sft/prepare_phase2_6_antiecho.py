@@ -33,6 +33,7 @@ from scripts.sft.generate_echo_dataset import (
     ANTI_ECHO_TEMPLATES_EN,
     ANTI_ECHO_TEMPLATES_DE,
 )
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
 
 DOUBLE_QUOTED_RE = re.compile(r'"[^"]+"')
 SINGLE_QUOTED_RE = re.compile(r"'[^']+'")
@@ -503,6 +504,24 @@ def main() -> None:
             "val_file": str(val_file),
         },
     }
+    lineage = merge_lineage(
+        inputs=[{
+            "path": str(replay_path),
+            "sampled_rows": len(replay_sample),
+            "effective_ratio": len(replay_sample) / max(1, len(train_rows)),
+        }],
+        output_rows=len(train_rows),
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/sft/prepare_phase2_6_antiecho.py",
+            "args": vars(args),
+            "synthetic_components": [
+                {"name": "anti_echo_train", "rows": len(anti_eps)},
+                {"name": "echo_train", "rows": len(echo_eps)},
+            ],
+        },
+    )
+    meta["lineage"] = lineage
     meta_file = out_dir / "phase2_6_meta.json"
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
@@ -511,6 +530,8 @@ def main() -> None:
     print(f"Train: {train_file} ({len(train_rows):,})")
     print(f"Val:   {val_file} ({len(val_rows):,})")
     print(f"Meta:  {meta_file}")
+    lineage_path = write_lineage_sidecar(train_file, lineage)
+    print(f"Lineage: {lineage_path}")
     print("\nNext step:")
     print(
         "python scripts/sft/prepare_chat_sft.py "

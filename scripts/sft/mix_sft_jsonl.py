@@ -43,6 +43,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.banner import print_banner
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
 
 
 def parse_input_spec(spec: str) -> tuple:
@@ -234,18 +235,44 @@ Examples:
     print(f"  Episodes: {total_episodes}")
     
     # Write mix metadata alongside
+    lineage_inputs = []
+    for stat in source_stats:
+        lineage_inputs.append({
+            "path": stat["source"],
+            "sampled_rows": stat["sampled"],
+            "effective_ratio": (stat["sampled"] / total_episodes) if total_episodes > 0 else 0.0,
+        })
+    lineage = merge_lineage(
+        inputs=lineage_inputs,
+        output_rows=total_episodes,
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/sft/mix_sft_jsonl.py",
+            "args": {
+                "inputs": args.inputs,
+                "weights": args.weights,
+                "output": str(output_path),
+                "shuffle": args.shuffle,
+                "seed": args.seed,
+            },
+        },
+    )
+
     metadata = {
         'created_at': datetime.now().isoformat(),
         'seed': args.seed,
         'shuffled': args.shuffle,
         'total_episodes': total_episodes,
         'sources': source_stats,
+        'lineage': lineage,
     }
     
     metadata_path = output_path.with_suffix('.mix_meta.json')
     with open(metadata_path, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2)
     print(f"  Metadata: {metadata_path}")
+    lineage_path = write_lineage_sidecar(output_path, lineage)
+    print(f"  Lineage: {lineage_path}")
     
     # Summary
     print("\n" + "=" * 60)

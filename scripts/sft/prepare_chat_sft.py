@@ -70,6 +70,7 @@ from core.special_tokens import SPECIAL_TOKEN_STRINGS
 from core.tokenizer import Tokenizer
 from core.model import GPTConfig
 from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar, count_jsonl_rows
 
 # Audit logging for compliance
 try:
@@ -280,6 +281,10 @@ def parse_args():
                         help="Use weighted loss masks: structural tokens (stop, think, cite, toolcall) "
                              "get higher weights (1.5-2.0x) to emphasize generation steering decisions. "
                              "Compatible with existing loss computation (mask is float, not binary).")
+    parser.add_argument("--schema_validation_mode", type=str, default="warn",
+                        choices=["off", "warn", "error"],
+                        help="Validate input conversation schema. "
+                             "'warn' logs violations, 'error' fails on violations, 'off' disables checks.")
     
     return parser.parse_args()
 
@@ -530,6 +535,83 @@ def collect_rag_field_stats(convs: List[Dict[str, Any]]) -> Dict[str, Any]:
             stats["conversations_with_cite"] += 1
 
     return stats
+
+
+def validate_conversation_schema(convs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Validate structural invariants expected by chat SFT serializer."""
+    allowed_roles = {"user", "assistant", "assistant_context"}
+    issues: List[Dict[str, Any]] = []
+    valid = 0
+    for i, conv in enumerate(convs):
+        local_issues = []
+        system = conv.get("system", None)
+        if not isinstance(system, str) or not system.strip():
+            local_issues.append("missing_or_empty_system")
+
+        messages = conv.get("messages", None)
+        if not isinstance(messages, list) or len(messages) == 0:
+            local_issues.append("missing_or_empty_messages")
+            messages = []
+
+        has_user = False
+        has_assistant = False
+        for j, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                local_issues.append(f"message_{j}_not_object")
+                continue
+            role = msg.get("role", None)
+            if role not in allowed_roles:
+                local_issues.append(f"message_{j}_invalid_role:{role}")
+            if role == "user":
+                has_user = True
+            if role == "assistant":
+                has_assistant = True
+            content = msg.get("content", "")
+            if role in {"user", "assistant", "assistant_context"} and not str(content).strip():
+                local_issues.append(f"message_{j}_empty_content")
+        if not has_user:
+            local_issues.append("no_user_message")
+        if not has_assistant:
+            local_issues.append("no_assistant_message")
+
+        if local_issues:
+            issues.append({
+                "conv_index": i,
+                "issues": local_issues,
+                "source": conv.get("mix_source") or conv.get("source") or "unknown",
+            })
+        else:
+            valid += 1
+
+    by_type: Dict[str, int] = {}
+    for it in issues:
+        for t in it["issues"]:
+            by_type[t] = by_type.get(t, 0) + 1
+    return {
+        "total": len(convs),
+        "valid": valid,
+        "invalid": len(convs) - valid,
+        "issue_counts": by_type,
+        "examples": issues[:10],
+    }
+
+
+def print_schema_validation(report: Dict[str, Any], split_name: str) -> None:
+    print(f"\nSchema Validation ({split_name}):")
+    print(
+        f"  valid: {report['valid']:,}/{report['total']:,} "
+        f"({(100.0 * report['valid'] / max(1, report['total'])):.1f}%)"
+    )
+    if report["invalid"] > 0:
+        print(f"  invalid: {report['invalid']:,}")
+        print("  Top issue counts:")
+        top = sorted(report["issue_counts"].items(), key=lambda kv: kv[1], reverse=True)[:8]
+        for k, v in top:
+            print(f"    - {k}: {v}")
+        if report["examples"]:
+            print("  Example invalid episodes:")
+            for ex in report["examples"][:3]:
+                print(f"    - idx={ex['conv_index']} source={ex['source']} issues={ex['issues']}")
 
 
 def print_rag_field_stats(stats: Dict[str, Any], split_name: str, rag_tags_enabled: bool) -> None:
@@ -996,6 +1078,7 @@ def main():
     else:
         print(f"  System prompt: Default (CONVERSATION_SYSTEM_PROMPT)")
     print(f"  RAG tags: {'ENABLED' if args.enable_rag_tags else 'disabled (legacy chat mode)'}")
+    print(f"  Schema validation: {args.schema_validation_mode}")
     print()
     
     # Load conversations
@@ -1019,6 +1102,8 @@ def main():
     print(f"  Loaded {len(conversations)} conversations from {args.input}")
     input_rag_stats = collect_rag_field_stats(conversations)
     print_rag_field_stats(input_rag_stats, "input", args.enable_rag_tags)
+    input_schema_report = validate_conversation_schema(conversations)
+    print_schema_validation(input_schema_report, "input")
     
     if not conversations:
         error_msg = "No valid conversations found in input file"
@@ -1045,6 +1130,8 @@ def main():
         print(f"  Loaded {len(val_conversations)} validation conversations from {args.val_file}")
         val_rag_stats = collect_rag_field_stats(val_conversations)
         print_rag_field_stats(val_rag_stats, "val_file", args.enable_rag_tags)
+        val_schema_report = validate_conversation_schema(val_conversations)
+        print_schema_validation(val_schema_report, "val_file")
         train_conversations = conversations
         val_indices = set()  # Not used when val_file is provided
         use_separate_val = True
@@ -1090,6 +1177,26 @@ def main():
         train_conversations = None  # Will use conversations with val_indices
         val_conversations = None
         use_separate_val = False
+        val_schema_report = None
+
+    if args.schema_validation_mode != "off":
+        invalid_total = input_schema_report["invalid"] + (val_schema_report["invalid"] if val_schema_report else 0)
+        if invalid_total > 0:
+            msg = (
+                f"Schema validation found {invalid_total} invalid conversations "
+                f"(mode={args.schema_validation_mode})."
+            )
+            if args.schema_validation_mode == "error":
+                print(f"\nERROR: {msg}")
+                print("Fix dataset schema or rerun with --schema_validation_mode warn/off.")
+                sys.exit(1)
+            else:
+                print(f"\nWARNING: {msg}")
+    if args.no_system_prompt and args.schema_validation_mode != "off":
+        print(
+            "\nWARNING: --no_system_prompt omits serialized system block at training time. "
+            "For strict Phase 3 conversation grammar, prefer including system prompt."
+        )
     
     if use_separate_val:
         print(f"  Train: {len(train_conversations)}, Val: {len(val_conversations)}")
@@ -1394,7 +1501,42 @@ def main():
         "enable_rag_tags": args.enable_rag_tags,
         "input_rag_field_stats": input_rag_stats,
         "val_rag_field_stats": val_rag_stats if use_separate_val else None,
+        "schema_validation_mode": args.schema_validation_mode,
+        "input_schema_report": input_schema_report,
+        "val_schema_report": val_schema_report if use_separate_val else None,
     }
+
+    lineage_inputs = []
+    train_rows = count_jsonl_rows(Path(args.input)) if use_separate_val else metadata["num_train_conversations"]
+    lineage_inputs.append({
+        "path": str(Path(args.input).resolve()),
+        "sampled_rows": int(train_rows),
+        "effective_ratio": metadata["num_train_conversations"] / max(1, metadata["num_conversations"]),
+    })
+    if args.val_file:
+        lineage_inputs.append({
+            "path": str(Path(args.val_file).resolve()),
+            "sampled_rows": int(count_jsonl_rows(Path(args.val_file))),
+            "effective_ratio": metadata["num_val_conversations"] / max(1, metadata["num_conversations"]),
+        })
+    lineage = merge_lineage(
+        inputs=lineage_inputs,
+        output_rows=metadata["num_conversations"],
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/sft/prepare_chat_sft.py",
+            "args": {
+                "input": args.input,
+                "val_file": args.val_file,
+                "output_dir": args.output_dir,
+                "enable_packing": args.enable_packing,
+                "pack_block_size": args.pack_block_size,
+                "enable_rag_tags": args.enable_rag_tags,
+                "seed": args.seed,
+            },
+        },
+    )
+    metadata["lineage"] = lineage
     
     # Add packing metadata
     if args.enable_packing:
@@ -1429,6 +1571,8 @@ def main():
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
     print(f"  Saved metadata: {metadata_path}")
+    lineage_path = write_lineage_sidecar(Path(args.output_dir), lineage)
+    print(f"  Saved lineage: {lineage_path}")
     
     # Summary
     print("\n" + "=" * 60)

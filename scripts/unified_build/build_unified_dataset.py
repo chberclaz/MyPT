@@ -44,6 +44,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from core.dataset_lineage import iso_now, load_lineage_for_input
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -612,6 +615,29 @@ STEPS = {
 ALL_STEPS_ORDER = ["download", "holdback", "tokenize", "mix", "mix_phase1"]
 
 
+def write_pipeline_audit() -> None:
+    """Write unified-build lineage/audit summary after mix outputs exist."""
+    outputs = [MIX_OUTPUT, PHASE1_OUTPUT, CODE_EVAL_TOKENIZED, RETRIEVAL_EVAL_TOKENIZED]
+    report = {
+        "created_at": iso_now(),
+        "script": "scripts/unified_build/build_unified_dataset.py",
+        "outputs": {},
+    }
+    for out in outputs:
+        if out.exists():
+            report["outputs"][str(out)] = {
+                "exists": True,
+                "lineage": load_lineage_for_input(out),
+            }
+        else:
+            report["outputs"][str(out)] = {"exists": False}
+
+    audit_path = PROJECT_ROOT / "data" / "unified_build_pipeline_audit.json"
+    with open(audit_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    print(f"  Unified build audit: {audit_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build unified 6B token from-scratch dataset (local)",
@@ -665,6 +691,7 @@ def main():
     print(f"    - {RETRIEVAL_EVAL_TOKENIZED}/")
     print(f"    - data/multilingual_1.5B_wiki90/  (if not already on RunPod)")
     print(f"    - data/domain_161M_corpus_tokenized/  (if not already on RunPod)")
+    write_pipeline_audit()
     print()
 
 

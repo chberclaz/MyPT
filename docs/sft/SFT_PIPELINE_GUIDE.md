@@ -527,6 +527,38 @@ python scripts/eval/run_regression_gate.py \
     --phase2_5_no_system_prompt -v
 ```
 
+### Phase 2.7 / 2.8 Rebalance Bridge
+
+Use this when `phase2_7_rebalance` improves anti-echo/operators but over-refuses on basic echo.
+
+```bash
+# 2.8 intermediate build (50% broad replay, 50% specialized correction)
+python scripts/sft/prepare_phase2_8_echo_rebalance.py \
+    --output_dir data/sft_phase2_8_intermediate \
+    --replay_file data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
+    --target_train_size 40000 \
+    --val_size 3000
+
+# tokenize + packing
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_8_intermediate/phase2_8_mixed_train.jsonl \
+    --output_dir data/sft_phase2_8_echo_rebalance \
+    --val_file data/sft_phase2_8_intermediate/phase2_8_val.jsonl \
+    --no_system_prompt \
+    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+
+# short bridge run from phase2_7_rebalance_gold
+python train.py \
+    --model_name phase2_8_echo_rebalance \
+    --config_file configs/sft/phase2_8_echo_rebalance.json \
+    --dataset_dir data/sft_phase2_8_echo_rebalance \
+    --init_from_model checkpoints/phase2_7_rebalance_gold
+
+# ABCE gate (hard 100%), D report-only
+python scripts/eval/eval_phase2_8_bridge.py \
+    --model phase2_8_echo_rebalance_gold -v
+```
+
 ---
 
 ## 6. Phase 3: Chat SFT
@@ -560,27 +592,44 @@ python scripts/sft/generate_rag_chat_sft.py \
     --output data/sft_phase3_intermediate/rag_chat.jsonl \
     --num_examples 2000 --language mixed
 
-# 3. Augment gold episodes
+# 3. Generate high-precision instruction episodes (checkable + conflicts + abstention)
+python scripts/sft/generate_phase3_precision_sft.py \
+    --output data/sft_phase3_intermediate/phase3_precision.jsonl \
+    --num_examples 12000
+
+# 4. Augment gold episodes
 python scripts/sft/augment_episodes_paraphrase.py \
     --input data/gold_episodes/gold_bilingual.jsonl \
     --output data/sft_phase3_intermediate/gold_augmented.jsonl \
     --target_count 1000
 
-# 4. Mix all sources + replay
-python scripts/sft/mix_sft_jsonl.py \
-    --inputs data/sft_hf/oasst2.jsonl:1.0 \
-             data/sft_hf/alpaca_de.jsonl:1.0 \
-             data/sft_phase3_intermediate/rag_chat.jsonl:1.0 \
-             data/sft_phase3_intermediate/gold_augmented.jsonl:1.0 \
-             data/sft_phase1_intermediate/phase1_mixed.jsonl:0.15 \
-    --output data/sft_phase3_intermediate/phase3_mixed.jsonl --shuffle
+# 5. Build Phase 3 mix with explicit policy:
+#    - operators maintenance ~8%
+#    - anti-echo maintenance ~2%
+#    - grounded context-only QA ~16%
+#    - open-ended chat capped
+#    - remainder strict/checkable precision tasks
+python scripts/sft/build_phase3_dataset.py \
+    --output data/sft_phase3_intermediate/phase3_mixed.jsonl \
+    --target_size 80000 \
+    --precision_file data/sft_phase3_intermediate/phase3_precision.jsonl \
+    --grounded_file data/sft_phase3_intermediate/rag_chat.jsonl \
+    --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
+    --anti_echo_file data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl \
+    --open_chat_files data/sft_hf/oasst2.jsonl data/sft_hf/alpaca_de.jsonl data/sft_phase3_intermediate/gold_augmented.jsonl
 
-# 5. Tokenize with packing (episodes average ~250 tokens, 2-10x efficiency gain)
+# 6. Audit Phase 3 composition and schema coverage before tokenization
+python scripts/sft/audit_phase3_dataset.py \
+    --input data/sft_phase3_intermediate/phase3_mixed.jsonl \
+    --output data/sft_phase3_intermediate/phase3_mixed.audit.json
+
+# 7. Tokenize with packing (episodes average ~250 tokens, 2-10x efficiency gain)
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase3_intermediate/phase3_mixed.jsonl \
     --output_dir data/sft_phase3_chat \
     --enable_packing --pack_block_size 4096 \
-    --enable_rag_tags
+    --enable_rag_tags \
+    --schema_validation_mode error
 ```
 
 ### Train
@@ -590,17 +639,25 @@ python train.py \
     --model_name phase3_chat \
     --config_file configs/sft/phase3_chat_sft.json \
     --dataset_dir data/sft_phase3_chat \
-    --init_from_model checkpoints/phase2_operators
+    --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
 ```
 
 ### Success Gate
 
 ```bash
 python scripts/eval/sft_eval_suite.py --model phase3_chat -v
-# Passes: format, echo, anti-echo, regression gates
-# Model responds in user's language
-# Citations present when context is provided
+python scripts/eval/run_regression_gate.py --model phase3_chat --phase 3 -v
+# Required before Phase 4:
+# - format strict still high
+# - echo/anti-echo do not collapse
+# - regression basics recover
+# - operators do not collapse
+# - instruction hierarchy + injection resistance pass
+# - abstention/context and strict formatting buckets pass
+# - context/citation linkage is present
 ```
+
+If this gate fails: adjust Phase 3 data mix first (especially strict/checkable vs open chat ratio) before changing LR.
 
 ---
 
@@ -1002,6 +1059,7 @@ so no model changes are needed.
 | `generate_echo_dataset.py` | 1 | Echo/repeat instructions, anti-echo, gibberish |
 | `generate_operator_dataset.py` | 2 | COPY/WRAP/EXTRACT with contrastive design |
 | `generate_rag_chat_sft.py` | 3 | RAG episodes with user_context + think + cite (EN+DE) |
+| `generate_phase3_precision_sft.py` | 3 | High-precision checkable tasks + conflicts + abstention |
 | `generate_multiturn_sft.py` | 4 | Multi-turn conversations: followup, clarification, topic switch |
 | `generate_agent_sft.py` | 5 | Single-step tool-calling (EN+DE, think+cite, NO_TOOL) |
 | `generate_sft_tool_episodes.py` | 6 | Multi-step agentic tool chains (validated, EN+DE) |
@@ -1012,7 +1070,12 @@ so no model changes are needed.
 | Script | What it does |
 |--------|-------------|
 | `prepare_phase1_format_lock.py` | Automated Phase 1 pipeline (generate + mix + tokenize) |
+| `prepare_phase2_5_wrap_antiecho.py` | Build 2.5 bridge intermediate dataset |
+| `prepare_phase2_6_antiecho.py` | Build 2.6 anti-echo micro-phase dataset |
+| `prepare_phase2_7_rebalance.py` | Build 2.7 rebalance dataset |
+| `prepare_phase2_8_echo_rebalance.py` | Build 2.8 replay+specialized bridge dataset |
 | `mix_sft_jsonl.py` | Mix multiple JSONL files with sampling ratios |
+| `build_phase3_dataset.py` | Policy-driven Phase 3 mixer (maintenance + strict tasks + turn caps) |
 | `prepare_chat_sft.py` | Tokenize chat JSONL to binary (Phase 1-4) |
 | `prepare_tool_sft.py` | Tokenize tool JSONL to binary (Phase 5-6) |
 
@@ -1028,6 +1091,7 @@ so no model changes are needed.
 | `deduplicate_episodes.py` | Remove duplicate episodes |
 | `deduplicate_by_user_message.py` | Deduplicate by user message content |
 | `analyze_episode_diversity.py` | Analyze diversity metrics |
+| `audit_phase3_dataset.py` | Phase 3 schema/composition audit (global + per-source) |
 
 ### Augmentation
 
@@ -1042,6 +1106,7 @@ so no model changes are needed.
 |--------|-------------|
 | `scripts/eval/sft_eval_suite.py` | Full evaluation (format, echo, anti-echo, regression) |
 | `scripts/eval/eval_operator.py` | Operator exact-match evaluation |
+| `scripts/eval/eval_phase2_8_bridge.py` | Phase 2.8 ABCE hard gate (D report-only) |
 
 ### Translation (DE/EN)
 
