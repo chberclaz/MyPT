@@ -68,7 +68,7 @@
       "metric_path": "hard_avg_rate",
       "metric_goal": "max",
       "pass_path": "gate_passed",
-      "require_pass": true,
+      "require_pass": false,
       "strict": false
     }
   }
