@@ -58,6 +58,10 @@ def main() -> None:
         "requirements": {},
         "report_only": {},
         "gate_passed": True,
+        "hard_pass_count": 0,
+        "hard_total": len(HARD_BUCKETS),
+        "hard_pass_rate": 0.0,
+        "hard_avg_rate": 0.0,
         "eval_results": eval_results,
     }
 
@@ -68,9 +72,13 @@ def main() -> None:
         rate = _bucket_rate(eval_results, name)
         ok = rate >= 100.0
         gate["requirements"][name] = {"required": 100.0, "actual": round(rate, 2), "status": "PASS" if ok else "FAIL"}
+        if ok:
+            gate["hard_pass_count"] += 1
         print(f"{name:18s}: {rate:6.2f}%  {'PASS' if ok else 'FAIL'} (required 100%)")
         if not ok:
             gate["gate_passed"] = False
+    gate["hard_pass_rate"] = round(gate["hard_pass_count"] * 100.0 / max(1, gate["hard_total"]), 2)
+    gate["hard_avg_rate"] = round(sum(_bucket_rate(eval_results, n) for n in HARD_BUCKETS) / max(1, len(HARD_BUCKETS)), 2)
 
     print("-" * 64)
     for name in REPORT_ONLY:

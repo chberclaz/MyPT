@@ -173,7 +173,7 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "terminal_log_file", "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps"]
+        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "terminal_log_file", "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps", "gold_selection"]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
@@ -635,6 +635,9 @@ def main():
         print(f"Training log: {log_file}")
     if eval_seed is not None:
         print(f"Eval RNG seed: {eval_seed}")
+    if config_training.get('gold_selection') is not None:
+        gs = config_training['gold_selection']
+        print(f"GOLD selection strategy: {gs.get('strategy', 'val_loss')}")
     
     print()
     print("Model param dtype:", next(model.parameters()).dtype)
@@ -661,6 +664,8 @@ def main():
         data_loader_schedule=data_loader_schedule,
         grad_accum_steps=effective_grad_accum_steps,
         initial_phase=initial_phase_name,
+        model_name=args.model_name,
+        gold_selection=config_training.get('gold_selection'),
     )
     
     print("\n========== Training Complete ==========")

@@ -10,9 +10,16 @@ import os
 import json
 import random
 import numpy as np
+from pathlib import Path
 # some tests
 # Local imports are placed here to avoid circulars when tooling loads files out of order
 from .tokenizer import Tokenizer
+from .gold_selection import (
+    parse_gold_selection_config,
+    should_run_gate,
+    run_external_gate,
+    compare_metric,
+)
 
 def _resolve_dtype(dtype_str: str) -> torch.dtype:
     """
@@ -1179,7 +1186,7 @@ class GPT(nn.Module):
             eval_seed=None, config_file=None, dataset_dir=None,
             eval_prompts_file=None, eval_max_new_tokens=64,
             data_loader_schedule=None, grad_accum_steps=1,
-            initial_phase=None):
+            initial_phase=None, model_name=None, gold_selection=None):
         """
         Main training loop - the model trains itself!
         
@@ -1224,6 +1231,10 @@ class GPT(nn.Module):
                              Effective batch = batch_size * grad_accum_steps. Default 1 (no
                              accumulation). When > 1, each 'iter' counts one optimizer step,
                              and grad_accum_steps forward/backward passes happen per step.
+            model_name: Optional model/checkpoint name for external gate evaluation.
+            gold_selection: Optional dict configuring GOLD checkpoint strategy.
+                            Supports strategy: val_loss | hybrid | external_gate
+                            and external gate script execution/metric extraction.
         
         Checkpoint Strategy:
             - Eval checkpoints: Saved to checkpoint_dir/ in bf16 (default)
@@ -1262,21 +1273,22 @@ class GPT(nn.Module):
         else:
             warmup_steps = int(warmup_iters)
         
-        # Track best validation loss for "gold" checkpoint
-        # Gold is only saved when val loss is genuinely improving, not during overfitting.
-        # Three guards prevent degenerate gold saves:
-        #   1. Overfit ratio: val_loss / train_loss > threshold → memorizing, not generalizing
-        #   2. Trend guard: val loss rose 2+ consecutive evals → past the sweet spot,
-        #      any new "best" is likely noise/flapping, not genuine improvement
-        #   3. Eval set regression: any eval set degraded >20% from its baseline → catastrophic forgetting
-        best_val_loss = float('inf')
+        # GOLD checkpoint selection (configurable):
+        # - default strategy: val_loss (legacy behavior)
+        # - optional hybrid/external_gate strategies using task metrics
+        gold_cfg = parse_gold_selection_config(gold_selection)
+        best_val_loss = float('inf')          # legacy/min-loss tracker
+        best_gold_val_loss = float('inf')     # val loss of selected GOLD checkpoint
+        best_gate_metric = None               # external metric tracker (if configured)
         gold_step = None
         gold_dir = f"{checkpoint_dir}_gold" if checkpoint_dir else None
         val_loss_history = []
         eval_baselines = {}           # step-0 eval losses, set on first eval
-        GOLD_OVERFIT_RATIO = 5.0      # val/train ratio above this = overfitting
-        GOLD_CONSEC_RISES = 2         # consecutive val increases before blocking gold
-        GOLD_EVAL_REGRESSION = 0.20   # eval set may degrade at most 20% from baseline
+        GOLD_OVERFIT_RATIO = float(gold_cfg.guards.overfit_ratio)
+        GOLD_CONSEC_RISES = int(gold_cfg.guards.consecutive_rises)
+        GOLD_EVAL_REGRESSION = float(gold_cfg.guards.eval_regression)
+        eval_count = 0
+        project_root = Path(__file__).resolve().parents[1]
         
         min_lr = target_lr * 0.1
         print(f"LR schedule: linear warmup + cosine decay")
@@ -1324,6 +1336,7 @@ class GPT(nn.Module):
             # Provenance tracking
             "config_file": config_file,
             "dataset_dir": dataset_dir,
+            "gold_selection": gold_selection,
             # Model architecture (for quick reference without loading config.json)
             "model_params": {
                 "n_layer": self.config.n_layer,
@@ -1417,6 +1430,7 @@ class GPT(nn.Module):
                     "amp_dtype": amp_dtype,
                     "config_file": config_file,
                     "dataset_dir": dataset_dir,
+                    "gold_selection": gold_selection,
                 },
                 "model": {
                     "total_params": sum(p.numel() for p in self.parameters()),
@@ -1469,6 +1483,7 @@ class GPT(nn.Module):
                     "phase": current_phase,
                     "val_loss": round(float(losses['val']), 6),
                 }
+                eval_count += 1
                 
                 # Evaluate on additional eval sets if provided
                 eval_losses = {}
@@ -1531,6 +1546,28 @@ class GPT(nn.Module):
                         log_entry["cache_mismatches"] = cache_mismatches
                     
                     self.train()
+
+                # Optional external gate evaluation for GOLD selection.
+                gate_result = {"ran": False}
+                if should_run_gate(gold_cfg.external_gate, eval_count=eval_count, is_final_eval=False):
+                    gate_result = run_external_gate(
+                        gold_cfg.external_gate,
+                        project_root=project_root,
+                        checkpoint_dir=checkpoint_dir,
+                        model_name=model_name,
+                        iter_step=iter,
+                        is_final_eval=False,
+                    )
+                    log_entry["gold_gate"] = {
+                        "ran": gate_result.get("ran", False),
+                        "ok": gate_result.get("ok", False),
+                        "returncode": gate_result.get("returncode"),
+                        "gate_pass": gate_result.get("gate_pass"),
+                        "metric_value": gate_result.get("metric_value"),
+                        "metric_path": gate_result.get("metric_path"),
+                        "output_json": gate_result.get("output_json"),
+                        "error": gate_result.get("error"),
+                    }
                 
                 # Compute eval duration and ETA
                 eval_duration = _time.time() - eval_start
@@ -1573,7 +1610,7 @@ class GPT(nn.Module):
                         save_dtype=effective_save_dtype
                     )
                     
-                    # Save "gold" checkpoint if val loss is best AND model is not overfitting
+                    # Evaluate GOLD checkpoint candidate using configured strategy.
                     current_val_loss = losses['val']
                     val_loss_history.append(current_val_loss)
                     
@@ -1582,20 +1619,22 @@ class GPT(nn.Module):
                         eval_baselines = {k: v for k, v in eval_losses.items()}
                         print(f"  📊 GOLD eval baselines: {' | '.join(f'{k}={v:.4f}' for k, v in eval_baselines.items())}")
                     
+                    gold_blocked = False
+                    block_reason = ""
+
+                    # Legacy val-loss best tracking (kept for diagnostics and val-loss strategy).
                     if current_val_loss < best_val_loss:
-                        gold_blocked = False
-                        block_reason = ""
-                        
-                        # Guard 1: Overfit ratio - train/val gap too large
+                        best_val_loss = current_val_loss
+
+                    # Optional loss guards (applied to all strategies unless disabled).
+                    if gold_cfg.apply_loss_guards:
                         train_loss_current = losses.get('train', 0)
                         if train_loss_current > 1e-6:
                             overfit_ratio = current_val_loss / train_loss_current
                             if overfit_ratio > GOLD_OVERFIT_RATIO:
                                 gold_blocked = True
                                 block_reason = f"overfit (val/train={overfit_ratio:.1f}x, threshold={GOLD_OVERFIT_RATIO}x)"
-                        
-                        # Guard 2: Trend - val loss rose N+ consecutive evals before this dip
-                        # If we've been climbing and now dip, it's likely noise, not improvement
+
                         if not gold_blocked and len(val_loss_history) >= 3:
                             consecutive_up = 0
                             for i in range(len(val_loss_history) - 2, 0, -1):
@@ -1606,9 +1645,7 @@ class GPT(nn.Module):
                             if consecutive_up >= GOLD_CONSEC_RISES:
                                 gold_blocked = True
                                 block_reason = f"flapping (val loss rose {consecutive_up} consecutive evals before this dip)"
-                        
-                        # Guard 3: Eval set regression - any eval set degraded too much from baseline
-                        # Prevents saving a "best val" checkpoint that has catastrophically forgotten
+
                         if not gold_blocked and eval_baselines and eval_losses:
                             for eval_name, eval_val in eval_losses.items():
                                 baseline = eval_baselines.get(eval_name)
@@ -1622,41 +1659,132 @@ class GPT(nn.Module):
                                             f"(+{regression*100:.1f}%, threshold={GOLD_EVAL_REGRESSION*100:.0f}%)"
                                         )
                                         break
-                        
-                        if not gold_blocked:
-                            best_val_loss = current_val_loss
-                            gold_step = iter
-                            self.save_checkpoint_bundle(
-                                gold_dir,
-                                step=iter,
-                                optimizer_state=optimizer.state_dict(),
-                                training_config=training_config,
-                                save_dtype=effective_save_dtype
-                            )
-                            print(f"  GOLD checkpoint! val_loss={current_val_loss:.4f} at step {iter}")
-                            if log_file is not None:
-                                gold_entry = {
-                                    "event": "gold_checkpoint",
-                                    "iter": iter,
-                                    "timestamp": datetime.datetime.now().isoformat(),
-                                    "val_loss": round(float(current_val_loss), 6),
-                                    "prev_best": round(float(best_val_loss), 6) if best_val_loss < float('inf') else None,
-                                }
-                                with open(log_file, 'a', encoding='utf-8') as f:
-                                    f.write(json.dumps(gold_entry) + "\n")
-                        else:
-                            print(f"  GOLD blocked: val {current_val_loss:.4f} < best {best_val_loss:.4f} but {block_reason}")
-                            if log_file is not None:
-                                block_entry = {
-                                    "event": "gold_blocked",
-                                    "iter": iter,
-                                    "timestamp": datetime.datetime.now().isoformat(),
-                                    "val_loss": round(float(current_val_loss), 6),
-                                    "best_val_loss": round(float(best_val_loss), 6),
-                                    "reason": block_reason,
-                                }
-                                with open(log_file, 'a', encoding='utf-8') as f:
-                                    f.write(json.dumps(block_entry) + "\n")
+
+                    strategy = gold_cfg.strategy
+                    candidate_is_better = False
+                    gate_pass = bool(gate_result.get("gate_pass")) if isinstance(gate_result, dict) else False
+                    gate_metric = gate_result.get("metric_value") if isinstance(gate_result, dict) else None
+
+                    if not gold_blocked:
+                        if (
+                            gold_cfg.external_gate.enabled
+                            and gold_cfg.external_gate.strict
+                            and isinstance(gate_result, dict)
+                            and gate_result.get("ran", False)
+                            and (not gate_result.get("ok", False))
+                        ):
+                            gold_blocked = True
+                            block_reason = f"external gate execution failed (strict): rc={gate_result.get('returncode')}"
+
+                    if not gold_blocked:
+                        if strategy == "val_loss":
+                            if gold_cfg.external_gate.enabled and gold_cfg.external_gate.require_pass and not gate_pass:
+                                gold_blocked = True
+                                block_reason = "external gate required pass but gate did not pass"
+                            else:
+                                candidate_is_better = current_val_loss < best_gold_val_loss
+                        elif strategy == "hybrid":
+                            if not gate_pass:
+                                gold_blocked = True
+                                block_reason = "hybrid strategy requires gate pass"
+                            else:
+                                candidate_is_better = current_val_loss < best_gold_val_loss
+                        else:  # external_gate
+                            if gold_cfg.external_gate.require_pass and not gate_pass:
+                                gold_blocked = True
+                                block_reason = "external_gate strategy requires gate pass"
+                            else:
+                                if gate_metric is not None:
+                                    if compare_metric(float(gate_metric), best_gate_metric, gold_cfg.external_gate.metric_goal):
+                                        candidate_is_better = True
+                                    elif best_gate_metric is not None and float(gate_metric) == float(best_gate_metric):
+                                        candidate_is_better = current_val_loss < best_gold_val_loss
+                                else:
+                                    # No numeric metric: fall back to gate pass + val loss tie-break.
+                                    candidate_is_better = gate_pass and (current_val_loss < best_gold_val_loss)
+
+                    if candidate_is_better and not gold_blocked:
+                        gold_step = iter
+                        best_gold_val_loss = current_val_loss
+                        if gate_metric is not None:
+                            best_gate_metric = float(gate_metric)
+                        self.save_checkpoint_bundle(
+                            gold_dir,
+                            step=iter,
+                            optimizer_state=optimizer.state_dict(),
+                            training_config=training_config,
+                            save_dtype=effective_save_dtype
+                        )
+                        msg = f"  GOLD checkpoint! strategy={strategy}, val_loss={current_val_loss:.4f} at step {iter}"
+                        if gate_metric is not None:
+                            msg += f", gate_metric={float(gate_metric):.6f}"
+                        if gate_pass:
+                            msg += ", gate_pass=True"
+                        print(msg)
+                        if log_file is not None:
+                            gold_entry = {
+                                "event": "gold_checkpoint",
+                                "iter": iter,
+                                "timestamp": datetime.datetime.now().isoformat(),
+                                "strategy": strategy,
+                                "val_loss": round(float(current_val_loss), 6),
+                                "best_gold_val_loss": round(float(best_gold_val_loss), 6),
+                                "best_gate_metric": best_gate_metric,
+                                "gate_pass": gate_pass,
+                                "gate_metric": gate_metric,
+                            }
+                            with open(log_file, 'a', encoding='utf-8') as f:
+                                f.write(json.dumps(gold_entry) + "\n")
+                    elif gold_blocked:
+                        print(f"  GOLD blocked: {block_reason}")
+                        if log_file is not None:
+                            block_entry = {
+                                "event": "gold_blocked",
+                                "iter": iter,
+                                "timestamp": datetime.datetime.now().isoformat(),
+                                "strategy": strategy,
+                                "val_loss": round(float(current_val_loss), 6),
+                                "best_gold_val_loss": round(float(best_gold_val_loss), 6) if best_gold_val_loss < float('inf') else None,
+                                "best_gate_metric": best_gate_metric,
+                                "reason": block_reason,
+                                "gate_pass": gate_pass,
+                                "gate_metric": gate_metric,
+                            }
+                            with open(log_file, 'a', encoding='utf-8') as f:
+                                f.write(json.dumps(block_entry) + "\n")
+
+                    # Persist GOLD selection state for resumable/auditable decisions.
+                    if checkpoint_dir:
+                        try:
+                            state_path = os.path.join(checkpoint_dir, "gold_selection_state.json")
+                            state_obj = {
+                                "strategy": gold_cfg.strategy,
+                                "iter": iter,
+                                "best_val_loss": None if best_val_loss == float('inf') else float(best_val_loss),
+                                "best_gold_val_loss": None if best_gold_val_loss == float('inf') else float(best_gold_val_loss),
+                                "best_gate_metric": best_gate_metric,
+                                "gold_step": gold_step,
+                                "external_gate": {
+                                    "enabled": gold_cfg.external_gate.enabled,
+                                    "metric_path": gold_cfg.external_gate.metric_path,
+                                    "metric_goal": gold_cfg.external_gate.metric_goal,
+                                    "pass_path": gold_cfg.external_gate.pass_path,
+                                    "require_pass": gold_cfg.external_gate.require_pass,
+                                },
+                                "last_gate": {
+                                    "ran": gate_result.get("ran") if isinstance(gate_result, dict) else False,
+                                    "ok": gate_result.get("ok") if isinstance(gate_result, dict) else None,
+                                    "gate_pass": gate_result.get("gate_pass") if isinstance(gate_result, dict) else None,
+                                    "metric_value": gate_result.get("metric_value") if isinstance(gate_result, dict) else None,
+                                    "returncode": gate_result.get("returncode") if isinstance(gate_result, dict) else None,
+                                    "output_json": gate_result.get("output_json") if isinstance(gate_result, dict) else None,
+                                    "error": gate_result.get("error") if isinstance(gate_result, dict) else None,
+                                },
+                            }
+                            with open(state_path, "w", encoding="utf-8") as sf:
+                                json.dump(state_obj, sf, indent=2)
+                        except Exception:
+                            pass
                 # _mem("after_save")
                 # gpu_mem("after_save")
 
@@ -1751,12 +1879,12 @@ class GPT(nn.Module):
         final_losses = self.estimate_loss(data_loader, eval_iters)
         final_step = max(start_step, max_iters - 1)
         
-        # Bugfix: GOLD selection previously happened only at eval_interval steps.
-        # If the best val appears on the final step (not aligned with eval_interval),
-        # GOLD was not updated. Promote final checkpoint when it is better.
+        # Final-step promotion for val_loss strategy.
+        # (For external/hybrid strategies, gate-based selection is done at eval intervals.)
         final_val_loss = float(final_losses['val'])
-        if checkpoint_dir and final_val_loss < best_val_loss:
-            best_val_loss = final_val_loss
+        if checkpoint_dir and gold_cfg.strategy == "val_loss" and final_val_loss < best_gold_val_loss:
+            best_val_loss = min(best_val_loss, final_val_loss)
+            best_gold_val_loss = final_val_loss
             gold_step = final_step
             self.save_checkpoint_bundle(
                 gold_dir,
@@ -1771,6 +1899,7 @@ class GPT(nn.Module):
                     "event": "gold_checkpoint_final_eval",
                     "iter": final_step,
                     "timestamp": datetime.datetime.now().isoformat(),
+                    "strategy": gold_cfg.strategy,
                     "val_loss": round(final_val_loss, 6),
                 }
                 with open(log_file, 'a', encoding='utf-8') as f:
@@ -1788,7 +1917,7 @@ class GPT(nn.Module):
         print(f"  Total tokens: {tokens_b:.2f}B ({total_tokens:,})")
         print(f"  Speed:        {steps_per_sec:.2f} steps/s, {total_tokens/total_elapsed:.0f} tokens/s")
         if gold_step is not None:
-            print(f"  Best (GOLD):  step {gold_step}, val_loss={best_val_loss:.4f}")
+            print(f"  Best (GOLD):  step {gold_step}, val_loss={best_gold_val_loss:.4f}, strategy={gold_cfg.strategy}")
         
         # Write final summary to log
         if log_file is not None:
@@ -1805,6 +1934,9 @@ class GPT(nn.Module):
                 "final_train_loss": round(float(final_losses['train']), 6),
                 "final_val_loss": round(float(final_losses['val']), 6),
                 "best_val_loss": round(float(best_val_loss), 6) if best_val_loss < float('inf') else None,
+                "best_gold_val_loss": round(float(best_gold_val_loss), 6) if best_gold_val_loss < float('inf') else None,
+                "best_gate_metric": best_gate_metric,
+                "gold_strategy": gold_cfg.strategy,
                 "gold_step": gold_step,
                 "config_file": config_file,
                 "dataset_dir": dataset_dir,
@@ -1843,7 +1975,7 @@ class GPT(nn.Module):
             if final_save_dtype:
                 print(f"  Deploy inference: {deploy_dir}")
             if gold_step is not None:
-                print(f"  Best (GOLD): {gold_dir} (step {gold_step}, val_loss={best_val_loss:.4f})")
+                print(f"  Best (GOLD): {gold_dir} (step {gold_step}, val_loss={best_gold_val_loss:.4f}, strategy={gold_cfg.strategy})")
         
         return final_losses
     

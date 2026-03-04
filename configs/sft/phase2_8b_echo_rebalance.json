@@ -44,6 +44,33 @@
     "retrieval": "data/retrieval_eval_tokenized"
   },
   "eval_seed": 1337,
-  "log_file": "logs/train/phase2_8b_echo_rebalance.jsonl"
+  "log_file": "logs/train/phase2_8b_echo_rebalance.jsonl",
+  "gold_selection": {
+    "strategy": "external_gate",
+    "apply_loss_guards": true,
+    "guards": {
+      "overfit_ratio": 6.0,
+      "consecutive_rises": 3,
+      "eval_regression": 0.25
+    },
+    "external_gate": {
+      "enabled": true,
+      "script": "scripts/eval/eval_phase2_8_bridge.py",
+      "args": [
+        "--model",
+        "{model_name}",
+        "--output",
+        "{output_json}"
+      ],
+      "timeout_s": 1200,
+      "run_interval_evals": 1,
+      "run_on_final_eval": false,
+      "metric_path": "hard_avg_rate",
+      "metric_goal": "max",
+      "pass_path": "gate_passed",
+      "require_pass": true,
+      "strict": false
+    }
+  }
 }
 

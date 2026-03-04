@@ -569,6 +569,21 @@ python scripts/eval/eval_phase2_8_bridge.py \
     --model phase2_8_echo_rebalance_gold -v
 ```
 
+### GOLD Selection (Bridge-Aware, configurable)
+
+For bridge phases, selecting `*_gold` by pure `val_loss` can miss task success.
+The trainer supports configurable GOLD strategies via config:
+- `val_loss` (legacy)
+- `hybrid` (gate-pass + val-loss improvement)
+- `external_gate` (gate metric/pass as primary objective)
+
+Example (used in `phase2_8b_echo_rebalance.json`):
+- run `scripts/eval/eval_phase2_8_bridge.py` at each eval
+- require `gate_passed=true`
+- maximize `hard_avg_rate`
+
+Training logs include gate results and GOLD decision context in JSONL.
+
 ### Refinement Success Gates
 
 ```bash

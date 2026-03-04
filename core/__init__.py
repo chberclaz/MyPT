@@ -90,6 +90,13 @@ from .dataset_lineage import (
     merge_lineage,
     write_lineage_sidecar,
 )
+from .gold_selection import (
+    parse_gold_selection_config,
+    should_run_gate,
+    run_external_gate,
+    compare_metric,
+    deep_get,
+)
 
 # System prompts (for training scripts and inference)
 from .system_prompts import (
@@ -143,6 +150,11 @@ __all__ = [
     'load_lineage_for_input',
     'merge_lineage',
     'write_lineage_sidecar',
+    'parse_gold_selection_config',
+    'should_run_gate',
+    'run_external_gate',
+    'compare_metric',
+    'deep_get',
     
     # Banner
     'print_banner',
