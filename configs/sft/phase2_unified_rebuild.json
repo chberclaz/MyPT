@@ -18,10 +18,10 @@
   "rope_theta": 10000.0,
   "rope_scale": 4.0,
 
-  "learning_rate": 1.1e-5,
-  "max_iters": 160,
+  "learning_rate": 3.0e-5,
+  "max_iters": 120,
   "eval_interval": 10,
-  "warmup_iters": 16,
+  "warmup_iters": 12,
   "use_amp": true,
   "amp_dtype": "bf16",
   "grad_accum_steps": 4,
