@@ -438,7 +438,7 @@ python scripts/eval/eval_operator.py --model phase2_operators -v
 
 ---
 
-## 5.5 Refinement Bridge (Optional): Phase 2.5 + 2.6
+## 5.5 Refinement Bridge (Recommended Path): Phase 2.5 -> 2.7 -> 2.8
 
 **Why this section exists:**  
 After Phase 2, operator abstraction is usually strong, but edge behavior may still lag:
@@ -446,7 +446,8 @@ After Phase 2, operator abstraction is usually strong, but edge behavior may sti
 - model may mirror nonce/gibberish instead of refusing/returning safe outputs
 - broad chat SFT (Phase 3+) can amplify those weaknesses if not corrected early
 
-Use this bridge only when eval shows those gaps.
+Use this bridge when eval shows those gaps.  
+Current recommended continuation is **2.5 -> 2.7 -> 2.8**.
 
 ### Phase 2.5 — WRAP + Anti-Echo Hardening
 
@@ -482,9 +483,9 @@ python train.py \
     --init_from_model checkpoints/phase2_operators_gold
 ```
 
-### Phase 2.6 — Anti-Echo Micro-Phase (Targeted)
+### Phase 2.6 — Historical Micro-Phase (Not used for current continuation)
 
-Use when anti-echo still fails after 2.5.
+This phase exists for reproducibility/history, but the current bridge path does **not** continue from 2.6.
 
 ```bash
 # 1) Build targeted anti-echo dataset
@@ -512,34 +513,43 @@ python train.py \
     --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
 ```
 
-### Refinement Success Gates
+### Phase 2.7 — Rebalance (from 2.5 GOLD)
 
 ```bash
-# Primary bridge gate
-python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_5_wrap_antiecho -v
-# Target: WRAP exact match >= 90% and anti-echo >= 75%
+# 1) Build 2.7 intermediate mix (anti-echo + operator replay + optional code)
+python scripts/sft/prepare_phase2_7_rebalance.py \
+    --output_dir data/sft_phase2_7_intermediate \
+    --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
+    --target_train_size 60000
 
-# Optional integrated regression gate with 2.5 check
-python scripts/eval/run_regression_gate.py \
-    --model phase2_5_wrap_antiecho \
-    --phase 2 \
-    --run_phase2_5_wrap_gate \
-    --phase2_5_no_system_prompt -v
+# 2) Tokenize + pack
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
+    --output_dir data/sft_phase2_7_rebalance \
+    --no_system_prompt \
+    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+
+# 3) Train 2.7 from 2.5 GOLD
+python train.py \
+    --model_name phase2_7_rebalance \
+    --config_file configs/sft/phase2_7_rebalance.json \
+    --dataset_dir data/sft_phase2_7_rebalance \
+    --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
 ```
 
-### Phase 2.7 / 2.8 Rebalance Bridge
-
-Use this when `phase2_7_rebalance` improves anti-echo/operators but over-refuses on basic echo.
+### Phase 2.8 — Echo/Anti-Echo Bridge (from 2.7 GOLD)
 
 ```bash
-# 2.8 intermediate build (50% broad replay, 50% specialized correction)
+# 1) Build 2.8 intermediate set (strict train/val disjointness on payload, template, operator+payload)
+#    + minimum val operator-floor (COPY/WRAP/EXTRACT each >=2; default target >=6)
 python scripts/sft/prepare_phase2_8_echo_rebalance.py \
     --output_dir data/sft_phase2_8_intermediate \
     --replay_file data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
     --target_train_size 40000 \
-    --val_size 3000
+    --val_size 3000 \
+    --min_val_per_operator 6
 
-# tokenize + packing
+# 2) Tokenize + pack
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase2_8_intermediate/phase2_8_mixed_train.jsonl \
     --output_dir data/sft_phase2_8_echo_rebalance \
@@ -547,16 +557,30 @@ python scripts/sft/prepare_chat_sft.py \
     --no_system_prompt \
     --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
 
-# short bridge run from phase2_7_rebalance_gold
+# 3) Train 2.8 from 2.7 GOLD
 python train.py \
     --model_name phase2_8_echo_rebalance \
     --config_file configs/sft/phase2_8_echo_rebalance.json \
     --dataset_dir data/sft_phase2_8_echo_rebalance \
     --init_from_model checkpoints/phase2_7_rebalance_gold
 
-# ABCE gate (hard 100%), D report-only
+# 4) Bridge gate: A/B/C/E must be 100%; D report-only
 python scripts/eval/eval_phase2_8_bridge.py \
     --model phase2_8_echo_rebalance_gold -v
+```
+
+### Refinement Success Gates
+
+```bash
+# 2.5 focus gate
+python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_5_wrap_antiecho -v
+
+# 2.7 / 2.8 full suite checks
+python scripts/eval/sft_eval_suite.py --model phase2_7_rebalance_gold --no_system_prompt -v
+python scripts/eval/sft_eval_suite.py --model phase2_8_echo_rebalance_gold --no_system_prompt -v
+
+# 2.8 hard bridge gate (ABCE)
+python scripts/eval/eval_phase2_8_bridge.py --model phase2_8_echo_rebalance_gold -v
 ```
 
 ---

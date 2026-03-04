@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RAG evaluation benchmarks
 - RAG Tool-Calling agent training
 
+## [0.4.2] - 2026-02-28 — Dataset Lineage Utility
+
+### Added
+
+- Added a pipeline-core dataset lineage feature via `core/dataset_lineage.py`.
+- Added recursive provenance tracking support (`direct_inputs`, `recursive_origins`, `flattened_contributions`) and standardized lineage sidecars.
+- Added unified lineage inspection tool `scripts/unified_build/inspect_lineage.py` for quick source contribution checks and optional JSON reporting.
+- Added compatibility handling for lineage extraction from existing unified-build metadata (`mix_info.sources`) when explicit lineage blocks are not present.
+
 ## [0.4.1] - 2026-02-23 — Phase 1b Context Extension
 
 Context extension pipeline finalized for 750M pre-SFT adaptation from 1024 to 4096 context,

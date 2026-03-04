@@ -79,6 +79,79 @@ def _fallback_leaf_lineage(path: Path) -> Dict[str, Any]:
     }
 
 
+def _resolve_relative_source_path(dataset_dir: Path, source_dir: str) -> str:
+    src = Path(source_dir)
+    if src.is_absolute():
+        return str(src.resolve())
+    # Common case: dataset in <root>/data/<dataset_name>, source paths are "data/..."
+    if dataset_dir.parent.name == "data":
+        project_root = dataset_dir.parent.parent
+        return str((project_root / src).resolve())
+    return str((dataset_dir / src).resolve())
+
+
+def _lineage_from_mix_info(dataset_dir: Path, meta: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    mix_info = meta.get("mix_info")
+    if not isinstance(mix_info, dict):
+        return None
+    sources = mix_info.get("sources")
+    if not isinstance(sources, dict) or not sources:
+        return None
+
+    direct_inputs: List[Dict[str, Any]] = []
+    flattened: List[Dict[str, Any]] = []
+    recursive_origins: List[Dict[str, Any]] = []
+
+    total_actual = 0.0
+    for _, src in sources.items():
+        if not isinstance(src, dict):
+            continue
+        total_actual += float(src.get("actual_tokens", 0.0))
+    if total_actual <= 0:
+        total_actual = 1.0
+
+    for _, src in sources.items():
+        if not isinstance(src, dict):
+            continue
+        directory = str(src.get("directory", "")).strip()
+        if not directory:
+            continue
+        resolved = _resolve_relative_source_path(dataset_dir, directory)
+        actual = float(src.get("actual_tokens", 0.0))
+        ratio = actual / total_actual if total_actual > 0 else 0.0
+
+        direct_inputs.append({
+            "path": resolved,
+            "sampled_rows": int(round(actual)),
+            "effective_ratio": ratio,
+        })
+        recursive_origins.append({
+            "origin_path": resolved,
+            "rows": int(round(actual)),
+            "notes": "derived_from_mix_info",
+        })
+        flattened.append({
+            "origin_path": resolved,
+            "effective_rows": int(round(actual)),
+            "effective_percent": round(ratio * 100.0, 6),
+        })
+
+    return {
+        "direct_inputs": direct_inputs,
+        "recursive_origins": recursive_origins,
+        "flattened_contributions": sorted(flattened, key=lambda x: x["effective_rows"], reverse=True),
+        "creation_context": {
+            "timestamp": mix_info.get("mixed_at"),
+            "script": "metadata.mix_info",
+            "args": {
+                "config_file": mix_info.get("config_file"),
+                "seed": mix_info.get("seed"),
+            },
+        },
+        "upstream_configs": [],
+    }
+
+
 def load_lineage_for_input(dataset_path: Path) -> Dict[str, Any]:
     path = dataset_path.resolve()
     for meta_path in candidate_metadata_paths(path):
@@ -88,6 +161,11 @@ def load_lineage_for_input(dataset_path: Path) -> Dict[str, Any]:
         lineage = meta.get("lineage")
         if isinstance(lineage, dict):
             return lineage
+        # Backward compatibility: derive lineage from older unified-build metadata.
+        if path.is_dir():
+            derived = _lineage_from_mix_info(path, meta)
+            if derived is not None:
+                return derived
         if "flattened_contributions" in meta and "recursive_origins" in meta:
             return {
                 "direct_inputs": meta.get("direct_inputs", []),
