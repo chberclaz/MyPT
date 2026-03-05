@@ -60,7 +60,8 @@
         "--model",
         "{model_name}",
         "--output",
-        "{output_json}"
+        "{output_json}",
+        "--no_system_prompt"
       ],
       "timeout_s": 1200,
       "run_interval_evals": 1,

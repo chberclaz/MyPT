@@ -595,7 +595,7 @@ python scripts/eval/sft_eval_suite.py --model phase2_7_rebalance_gold --no_syste
 python scripts/eval/sft_eval_suite.py --model phase2_8_echo_rebalance_gold --no_system_prompt -v
 
 # 2.8 hard bridge gate (ABCE)
-python scripts/eval/eval_phase2_8_bridge.py --model phase2_8_echo_rebalance_gold -v
+python scripts/eval/eval_phase2_8_bridge.py --model phase2_8_echo_rebalance_gold --no_system_prompt -v
 ```
 
 ### Unified Phase-2 Rebuild (All 2.x sources, analysis-driven)
@@ -697,6 +697,41 @@ python train.py \
 python scripts/eval/eval_phase2_8_bridge.py --model phase2_unified_rebuild_gold -v
 python scripts/eval/sft_eval_suite.py --model phase2_unified_rebuild_gold --no_system_prompt -v
 python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_unified_rebuild_gold -v
+```
+
+### Phase 2.8c Micro-Bridge (Exactness/Compliance patch)
+
+Use this only after a successful unified Phase-2 acquisition when ABCE is strong but exact-output
+compliance still drifts on strict prompts.
+
+```bash
+# 1) Build micro-bridge intermediate dataset (50% replay + 50% exactness specialization)
+python scripts/sft/prepare_phase2_8c_exactness_bridge.py \
+    --output_dir data/sft_phase2_8c_exactness_intermediate \
+    --replay_file data/sft_phase2_unified_intermediate/phase2_unified_train.jsonl \
+    --target_train_size 50000 \
+    --val_size 3000 \
+    --replay_ratio 0.5 \
+    --seed 2808
+
+# 2) Tokenize + pack
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_8c_exactness_intermediate/phase2_8c_mixed_train.jsonl \
+    --output_dir data/sft_phase2_8c_exactness \
+    --val_file data/sft_phase2_8c_exactness_intermediate/phase2_8c_val.jsonl \
+    --no_system_prompt \
+    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+
+# 3) Train from unified GOLD
+python train.py \
+    --model_name phase2_8c_exactness_bridge \
+    --config_file configs/sft/phase2_8c_exactness_bridge.json \
+    --dataset_dir data/sft_phase2_8c_exactness \
+    --init_from_model checkpoints/phase2_unified_rebuild_gold
+
+# 4) Eval (synchronized no-system mode)
+python scripts/eval/eval_phase2_8_bridge.py --model phase2_8c_exactness_bridge_gold --no_system_prompt -v
+python scripts/eval/sft_eval_suite.py --model phase2_8c_exactness_bridge_gold --no_system_prompt -v
 ```
 
 ---

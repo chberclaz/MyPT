@@ -22,7 +22,7 @@ from typing import Dict, Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.eval.sft_eval_suite import run_evaluation
+from scripts.eval import sft_eval_suite as eval_suite
 
 
 HARD_BUCKETS = ["format_strict", "echo_basic", "anti_echo", "operators"]
@@ -42,10 +42,18 @@ def main() -> None:
     p.add_argument("--model", type=str, required=True)
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("--max_new_tokens", type=int, default=64)
+    p.add_argument("--no_system_prompt", action="store_true",
+                   help="Match no-system-prompt eval mode used for phase2 models.")
+    p.add_argument("--use_val_templates", action="store_true",
+                   help="Use easier VAL templates for operator bucket (diagnostic mode).")
     p.add_argument("--output", type=str, default=None)
     args = p.parse_args()
 
-    eval_results = run_evaluation(
+    # Synchronize bridge gate mode with sft_eval_suite CLI settings.
+    eval_suite._NO_SYSTEM_PROMPT = args.no_system_prompt
+    eval_suite.OPERATOR_PROMPTS = eval_suite.build_operator_prompts(use_val_templates=args.use_val_templates)
+
+    eval_results = eval_suite.run_evaluation(
         model_name=args.model,
         max_new_tokens=args.max_new_tokens,
         verbose=args.verbose,
@@ -62,6 +70,8 @@ def main() -> None:
         "hard_total": len(HARD_BUCKETS),
         "hard_pass_rate": 0.0,
         "hard_avg_rate": 0.0,
+        "no_system_prompt": bool(args.no_system_prompt),
+        "use_val_templates": bool(args.use_val_templates),
         "eval_results": eval_results,
     }
 

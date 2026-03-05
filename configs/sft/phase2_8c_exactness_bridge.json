@@ -1,6 +1,6 @@
 {
-  "name": "Phase 2.8b: Echo/WRAP Recovery Bridge (from 2.7)",
-  "description": "Short corrective bridge for echo exactness + WRAP edge-cases while preserving anti-echo and operator abstraction.",
+  "name": "Phase 2.8c Exactness Micro-Bridge",
+  "description": "Short bridge to improve exact output compliance after unified phase2 acquisition.",
 
   "batch_size": 4,
   "block_size": 4096,
@@ -19,9 +19,9 @@
   "rope_scale": 4.0,
 
   "learning_rate": 8.0e-06,
-  "max_iters": 40,
+  "max_iters": 50,
   "eval_interval": 5,
-  "warmup_iters": 4,
+  "warmup_iters": 5,
   "use_amp": true,
   "amp_dtype": "bf16",
   "grad_accum_steps": 4,
@@ -30,7 +30,7 @@
   "batch_sampling_mode": "epoch",
   "pad_token_id": null,
   "episode_min_tokens": 10,
-  "epoch_seed": 2811,
+  "epoch_seed": 2808,
   "epoch_shuffle": true,
   "epoch_drop_last": true,
   "weight_decay": 0.05,
@@ -44,7 +44,7 @@
     "retrieval": "data/retrieval_eval_tokenized"
   },
   "eval_seed": 1337,
-  "log_file": "logs/train/phase2_8b_echo_rebalance.jsonl",
+  "log_file": "logs/train/phase2_8c_exactness_bridge.jsonl",
   "gold_selection": {
     "strategy": "external_gate",
     "apply_loss_guards": true,
