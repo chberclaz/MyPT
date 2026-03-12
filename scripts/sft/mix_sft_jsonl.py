@@ -35,8 +35,10 @@ import argparse
 import json
 import random
 import sys
+import re
 from pathlib import Path
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +46,97 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.banner import print_banner
 from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
+
+
+def get_user_message(conv: Dict[str, Any]) -> str:
+    """Extract user message from conversation."""
+    for msg in conv.get("messages", []):
+        if msg.get("role") == "user":
+            return msg.get("content", "")
+    return ""
+
+
+def extract_payload_from_text(user_msg: str) -> Optional[str]:
+    """Extract payload from user message text using same heuristics as prepare_chat_sft.py."""
+    quote_match = re.search(r'"([^"]+)"', user_msg)
+    if quote_match:
+        return quote_match.group(1)
+    colon_match = re.search(r':\s*(.+)$', user_msg)
+    if colon_match:
+        return colon_match.group(1).strip()
+    return None
+
+
+def extract_payload_from_conv(conv: Dict[str, Any]) -> Optional[str]:
+    """Extract payload from a conversation."""
+    meta = conv.get("_meta", {})
+    if "payload" in meta:
+        return meta["payload"]
+    return extract_payload_from_text(get_user_message(conv))
+
+
+def get_template_signature(user_msg: str, payload: Optional[str]) -> str:
+    """Replace payload with {PAYLOAD} to get template signature."""
+    if payload and payload in user_msg:
+        sig = user_msg.replace(f'"{payload}"', '"{PAYLOAD}"')
+        sig = sig.replace(payload, "{PAYLOAD}")
+        return " ".join(sig.split())
+    return " ".join(user_msg.split())
+
+
+def get_pair_key(conv: Dict[str, Any], payload: Optional[str]) -> Optional[str]:
+    """Extract (operator,payload) pair key."""
+    if not payload:
+        return None
+    op = str(conv.get("_meta", {}).get("operator", "")).strip().upper()
+    if not op:
+        return None
+    return f"{op}::{payload}"
+
+
+def build_disjoint_sets(convs: List[Dict[str, Any]], keys: Set[str]) -> Dict[str, Set[str]]:
+    payloads: Set[str] = set()
+    templates: Set[str] = set()
+    pairs: Set[str] = set()
+    for conv in convs:
+        payload = extract_payload_from_conv(conv)
+        user_msg = get_user_message(conv)
+        if "payload" in keys and payload:
+            payloads.add(payload)
+        if "template" in keys:
+            templates.add(get_template_signature(user_msg, payload))
+        if "pair" in keys:
+            pair = get_pair_key(conv, payload)
+            if pair:
+                pairs.add(pair)
+    return {"payload": payloads, "template": templates, "pair": pairs}
+
+
+def filter_disjoint_candidates(
+    candidates: List[Dict[str, Any]],
+    train_sets: Dict[str, Set[str]],
+    keys: Set[str],
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    kept: List[Dict[str, Any]] = []
+    stats = {"payload_overlap": 0, "template_overlap": 0, "pair_overlap": 0}
+    for conv in candidates:
+        payload = extract_payload_from_conv(conv)
+        user_msg = get_user_message(conv)
+        template = get_template_signature(user_msg, payload)
+        pair = get_pair_key(conv, payload)
+        blocked = False
+        if "payload" in keys and payload and payload in train_sets["payload"]:
+            stats["payload_overlap"] += 1
+            blocked = True
+        if not blocked and "template" in keys and template in train_sets["template"]:
+            stats["template_overlap"] += 1
+            blocked = True
+        if not blocked and "pair" in keys and pair and pair in train_sets["pair"]:
+            stats["pair_overlap"] += 1
+            blocked = True
+        if not blocked:
+            kept.append(conv)
+    return kept, stats
 
 
 def parse_input_spec(spec: str) -> tuple:
@@ -134,6 +227,12 @@ Examples:
                         help="Shuffle combined episodes (recommended)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for sampling and shuffling")
+    parser.add_argument("--exclude_from_train", type=str, default=None,
+                        help="Path to train JSONL. If set, drop candidates overlapping train on selected keys.")
+    parser.add_argument("--disjoint_keys", type=str, default="payload,template",
+                        help="Comma-separated overlap keys: payload,template,pair")
+    parser.add_argument("--target_size", type=int, default=None,
+                        help="Optional final cap after mixing/filtering. Deterministic sample if larger.")
     
     args = parser.parse_args()
     
@@ -142,6 +241,11 @@ Examples:
     print(f"\n  Output: {args.output}")
     print(f"  Shuffle: {args.shuffle}")
     print(f"  Seed: {args.seed}")
+    if args.exclude_from_train:
+        print(f"  Disjoint against train: {args.exclude_from_train}")
+        print(f"  Disjoint keys: {args.disjoint_keys}")
+    if args.target_size is not None:
+        print(f"  Target size: {args.target_size}")
     
     # Parse input specifications
     input_specs = []
@@ -208,6 +312,41 @@ Examples:
     
     total_episodes = len(all_episodes)
     print(f"\n  Total combined: {total_episodes} episodes")
+
+    overlap_stats = None
+    if args.exclude_from_train:
+        key_set = {k.strip() for k in args.disjoint_keys.split(",") if k.strip()}
+        valid_keys = {"payload", "template", "pair"}
+        invalid = key_set - valid_keys
+        if invalid:
+            print(f"\n  ERROR: Invalid disjoint keys: {sorted(invalid)}. Valid: {sorted(valid_keys)}")
+            sys.exit(1)
+
+        train_path = Path(args.exclude_from_train)
+        if not train_path.exists():
+            train_path = PROJECT_ROOT / train_path
+        if not train_path.exists():
+            print(f"\n  ERROR: exclude_from_train file not found: {train_path}")
+            sys.exit(1)
+
+        print(f"\n  Loading train reference for disjoint filter: {train_path}")
+        train_convs = load_jsonl(train_path)
+        train_sets = build_disjoint_sets(train_convs, key_set)
+
+        pre_count = len(all_episodes)
+        all_episodes, overlap_stats = filter_disjoint_candidates(all_episodes, train_sets, key_set)
+        post_count = len(all_episodes)
+        total_episodes = post_count
+        print(f"  Disjoint filtering: {pre_count} -> {post_count} episodes")
+        print(f"    blocked payload overlap:  {overlap_stats['payload_overlap']}")
+        print(f"    blocked template overlap: {overlap_stats['template_overlap']}")
+        print(f"    blocked pair overlap:     {overlap_stats['pair_overlap']}")
+
+    if args.target_size is not None and len(all_episodes) > args.target_size:
+        rng_cap = random.Random(args.seed + 17)
+        all_episodes = rng_cap.sample(all_episodes, args.target_size)
+        total_episodes = len(all_episodes)
+        print(f"  Applied target_size cap: {total_episodes} episodes")
     
     # Shuffle if requested
     if args.shuffle:
@@ -264,6 +403,10 @@ Examples:
         'shuffled': args.shuffle,
         'total_episodes': total_episodes,
         'sources': source_stats,
+        'exclude_from_train': args.exclude_from_train,
+        'disjoint_keys': args.disjoint_keys,
+        'target_size': args.target_size,
+        'disjoint_filter_stats': overlap_stats,
         'lineage': lineage,
     }
     

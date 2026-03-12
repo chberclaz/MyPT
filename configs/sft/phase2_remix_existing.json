@@ -1,0 +1,77 @@
+{
+  "name": "Phase 2 Remix (existing scripts only)",
+  "description": "Original phase2 base + minor replay from phase2.5 and phase2.7 mixed via mix_sft_jsonl.py.",
+
+  "batch_size": 4,
+  "block_size": 4096,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.08,
+  "bias": false,
+  "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "use_checkpoint": true,
+  "rope_theta": 10000.0,
+  "rope_scale": 4.0,
+
+  "learning_rate": 3.0e-5,
+  "max_iters": 194,
+  "eval_interval": 10,
+  "warmup_iters": 19,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+  "grad_accum_steps": 4,
+
+  "use_loss_mask": true,
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 2907,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+  "weight_decay": 0.05,
+
+  "eval_sets": {
+    "phase1_format": "data/sft_phase1_format_lock",
+    "phase2_operators": "data/sft_phase2_operators",
+    "general": "data/general",
+    "domain": "data/domain_161M_corpus_tokenized",
+    "code": "data/code_eval_tokenized",
+    "retrieval": "data/retrieval_eval_tokenized"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase2_remix_existing.jsonl",
+  "gold_selection": {
+    "strategy": "external_gate",
+    "apply_loss_guards": true,
+    "guards": {
+      "overfit_ratio": 6.0,
+      "consecutive_rises": 3,
+      "eval_regression": 0.25
+    },
+    "external_gate": {
+      "enabled": true,
+      "script": "scripts/eval/eval_phase2_8_bridge.py",
+      "args": [
+        "--model",
+        "{model_name}",
+        "--output",
+        "{output_json}",
+        "--no_system_prompt"
+      ],
+      "timeout_s": 1200,
+      "run_interval_evals": 1,
+      "run_on_final_eval": false,
+      "metric_path": "hard_avg_rate",
+      "metric_goal": "max",
+      "pass_path": "gate_passed",
+      "require_pass": false,
+      "strict": false
+    }
+  }
+}
+

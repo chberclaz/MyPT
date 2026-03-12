@@ -436,6 +436,47 @@ python scripts/eval/eval_operator.py --model phase2_operators -v
 # Target: exact-match on unseen payloads > 80%
 ```
 
+### Phase2 Remix (existing scripts only, broad disjoint val)
+
+Use this when you want original Phase2 acquisition behavior as the main signal, with only minor
+2.5/2.7 correction and a broader validation mix.
+
+```bash
+# 1) Train mix (original phase2 dominant + minor 2.5/2.7)
+python scripts/sft/mix_sft_jsonl.py \
+    --inputs data/sft_phase2_intermediate/phase2_mixed.jsonl:1.0 \
+             data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl:0.15 \
+             data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl:0.15 \
+    --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
+    --shuffle --seed 2907
+
+# 2) Broad val candidate mix (Phase2 + 2.5 + 2.8 val sources), then disjoint-filter vs train
+python scripts/sft/mix_sft_jsonl.py \
+    --inputs data/sft_phase2_intermediate/operators/operator_val.jsonl:1.0 \
+             data/sft_phase2_5_intermediate/wrap_focus_val.jsonl:1.0 \
+             data/sft_phase2_8b_intermediate/phase2_8_val.jsonl:1.0 \
+    --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_val.jsonl \
+    --exclude_from_train data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
+    --disjoint_keys payload,template,pair \
+    --target_size 5000 \
+    --shuffle --seed 2908
+
+# 3) Tokenize + pack
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
+    --output_dir data/sft_phase2_remix_existing \
+    --val_file data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_val.jsonl \
+    --no_system_prompt \
+    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+
+# 4) Train with dedicated remix config
+python train.py \
+    --model_name phase2_remix_existing \
+    --config_file configs/sft/phase2_remix_existing.json \
+    --dataset_dir data/sft_phase2_remix_existing \
+    --init_from_model checkpoints/phase1_format_lock_gold
+```
+
 ---
 
 ## 5.5 Refinement Bridge (Recommended Path): Phase 2.5 -> 2.7 -> 2.8
@@ -596,142 +637,6 @@ python scripts/eval/sft_eval_suite.py --model phase2_8_echo_rebalance_gold --no_
 
 # 2.8 hard bridge gate (ABCE)
 python scripts/eval/eval_phase2_8_bridge.py --model phase2_8_echo_rebalance_gold --no_system_prompt -v
-```
-
-### Unified Phase-2 Rebuild (All 2.x sources, analysis-driven)
-
-This is the recommended fallback when bridge phases plateau (e.g. hard gate metric stalls around `62.5`).
-Instead of chaining more micro-bridges, rebuild one **single** Phase-2 dataset from all 2.x lineage
-sources with a policy tied to failure modes.
-
-#### Source strength analysis (Phase 2.0 -> 2.8)
-
-- **Phase 2.0 operators (`operator_train.jsonl`)**
-  - **Strength:** strongest operator abstraction backbone (COPY/WRAP/EXTRACT, payload disjoint design).
-  - **Risk:** weaker echo/anti-echo boundary control in natural-language variants.
-  - **Use in unified mix:** high but not dominant.
-
-- **Phase 2.5 mixed (`phase2_5_mixed.jsonl`)**
-  - **Strength:** delimiter and WRAP hardening + anti-echo exposure.
-  - **Risk:** can still drift to lexical substitutions on difficult WRAP patterns.
-  - **Use in unified mix:** medium-high for WRAP robustness.
-
-- **Phase 2.6 anti-echo (`phase2_6_mixed_train.jsonl`)**
-  - **Strength:** very strong anti-echo refusal behavior.
-  - **Risk:** over-refusal spillover (echo/regression degradation) if over-weighted.
-  - **Use in unified mix:** capped.
-
-- **Phase 2.7 rebalance (`phase2_7_mixed.jsonl`)**
-  - **Strength:** combines anti-echo and operator replay at scale; stable operator behavior.
-  - **Risk:** still refusal-heavy for literal echo tasks.
-  - **Use in unified mix:** medium-high.
-
-- **Phase 2.8/2.8b (`phase2_8_mixed_train.jsonl`)**
-  - **Strength:** targeted echo/WRAP correction attempts and disjoint validation discipline.
-  - **Risk:** low val-template diversity in prior builds can hide generalization issues.
-  - **Use in unified mix:** medium, plus additional targeted synthetic correction.
-
-#### Unified mix policy (not a wild blend)
-
-Target train size: `160k` episodes.
-
-- `20%` Phase 2.0 operator core
-- `15%` Phase 2.5 WRAP+anti bridge
-- `8%` Phase 2.6 anti-echo (capped harder)
-- `15%` Phase 2.7 rebalance replay
-- `10%` Phase 2.8/2.8b correction replay
-- `2%` Phase 1 replay (format anchor only)
-- `12%` targeted echo-exact synthetic
-- `8%` targeted WRAP-edge synthetic
-- `5%` targeted anti-echo-hard synthetic
-- `5%` boundary-pair synthetic (echo vs anti-echo near neighbors)
-- `5%` regression-basic synthetic support
-
-Design intent:
-- keep abstraction core from 2.0/2.7
-- retain WRAP gains from 2.5
-- retain anti-echo signal but cap over-refusal from 2.6
-- explicitly patch known failure families (echo DE/number/noun, quote/brace WRAP edge cases)
-
-#### Hard dataset quality constraints
-
-- strict train/val disjointness on:
-  - payload
-  - template signature
-  - `(operator,payload)` pair
-- val operator floor: `COPY/WRAP/EXTRACT >= 20` each
-- val template diversity floor: `>= 80` signatures
-- full lineage and composition report required
-
-#### Commands
-
-```bash
-# 1) Build unified intermediate dataset from ALL phase2.x sources + targeted synthetic patches
-python scripts/sft/prepare_phase2_unified_rebuild.py \
-    --output_dir data/sft_phase2_unified_intermediate \
-    --phase2_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
-    --phase2_5_file data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl \
-    --phase2_6_file data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl \
-    --phase2_7_file data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
-    --phase2_8_file data/sft_phase2_8b_intermediate/phase2_8_mixed_train.jsonl \
-    --phase1_replay_file data/sft_phase1_intermediate/phase1_mixed.jsonl \
-    --target_train_size 160000 \
-    --val_size 5000
-
-# 2) Tokenize + pack
-python scripts/sft/prepare_chat_sft.py \
-    --input data/sft_phase2_unified_intermediate/phase2_unified_train.jsonl \
-    --output_dir data/sft_phase2_unified_rebuild \
-    --val_file data/sft_phase2_unified_intermediate/phase2_unified_val.jsonl \
-    --no_system_prompt \
-    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
-
-# 3) Train from Phase-1 GOLD (single unified phase2)
-python train.py \
-    --model_name phase2_unified_rebuild \
-    --config_file configs/sft/phase2_unified_rebuild.json \
-    --dataset_dir data/sft_phase2_unified_rebuild \
-    --init_from_model checkpoints/phase1_format_lock_gold
-
-# 4) Gate + diagnostics
-python scripts/eval/eval_phase2_8_bridge.py --model phase2_unified_rebuild_gold -v
-python scripts/eval/sft_eval_suite.py --model phase2_unified_rebuild_gold --no_system_prompt -v
-python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_unified_rebuild_gold -v
-```
-
-### Phase 2.8c Micro-Bridge (Exactness/Compliance patch)
-
-Use this only after a successful unified Phase-2 acquisition when ABCE is strong but exact-output
-compliance still drifts on strict prompts.
-
-```bash
-# 1) Build micro-bridge intermediate dataset (50% replay + 50% exactness specialization)
-python scripts/sft/prepare_phase2_8c_exactness_bridge.py \
-    --output_dir data/sft_phase2_8c_exactness_intermediate \
-    --replay_file data/sft_phase2_unified_intermediate/phase2_unified_train.jsonl \
-    --target_train_size 50000 \
-    --val_size 3000 \
-    --replay_ratio 0.5 \
-    --seed 2808
-
-# 2) Tokenize + pack
-python scripts/sft/prepare_chat_sft.py \
-    --input data/sft_phase2_8c_exactness_intermediate/phase2_8c_mixed_train.jsonl \
-    --output_dir data/sft_phase2_8c_exactness \
-    --val_file data/sft_phase2_8c_exactness_intermediate/phase2_8c_val.jsonl \
-    --no_system_prompt \
-    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
-
-# 3) Train from unified GOLD
-python train.py \
-    --model_name phase2_8c_exactness_bridge \
-    --config_file configs/sft/phase2_8c_exactness_bridge.json \
-    --dataset_dir data/sft_phase2_8c_exactness \
-    --init_from_model checkpoints/phase2_unified_rebuild_gold
-
-# 4) Eval (synchronized no-system mode)
-python scripts/eval/eval_phase2_8_bridge.py --model phase2_8c_exactness_bridge_gold --no_system_prompt -v
-python scripts/eval/sft_eval_suite.py --model phase2_8c_exactness_bridge_gold --no_system_prompt -v
 ```
 
 ---

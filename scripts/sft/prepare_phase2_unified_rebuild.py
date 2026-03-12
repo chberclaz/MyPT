@@ -24,6 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.sft.generate_echo_dataset import create_episode as create_echo_episode
 from scripts.sft.generate_operator_dataset import create_episode as create_operator_episode
 from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
+from core.eval_blacklist import is_eval_leak
 
 
 def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -126,8 +127,8 @@ def _mark_source(rows: List[Dict[str, Any]], source_name: str) -> List[Dict[str,
 
 def _make_echo_exact_rows(n: int, split: str) -> List[Dict[str, Any]]:
     payloads = [
-        "Hello", "OK", "yes", "Banana", "Hallo", "42", "17",
-        "blue ocean", "dark forest", "red mountain peak",
+        "Cobalt", "Lime", "violet", "Maple", "hallochen", "17", "88",
+        "amber canyon", "quiet sunrise", "river delta",
     ]
     train_tpl = ["Say {}.", "Echo: {}", "Repeat exactly: {}", "Output only: {}", "Sag {}."]
     val_tpl = [
@@ -140,6 +141,8 @@ def _make_echo_exact_rows(n: int, split: str) -> List[Dict[str, Any]]:
     for i in range(n):
         p = payloads[i % len(payloads)]
         q = tpls[i % len(tpls)].format(p)
+        if is_eval_leak(q, p):
+            continue
         ep = create_echo_episode(q, p, i, f"echo_exact_{split}")
         ep.setdefault("_meta", {})
         ep["_meta"]["operator"] = "ECHO"
@@ -150,7 +153,7 @@ def _make_echo_exact_rows(n: int, split: str) -> List[Dict[str, Any]]:
 
 
 def _make_wrap_edge_rows(n: int, split: str) -> List[Dict[str, Any]]:
-    payloads = ["cascade", "ancient stone bridge", "cold winter night", "twilight", "dragon"]
+    payloads = ["harbor", "sunlit canyon path", "mild autumn evening", "aurora", "falcon"]
     tpls_train = [
         ("WRAP", "Wrap this in '' : {}", "'{}'"),
         ("WRAP", "Return {} wrapped by {{ and }}.", "{{{{{}}}}}"),
@@ -170,6 +173,8 @@ def _make_wrap_edge_rows(n: int, split: str) -> List[Dict[str, Any]]:
         op, q_tpl, a_tpl = tpls[i % len(tpls)]
         q = q_tpl.format(payload)
         a = a_tpl.format(payload)
+        if is_eval_leak(q, payload):
+            continue
         ep = create_operator_episode(q, a, "en")
         ep["_meta"] = {
             "operator": op,
@@ -183,7 +188,7 @@ def _make_wrap_edge_rows(n: int, split: str) -> List[Dict[str, Any]]:
 
 def _make_boundary_rows(n: int, split: str) -> List[Dict[str, Any]]:
     # Near-neighbor echo vs anti-echo boundaries.
-    tokens = ["Blurpix", "Zanthor", "Quexling", "Flimzap", "Norbex"]
+    tokens = ["Morlix", "Zevran", "Qadren", "Flunex", "Norbex"]
     rows: List[Dict[str, Any]] = []
     for i in range(n):
         tok = tokens[i % len(tokens)] + (f"_{i}" if i % 7 == 0 else "")
@@ -195,6 +200,8 @@ def _make_boundary_rows(n: int, split: str) -> List[Dict[str, Any]]:
             q = f'What is "{tok}"?'
             a = "Unknown."
             cat = f"boundary_antiecho_{split}"
+        if is_eval_leak(q, tok):
+            continue
         ep = create_echo_episode(q, a, i, cat)
         ep.setdefault("_meta", {})
         ep["_meta"]["operator"] = "BOUNDARY"
@@ -206,7 +213,7 @@ def _make_boundary_rows(n: int, split: str) -> List[Dict[str, Any]]:
 
 def _make_antiecho_hard_rows(n: int, split: str) -> List[Dict[str, Any]]:
     # Focused anti-echo negatives that should never be copied.
-    gibberish = ["Blurpix", "Zanthor", "Qevlor", "Nimvrax", "Trandok", "Vexlune"]
+    gibberish = ["Qevlor", "Nimvrax", "Trandok", "Vexlune", "Morzik", "Ladrex"]
     train_tpl = [
         'What does "{}" mean?',
         'Define "{}".',
@@ -228,6 +235,8 @@ def _make_antiecho_hard_rows(n: int, split: str) -> List[Dict[str, Any]]:
         tok = gibberish[i % len(gibberish)] + (f"_{i}" if i % 3 == 0 else "")
         q = tpls[i % len(tpls)].format(tok)
         a = abstain[i % len(abstain)]
+        if is_eval_leak(q, tok):
+            continue
         ep = create_echo_episode(q, a, i, f"antiecho_hard_{split}")
         ep.setdefault("_meta", {})
         ep["_meta"]["operator"] = "ANTI_ECHO"
@@ -239,19 +248,21 @@ def _make_antiecho_hard_rows(n: int, split: str) -> List[Dict[str, Any]]:
 
 def _make_regression_rows(n: int, split: str) -> List[Dict[str, Any]]:
     qa = [
-        ("What is 5 + 7?", "12"),
-        ("What is 2 + 2?", "4"),
-        ("What is 10 - 3?", "7"),
-        ("Capital of Germany?", "Berlin"),
-        ("Capital of France?", "Paris"),
-        ("Is water wet?", "Yes"),
-        ("Is fire cold?", "No"),
+        ("What is 6 + 6?", "12"),
+        ("What is 3 + 4?", "7"),
+        ("What is 11 - 4?", "7"),
+        ("Capital of Italy?", "Rome"),
+        ("Capital of Spain?", "Madrid"),
+        ("Is snow cold?", "Yes"),
+        ("Is ice hot?", "No"),
     ]
     rows: List[Dict[str, Any]] = []
     for i in range(n):
         q, a = qa[i % len(qa)]
         if split == "val":
             q = f"Answer exactly: {q}"
+        if is_eval_leak(q, q.lower()):
+            continue
         ep = {
             "messages": [
                 {"role": "user", "content": q},
@@ -367,6 +378,8 @@ def main() -> None:
             missing.append((name, str(path)))
             continue
         rows = _mark_source(_read_jsonl(path), name)
+        # Strict cleanroom: remove episodes that leak eval literals/templates.
+        rows = [e for e in rows if not is_eval_leak(_user_text(e), _payload(e), _template_sig(e))]
         source_rows[name] = rows
 
     if missing and not args.allow_missing_sources:
