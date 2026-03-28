@@ -783,6 +783,8 @@ python train.py \
     --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
 ```
 
+`phase3_chat_sft.json` sets **`max_iters` ~763** to target **~3.5× epoch coverage** for a ~2.6k-episode train split (effective batch 12 episodes per step). `train.py` prints episode coverage before training; if your packed corpus has many more/fewer episodes, scale `max_iters` (or data) so coverage stays roughly in the **2×–5×** band the analyzer recommends.
+
 ### Success Gate
 
 ```bash
@@ -1273,7 +1275,7 @@ All SFT configs include the LLaMA-2 architecture fields. Key configs by phase:
 | ----- | ----------------------------------------- | ------ | ----- | ----- |
 | 1     | `configs/sft/phase1_format_lock.json`     | 7e-5   | 2000  | 4096  |
 | 2     | `configs/sft/phase2_operators.json`       | 3e-5   | 1200  | 4096  |
-| 3     | `configs/sft/phase3_chat_sft.json`        | 3e-5   | 5000  | 4096  |
+| 3     | `configs/sft/phase3_chat_sft.json`        | 3e-5   | 763   | 4096  |
 | 4     | `configs/sft/phase4_multiturn.json`       | 2.5e-5 | 3000  | 4096  |
 | 5     | `configs/sft/phase5_simple_toolcall.json` | 2e-5   | 3000  | 4096  |
 | 6     | `configs/sft/phase6_agentic_rag.json`     | 1.5e-5 | 4000  | 4096  |
