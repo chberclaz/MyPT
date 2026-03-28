@@ -17,8 +17,8 @@ exact commands, and success criteria.
 3. [Data Flow: Generator to Training](#3-data-flow-generator-to-training)
 4. [Special Tokens and Loss Masking](#4-special-tokens-and-loss-masking)
 5. [Phase 1: Format Lock](#5-phase-1-format-lock)
-6. [Phase 2: Operators](#6-phase-2-operators)
-7. [Phase 3: Chat SFT](#7-phase-3-chat-sft)
+6. [Phase 2: Operators](#5-phase-2-operators)
+7. [Phase 3: Chat SFT](#6-phase-3-chat-sft)
 8. [Phase 4: Multi-turn Boundaries](#8-phase-4-multi-turn-boundaries)
 9. [Phase 5: Simple Toolcall](#9-phase-5-simple-toolcall)
 10. [Phase 6: Agentic RAG](#10-phase-6-agentic-rag)
@@ -386,77 +386,50 @@ python generate.py --model phase1_format_lock \
 
 ## 5. Phase 2: Operators
 
-**Goal:** Model generalizes abstract operators (COPY, WRAP, EXTRACT) to unseen payloads.
+### Goal
 
-### Generate & Prepare
+Teach **COPY**, **WRAP**, and **EXTRACT** as abstract skills: same instruction pattern, **unseen payloads** in validation, and no shortcut via memorizing fixed answers. Phase 2 keeps **Phase 1 format tags** stable while the model learns precise assistant outputs.
 
-```bash
-# 1. Generate operator dataset (contrastive design)
-python scripts/sft/generate_operator_dataset.py \
-    --output_dir data/sft_phase2_intermediate/operators
+### Canonical path (recommended): **Phase 2 Remix Existing** (`phase2_remix_existing`)
 
-# 2. Mix 80% operators + 20% Phase 1 replay
-python scripts/sft/mix_sft_jsonl.py \
-    --inputs data/sft_phase2_intermediate/operators/operator_train.jsonl:0.8 \
-             data/sft_phase1_intermediate/phase1_mixed.jsonl:0.2 \
-    --output data/sft_phase2_intermediate/phase2_mixed.jsonl --shuffle
+The **final** operator phase for this project is a **single SFT run** on data built only from **existing generators** — no separate “unified rebuild” synthesizer.
 
-# 3. Tokenize with PACKING (critical for short operator episodes)
-#    Operator episodes average ~45 tokens. Without packing: 96% wasted padding.
-#    With packing: many short episodes per 4096 block (critical efficiency gain).
-#
-#    The --enable_packing flag concatenates multiple episodes into each 4096-token
-#    block, separated by segment_ids to prevent cross-episode attention bleed.
-#    This is the single most impactful flag for Phase 1-2 training speed.
-python scripts/sft/prepare_chat_sft.py \
-    --input data/sft_phase2_intermediate/phase2_mixed.jsonl \
-    --output_dir data/sft_phase2_operators \
-    --enable_packing --pack_block_size 4096
-```
+| Source | Role |
+| ------ | ---- |
+| **Original Phase 2** (`phase2_mixed.jsonl`) | Backbone: operator contrast, payload/template diversity, train/val segregation from `generate_operator_dataset.py`. Strongest signal for **abstraction**. |
+| **Phase 2.5** (`phase2_5_mixed.jsonl`) | Stronger minority share (**0.3** in the canonical run): WRAP delimiter diversity + echo/anti-echo from `prepare_phase2_5_wrap_antiecho.py`. |
+| **Phase 2.7** (`phase2_7_mixed.jsonl`) | Small weight: rebalance / anti-echo + operator replay from `prepare_phase2_7_rebalance.py`. |
+| **Phase 2.8** | Not blended into **train** in this recipe; **validation** rows come from **Phase 2.8 val** (`phase2_8_val.jsonl`) so val covers echo/Wrap edge cases **without** overlapping train payloads/templates. |
 
-```powershell
-# PowerShell equivalent (single-line commands)
-py.exe scripts/sft/generate_operator_dataset.py --output_dir data/sft_phase2_intermediate/operators
-py.exe scripts/sft/mix_sft_jsonl.py --inputs data/sft_phase2_intermediate/operators/operator_train.jsonl:0.8 data/sft_phase1_intermediate/phase1_mixed.jsonl:0.2 --output data/sft_phase2_intermediate/phase2_mixed.jsonl --shuffle
-py.exe scripts/sft/prepare_chat_sft.py --input data/sft_phase2_intermediate/phase2_mixed.jsonl --output_dir data/sft_phase2_operators --enable_packing --pack_block_size 4096
-```
+**Why remix?** Sequential training (2 → 2.5 → 2.7 → 2.8) each moved specific skills forward; **remixing validated JSONLs** into one acquisition run preserved **original Phase 2–style abstraction** while adding **targeted** statistics from 2.5 and 2.7. A monolithic re-synthesized “unified Phase 2” mix did **not** match that behavior in practice.
 
-### Train
+**Train mix (canonical):** `1.0 : 0.3 : 0.15` — `phase2_mixed` : `phase2_5_mixed` : `phase2_7_mixed` in `mix_sft_jsonl.py`. Phase 2 stays the largest signal by construction; **0.3** on 2.5 adds more WRAP/anti-echo mass than a minimal 0.15 sprinkle. Adjust 2.7 only if you rebalance intermediates.
+
+**Validation:** Combine candidates from **operator val**, **wrap_focus val**, and **phase2_8 val**, then enforce **train/val disjointness** with `--exclude_from_train` and `--disjoint_keys payload,template,pair`, and cap with `--target_size` (e.g. 5000). Use the `phase2_8_val.jsonl` path that exists on your machine (`.../sft_phase2_8_intermediate/...` or `.../sft_phase2_8b_intermediate/...`).
+
+#### Prerequisites (intermediate JSONLs)
+
+1. **Phase 2 core** — `generate_operator_dataset.py` + `phase2_mixed.jsonl` (80% operators / 20% Phase 1 replay). See **§5.1** for the minimal recipe.
+2. **Phase 2.5** — `data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl` + `wrap_focus_val.jsonl` from `prepare_phase2_5_wrap_antiecho.py`.
+3. **Phase 2.7** — `data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl` from `prepare_phase2_7_rebalance.py`.
+4. **Phase 2.8** — `phase2_8_val.jsonl` from `prepare_phase2_8_echo_rebalance.py`.
+
+#### Build remix → tokenize → train
 
 ```bash
-python train.py \
-    --model_name phase2_operators \
-    --config_file configs/sft/phase2_operators.json \
-    --dataset_dir data/sft_phase2_operators \
-    --init_from_model checkpoints/phase1_format_lock
-```
-
-### Success Gate
-
-```bash
-python scripts/eval/eval_operator.py --model phase2_operators -v
-# Target: exact-match on unseen payloads > 80%
-```
-
-### Phase2 Remix (existing scripts only, broad disjoint val)
-
-Use this when you want original Phase2 acquisition behavior as the main signal, with only minor
-2.5/2.7 correction and a broader validation mix.
-
-```bash
-# 1) Train mix (original phase2 dominant + minor 2.5/2.7)
+# 1) Training JSONL: Phase 2 dominant + 0.3 phase2.5 + 0.15 phase2.7
 python scripts/sft/mix_sft_jsonl.py \
     --inputs data/sft_phase2_intermediate/phase2_mixed.jsonl:1.0 \
-             data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl:0.30 \
+             data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl:0.3 \
              data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl:0.15 \
     --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
     --shuffle --seed 2907
 
-# 2) Broad val candidate mix (Phase2 + 2.5 + 2.8 val sources), then disjoint-filter vs train
+# 2) Validation JSONL: broad sources, disjoint from train (adjust phase2_8 path if needed)
 python scripts/sft/mix_sft_jsonl.py \
     --inputs data/sft_phase2_intermediate/operators/operator_val.jsonl:1.0 \
              data/sft_phase2_5_intermediate/wrap_focus_val.jsonl:1.0 \
-             data/sft_phase2_8b_intermediate/phase2_8_val.jsonl:1.0 \
+             data/sft_phase2_8_intermediate/phase2_8_val.jsonl:1.0 \
     --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_val.jsonl \
     --exclude_from_train data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
     --disjoint_keys payload,template,pair \
@@ -471,7 +444,7 @@ python scripts/sft/prepare_chat_sft.py \
     --no_system_prompt \
     --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
 
-# 4) Train with dedicated remix config
+# 4) Train (GOLD may use external_gate — see Learnings below)
 python train.py \
     --model_name phase2_remix_existing \
     --config_file configs/sft/phase2_remix_existing.json \
@@ -479,27 +452,73 @@ python train.py \
     --init_from_model checkpoints/phase1_format_lock_gold
 ```
 
----
+**Windows:** use `py.exe -3` instead of `python` where needed.
 
-## 5.5 Refinement Bridge (Recommended Path): Phase 2.5 -> 2.7 -> 2.8
+### Learnings
 
-**Why this section exists:**  
-After Phase 2, operator abstraction is usually strong, but edge behavior may still lag:
+- **Packing:** Episodes are short; **`--enable_packing`** with `--pack_block_size 4096` is essential. **`--pack_by_field "_meta.operator"`** keeps packs operator-coherent.
+- **No eval leakage:** `core.eval_blacklist` in generators + **disjoint val** when mixing.
+- **GOLD:** `configs/sft/phase2_remix_existing.json` uses **`gold_selection.strategy: external_gate`**: runs `scripts/eval/eval_phase2_8_bridge.py` on a schedule and can maximize a gate metric (e.g. `hard_avg_rate`) with loss guards. `require_pass: false` avoids freezing GOLD when the gate is imperfect.
+- **Interpreting `sft_eval_suite`:** Strong **operators**, **format**, and **anti-echo** buckets are on-target for Phase 2. **Regression, hierarchy, injection, strict JSON, citation** are mostly **Phase 3+** — a global FAIL on the full suite does **not** by itself block Chat SFT if the operator checkpoint is strong.
 
-- WRAP can underperform COPY/EXTRACT on delimiter variants
-- model may mirror nonce/gibberish instead of refusing/returning safe outputs
-- broad chat SFT (Phase 3+) can amplify those weaknesses if not corrected early
-
-Use this bridge when eval shows those gaps.  
-Current recommended continuation is **2.5 -> 2.7 -> 2.8**.
-
-### Phase 2.5 — WRAP + Anti-Echo Hardening
+### Success checks
 
 ```bash
-# 1) Build intermediate data:
-#    - WRAP-focused dataset (delimiter/template diversity)
-#    - echo + anti-echo set
-#    - 20% replay from phase2 operators
+python scripts/eval/eval_operator.py --model phase2_remix_existing_gold -v
+python scripts/eval/sft_eval_suite.py --model phase2_remix_existing_gold --no_system_prompt -v
+python scripts/eval/eval_phase2_8_bridge.py --model phase2_remix_existing_gold --no_system_prompt -v
+python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_remix_existing_gold -v
+```
+
+---
+
+### 5.1 Legacy: standalone Phase 2 (`phase2_operators`)
+
+Minimal operator-only run (operators + 20% Phase 1 replay) — useful for baselines or reproducing older checkpoints. **Remix** (above) is the recommended path for new work.
+
+```bash
+python scripts/sft/generate_operator_dataset.py \
+    --output_dir data/sft_phase2_intermediate/operators
+
+python scripts/sft/mix_sft_jsonl.py \
+    --inputs data/sft_phase2_intermediate/operators/operator_train.jsonl:0.8 \
+             data/sft_phase1_intermediate/phase1_mixed.jsonl:0.2 \
+    --output data/sft_phase2_intermediate/phase2_mixed.jsonl --shuffle
+
+# Packing is critical (short episodes; segment isolation for packed blocks)
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_intermediate/phase2_mixed.jsonl \
+    --output_dir data/sft_phase2_operators \
+    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+```
+
+```bash
+python train.py \
+    --model_name phase2_operators \
+    --config_file configs/sft/phase2_operators.json \
+    --dataset_dir data/sft_phase2_operators \
+    --init_from_model checkpoints/phase1_format_lock_gold
+```
+
+```bash
+python scripts/eval/eval_operator.py --model phase2_operators_gold -v
+```
+
+```powershell
+py.exe scripts/sft/generate_operator_dataset.py --output_dir data/sft_phase2_intermediate/operators
+py.exe scripts/sft/mix_sft_jsonl.py --inputs data/sft_phase2_intermediate/operators/operator_train.jsonl:0.8 data/sft_phase1_intermediate/phase1_mixed.jsonl:0.2 --output data/sft_phase2_intermediate/phase2_mixed.jsonl --shuffle
+py.exe scripts/sft/prepare_chat_sft.py --input data/sft_phase2_intermediate/phase2_mixed.jsonl --output_dir data/sft_phase2_operators --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
+```
+
+---
+
+### 5.2 Appendix — Sequential bridge builds (2.5 → 2.7 → 2.8)
+
+These scripts produce the **intermediate JSONLs** that remix combines. You do **not** have to train every bridge end-to-end if you only need the files for **§5** — but you **must** run the **prepare** steps (or have the artifacts) **before** mixing.
+
+**2.5 — WRAP + anti-echo**
+
+```bash
 python scripts/sft/prepare_phase2_5_wrap_antiecho.py \
     --output_dir data/sft_phase2_5_intermediate \
     --replay_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
@@ -510,139 +529,33 @@ python scripts/sft/prepare_phase2_5_wrap_antiecho.py \
     --echo_max_examples 70000 \
     --echo_anti_ratio 0.40 \
     --echo_contrast_ratio 0.35
-
-# 2) Tokenize + pack
-python scripts/sft/prepare_chat_sft.py \
-    --input data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl \
-    --output_dir data/sft_phase2_5_wrap_antiecho \
-    --val_file data/sft_phase2_5_intermediate/wrap_focus_val.jsonl \
-    --no_system_prompt \
-    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
-
-# 3) Train
-python train.py \
-    --model_name phase2_5_wrap_antiecho \
-    --config_file configs/sft/phase2_5_wrap_antiecho.json \
-    --dataset_dir data/sft_phase2_5_wrap_antiecho \
-    --init_from_model checkpoints/phase2_operators_gold
 ```
 
-### Phase 2.6 — Historical Micro-Phase (Not used for current continuation)
-
-This phase exists for reproducibility/history, but the current bridge path does **not** continue from 2.6.
+**2.7 — Rebalance**
 
 ```bash
-# 1) Build targeted anti-echo dataset
-#    target mix: 60% anti-echo, 20% echo, 20% operator replay
-python scripts/sft/prepare_phase2_6_antiecho.py \
-    --output_dir data/sft_phase2_6_intermediate \
-    --replay_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
-    --target_train_size 60000 \
-    --val_size 3000 \
-    --strict_safe_samples 1800
-
-# 2) Tokenize + pack
-python scripts/sft/prepare_chat_sft.py \
-    --input data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl \
-    --output_dir data/sft_phase2_6_antiecho \
-    --val_file data/sft_phase2_6_intermediate/phase2_6_val.jsonl \
-    --no_system_prompt \
-    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
-
-# 3) Train (short micro-phase)
-python train.py \
-    --model_name phase2_6_antiecho \
-    --config_file configs/sft/phase2_6_antiecho.json \
-    --dataset_dir data/sft_phase2_6_antiecho \
-    --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
-```
-
-### Phase 2.7 — Rebalance (from 2.5 GOLD)
-
-```bash
-# 1) Build 2.7 intermediate mix (anti-echo + operator replay + optional code)
 python scripts/sft/prepare_phase2_7_rebalance.py \
     --output_dir data/sft_phase2_7_intermediate \
     --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
     --target_train_size 60000
-
-# 2) Tokenize + pack
-python scripts/sft/prepare_chat_sft.py \
-    --input data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
-    --output_dir data/sft_phase2_7_rebalance \
-    --no_system_prompt \
-    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
-
-# 3) Train 2.7 from 2.5 GOLD
-python train.py \
-    --model_name phase2_7_rebalance \
-    --config_file configs/sft/phase2_7_rebalance.json \
-    --dataset_dir data/sft_phase2_7_rebalance \
-    --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
 ```
 
-### Phase 2.8 — Echo/Anti-Echo Bridge (from 2.7 GOLD)
+**2.8 — Echo bridge (also emits `phase2_8_val.jsonl` for remix val)**
 
 ```bash
-# 1) Build 2.8 intermediate set (strict train/val disjointness on payload, template, operator+payload)
-#    + minimum val operator-floor (COPY/WRAP/EXTRACT each >=2; default target >=6)
 python scripts/sft/prepare_phase2_8_echo_rebalance.py \
     --output_dir data/sft_phase2_8_intermediate \
     --replay_file data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
     --target_train_size 40000 \
     --val_size 3000 \
     --min_val_per_operator 6
-
-# 2) Tokenize + pack
-python scripts/sft/prepare_chat_sft.py \
-    --input data/sft_phase2_8_intermediate/phase2_8_mixed_train.jsonl \
-    --output_dir data/sft_phase2_8_echo_rebalance \
-    --val_file data/sft_phase2_8_intermediate/phase2_8_val.jsonl \
-    --no_system_prompt \
-    --enable_packing --pack_block_size 4096 --pack_by_field "_meta.operator"
-
-# 3) Train 2.8 from 2.7 GOLD
-python train.py \
-    --model_name phase2_8_echo_rebalance \
-    --config_file configs/sft/phase2_8_echo_rebalance.json \
-    --dataset_dir data/sft_phase2_8_echo_rebalance \
-    --init_from_model checkpoints/phase2_7_rebalance_gold
-
-# 4) Bridge gate: A/B/C/E must be 100%; D report-only
-python scripts/eval/eval_phase2_8_bridge.py \
-    --model phase2_8_echo_rebalance_gold -v
 ```
 
-### GOLD Selection (Bridge-Aware, configurable)
+**Optional full sequential training** (historical): tokenize each mix with `prepare_chat_sft.py` (`--no_system_prompt`, packing, `--pack_by_field "_meta.operator"`), then `train.py` with `configs/sft/phase2_5_wrap_antiecho.json`, `phase2_7_rebalance.json`, `phase2_8_echo_rebalance.json` and init checkpoints as in each config’s comments. Eval: `eval_phase2_5_wrap_focus.py`, `sft_eval_suite.py`, `eval_phase2_8_bridge.py`.
 
-For bridge phases, selecting `*_gold` by pure `val_loss` can miss task success.
-The trainer supports configurable GOLD strategies via config:
+**2.6** — `prepare_phase2_6_antiecho.py` exists for reproduction; **not** required for remix.
 
-- `val_loss` (legacy)
-- `hybrid` (gate-pass + val-loss improvement)
-- `external_gate` (gate metric/pass as primary objective)
-
-Example (used in `phase2_8b_echo_rebalance.json`):
-
-- run `scripts/eval/eval_phase2_8_bridge.py` at each eval
-- require `gate_passed=true`
-- maximize `hard_avg_rate`
-
-Training logs include gate results and GOLD decision context in JSONL.
-
-### Refinement Success Gates
-
-```bash
-# 2.5 focus gate
-python scripts/eval/eval_phase2_5_wrap_focus.py --model phase2_5_wrap_antiecho -v
-
-# 2.7 / 2.8 full suite checks
-python scripts/eval/sft_eval_suite.py --model phase2_7_rebalance_gold --no_system_prompt -v
-python scripts/eval/sft_eval_suite.py --model phase2_8_echo_rebalance_gold --no_system_prompt -v
-
-# 2.8 hard bridge gate (ABCE)
-python scripts/eval/eval_phase2_8_bridge.py --model phase2_8_echo_rebalance_gold --no_system_prompt -v
-```
+**GOLD selection (bridges and remix):** `gold_selection` in JSON may use `val_loss`, `hybrid`, or `external_gate` (e.g. `eval_phase2_8_bridge.py`, metric `hard_avg_rate`). Logs include gate JSON.
 
 ---
 

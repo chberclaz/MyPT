@@ -20,8 +20,8 @@
 
   "learning_rate": 3e-5,
   "max_iters": 763,
-  "eval_interval": 200,
-  "save_every": 200,
+  "eval_interval": 50,
+  "save_every": 50,
   "warmup_iters": 100,
   "use_amp": true,
   "amp_dtype": "bf16",

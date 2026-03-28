@@ -1,6 +1,6 @@
 {
   "name": "Phase 2 Remix (existing scripts only)",
-  "description": "Original phase2 base + minor replay from phase2.5 and phase2.7 mixed via mix_sft_jsonl.py.",
+  "description": "Original phase2 base + phase2.5 at weight 0.3 and phase2.7 at 0.15 in mix_sft_jsonl.py (see docs/sft/SFT_PIPELINE_GUIDE.md).",
 
   "batch_size": 4,
   "block_size": 4096,
