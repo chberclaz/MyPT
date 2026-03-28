@@ -173,7 +173,15 @@ def main():
         config_desc = config_dict.pop("description", None)
         
         # Extract training hyperparameters (not part of GPTConfig)
-        training_keys = ["learning_rate", "max_iters", "eval_interval", "eval_iters", "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype", "eval_sets", "eval_seed", "log_file", "terminal_log_file", "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps", "gold_selection"]
+        # Training-only keys (must not reach GPTConfig): includes JSON fields like save_every
+        # that appear in SFT configs but are not model hyperparameters.
+        training_keys = [
+            "learning_rate", "max_iters", "eval_interval", "eval_iters", "save_every",
+            "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype",
+            "eval_sets", "eval_seed", "log_file", "terminal_log_file",
+            "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps",
+            "gold_selection",
+        ]
         for key in training_keys:
             if key in config_dict:
                 config_training[key] = config_dict.pop(key)
