@@ -10,7 +10,7 @@ A cheat sheet of common commands and configurations.
 
 ```bash
 python train.py \
-    --config_file configs/pretrain/small.json \
+    --config_file configs/base/archiv/small.json \
     --model_name my_model \
     --input_file data/corpus.txt \
     --max_iters 10000
@@ -20,14 +20,14 @@ python train.py \
 
 ```bash
 # Step 1: Prepare shards
-python scripts/prepare_weighted_dataset.py \
+python scripts/data_prep/prepare_weighted_dataset.py \
     --source corpus:data/my_corpus/*.txt \
     --total_tokens 100000000 \
     --out_dir data/my_shards
 
 # Step 2: Train
 python train.py \
-    --config_file configs/pretrain/150M.json \
+    --config_file configs/base/archiv/150M.json \
     --model_name my_model \
     --dataset_dir data/my_shards \
     --max_iters 50000
@@ -46,7 +46,7 @@ python train.py \
 
 ```bash
 python train.py \
-    --config_file configs/pretrain/750M_1024_domain_adapt.json \
+    --config_file configs/base/archiv/750M_1024_domain_adapt.json \
     --model_name domain_model \
     --dataset_dir data/domain_corpus \
     --init_from_model checkpoints/base_model \
@@ -59,7 +59,7 @@ python train.py \
 
 ```bash
 python train.py \
-    --config_file configs/sft/750M_chat_sft.json \
+    --config_file configs/sft/phase3_chat_sft.json \
     --model_name chat_model \
     --dataset_dir data/sft_episodes \
     --init_from_model checkpoints/domain_model \
@@ -113,7 +113,7 @@ python generate.py \
 ### Simple Dataset (Single File)
 
 ```bash
-python scripts/prepare_dataset.py \
+python scripts/data_prep/prepare_dataset.py \
     --input_file data/corpus.txt \
     --output_dir data/shards \
     --tokenization gpt2
@@ -122,7 +122,7 @@ python scripts/prepare_dataset.py \
 ### Weighted Multi-Source Dataset
 
 ```bash
-python scripts/prepare_weighted_dataset.py \
+python scripts/data_prep/prepare_weighted_dataset.py \
     --source wiki_en:data/wikipedia_en/*.txt:0.5 \
     --source wiki_de:data/wikipedia_de/*.txt:0.4 \
     --source news:data/news/*.txt:0.1 \
@@ -133,7 +133,7 @@ python scripts/prepare_weighted_dataset.py \
 ### Mix Tokenized Datasets (Replay)
 
 ```bash
-python scripts/mix_tokenized_datasets.py \
+python scripts/data_prep/mix_tokenized_datasets.py \
     --domain_dir data/domain_tokenized \
     --replay_dir data/general_tokenized \
     --output_dir data/mixed_20pct \
@@ -143,7 +143,7 @@ python scripts/mix_tokenized_datasets.py \
 ### Append to Existing Dataset
 
 ```bash
-python scripts/append_to_dataset.py \
+python scripts/data_prep/append_to_dataset.py \
     --dataset_dir data/existing_shards \
     --source new_data:data/new_corpus.txt \
     --target_tokens 50000000
@@ -156,25 +156,19 @@ python scripts/append_to_dataset.py \
 ### List Configurations
 
 ```bash
-python scripts/show_configs.py
+python scripts/utils/show_configs.py
 ```
 
 ### Inspect Model
 
 ```bash
-python scripts/inspect_model.py --model_name my_model
+python scripts/model/inspect_model.py --model_name my_model
 ```
 
 ### Calculate Parameters
 
 ```bash
-python scripts/calculate_params.py --config_file configs/pretrain/150M.json
-```
-
-### Count Tokens in File
-
-```bash
-python scripts/count_tokens.py --input_file data/corpus.txt
+python scripts/model/calculate_params.py --config_file configs/base/archiv/150M.json
 ```
 
 ### Build RAG Index
@@ -242,7 +236,7 @@ python -m webapp.main --model_name my_model --port 8000
 | What | Where |
 |------|-------|
 | Model checkpoints | `checkpoints/<model_name>/` |
-| Config presets | `configs/pretrain/` |
+| Config presets | `configs/base/` |
 | SFT configs | `configs/sft/` |
 | Training data | `data/` |
 | Sharded datasets | `data/<dataset_name>/train/`, `val/` |
@@ -295,16 +289,16 @@ iters = (200M × 5) / (12 × 1024) = 81,380 iterations
 
 ```bash
 # Phase 1: Base pretraining
-python train.py --config_file configs/pretrain/750M_1024.json \
+python train.py --config_file configs/base/archiv/750M_1024.json \
     --model_name base_750M --dataset_dir data/wiki --max_iters 128000
 
 # Phase 2: Domain adaptation  
-python train.py --config_file configs/pretrain/750M_1024_domain_adapt.json \
+python train.py --config_file configs/base/archiv/750M_1024_domain_adapt.json \
     --model_name domain_750M --dataset_dir data/domain \
     --init_from_model checkpoints/base_750M --max_iters 45000
 
 # Phase 3: Chat SFT
-python train.py --config_file configs/sft/750M_chat_sft.json \
+python train.py --config_file configs/sft/phase3_chat_sft.json \
     --model_name chat_750M --dataset_dir data/sft_episodes \
     --init_from_model checkpoints/domain_750M --max_iters 5000
 ```

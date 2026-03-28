@@ -88,7 +88,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 
 2. **Use a smaller model:**
    ```bash
-   python train.py --config_file configs/pretrain/small.json ...
+   python train.py --config_file configs/base/archiv/small.json ...
    ```
 
 3. **Use gradient accumulation** (same effective batch size, less memory):
@@ -175,7 +175,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 
 4. **Use sharded datasets** for large data:
    ```bash
-   python scripts/prepare_weighted_dataset.py ...
+   python scripts/data_prep/prepare_weighted_dataset.py ...
    python train.py --dataset_dir data/shards ...
    ```
 
@@ -204,7 +204,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 2. **Wrong tokenizer:**
    ```bash
    # Check tokenizer matches
-   python scripts/inspect_model.py --model_name my_model
+   python scripts/model/inspect_model.py --model_name my_model
    ```
 
 3. **Temperature too high:**
@@ -263,7 +263,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 **Solution:** Use sharded datasets:
 ```bash
 # Prepare shards (streams data, low memory)
-python scripts/prepare_weighted_dataset.py \
+python scripts/data_prep/prepare_weighted_dataset.py \
     --source corpus:data/large_corpus/*.txt \
     --out_dir data/shards
 
@@ -340,7 +340,7 @@ ls data/my_shards/tokenizer_state.json
 ls data/my_corpus/*.txt
 
 # Use correct pattern
-python scripts/prepare_weighted_dataset.py \
+python scripts/data_prep/prepare_weighted_dataset.py \
     --source corpus:data/my_corpus/*.txt ...
 ```
 

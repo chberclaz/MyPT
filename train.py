@@ -617,6 +617,7 @@ def main():
                     model.config,
                     model.tokenizer,
                     dataset_dir=eval_path,
+                    eval_only=True,
                 )
             else:
                 eval_loader = GPTDataLoader(

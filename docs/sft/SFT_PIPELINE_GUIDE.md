@@ -4,7 +4,7 @@ Complete reference for Supervised Fine-Tuning the MyPT 750M LLaMA-2 base model
 into an agentic RAG assistant. Covers architecture, data flow, every phase,
 exact commands, and success criteria.
 
-**Last updated:** February 2026
+**Last updated:** March 2026 (Phase 3 pipeline section refreshed with a full build log)
 **Base model:** `checkpoints/phase1b_context_ext` (LLaMA-2 style, 750M params, 4096 context via PI)
 **Architecture:** RoPE + SwiGLU + RMSNorm, tie_weights=true, 1280d/20h/32L, rope_scale=4.0
 
@@ -79,14 +79,14 @@ Two-part dataset (~800M tokens, no myPT tags -- the model has no tag knowledge a
 
 **QA episodes (40%, ~320M tokens):** 6 HuggingFace sources for structured retrieval training:
 
-| Source | Tokens | Role |
-|:--|:--|:--|
-| HotpotQA (distractor) | ~108M | Long multi-passage, position-varied gold paragraphs |
-| MS MARCO v2.1 | ~100M | 10-passage search results, position-varied, real Bing queries |
-| TriviaQA (evidence) | ~78M | Medium-long grounded trivia |
-| SQuAD v2 | ~32M | Short extractive EN QA (incl. unanswerable) |
-| MuSiQue | ~20M | Hard multi-hop (2-4 hops) |
-| GermanQuAD | ~1.5M | Short extractive DE QA |
+| Source                | Tokens | Role                                                          |
+| :-------------------- | :----- | :------------------------------------------------------------ |
+| HotpotQA (distractor) | ~108M  | Long multi-passage, position-varied gold paragraphs           |
+| MS MARCO v2.1         | ~100M  | 10-passage search results, position-varied, real Bing queries |
+| TriviaQA (evidence)   | ~78M   | Medium-long grounded trivia                                   |
+| SQuAD v2              | ~32M   | Short extractive EN QA (incl. unanswerable)                   |
+| MuSiQue               | ~20M   | Hard multi-hop (2-4 hops)                                     |
+| GermanQuAD            | ~1.5M  | Short extractive DE QA                                        |
 
 **General text (60%, ~480M tokens):** Sampled from pre-training shards. Short documents concatenated into ~4096-token mega-episodes for full-length attention spans during RoPE adaptation.
 
@@ -169,8 +169,8 @@ Every generator outputs the same JSONL schema:
 {
   "system": "You are MyPT.",
   "messages": [
-    {"role": "user", "content": "What is Python?"},
-    {"role": "assistant", "content": "A programming language."}
+    { "role": "user", "content": "What is Python?" },
+    { "role": "assistant", "content": "A programming language." }
   ],
   "language": "en"
 }
@@ -191,6 +191,7 @@ For tool-calling episodes (Phase 5-6):
 ```
 
 Optional fields on messages:
+
 - `"context"` on user messages -- becomes `<myPT_user_context>` when `prepare_chat_sft.py` is run with `--enable_rag_tags`
 - `"think"` on assistant messages -- becomes `<myPT_think>` when `prepare_chat_sft.py` is run with `--enable_rag_tags`
 - `"cite"` on assistant messages -- becomes `<myPT_cite>` when `prepare_chat_sft.py` is run with `--enable_rag_tags`
@@ -219,14 +220,14 @@ episodes within the same packed sequence from attending to each other.
 
 **When to use `--enable_packing`:**
 
-| Phase | Avg Episode | Episodes/Block | Efficiency Gain | Pack? |
-|-------|-------------|----------------|-----------------|-------|
-| 1     | ~30 tokens  | 25-50          | 25-50x          | YES   |
-| 2     | ~45 tokens  | 17-34          | 17-34x          | YES   |
-| 3     | ~250 tokens | 2-10           | 2-10x           | YES   |
-| 4     | ~500 tokens | 1-5            | 1.3-5x          | YES   |
+| Phase | Avg Episode | Episodes/Block | Efficiency Gain | Pack?                                     |
+| ----- | ----------- | -------------- | --------------- | ----------------------------------------- |
+| 1     | ~30 tokens  | 25-50          | 25-50x          | YES                                       |
+| 2     | ~45 tokens  | 17-34          | 17-34x          | YES                                       |
+| 3     | ~250 tokens | 2-10           | 2-10x           | YES                                       |
+| 4     | ~500 tokens | 1-5            | 1.3-5x          | YES                                       |
 | 5     | ~400 tokens | 1-5            | 1.5-5x          | N/A (prepare_tool_sft.py, no packing yet) |
-| 6     | ~800 tokens | 1-2            | ~1x             | NO (episodes fill the window) |
+| 6     | ~800 tokens | 1-2            | ~1x             | NO (episodes fill the window)             |
 
 **Phase 1-2 are where packing is transformative** -- without it, training is dramatically slower
 because almost every token in the 4096 window is wasted padding.
@@ -263,7 +264,7 @@ SYSTEM INJECTS (mask=0):        MODEL GENERATES (mask=1):
 ### Phase-by-Phase Tag Introduction
 
 | Phase | New Tags Introduced                        |
-|-------|--------------------------------------------|
+| ----- | ------------------------------------------ |
 | 1     | system, user, assistant, eot               |
 | 2     | (none new)                                 |
 | 3     | think, cite, user_context                  |
@@ -278,6 +279,7 @@ SYSTEM INJECTS (mask=0):        MODEL GENERATES (mask=1):
 **Goal:** Model learns to generate inside assistant tags and STOP.
 
 **What it teaches:**
+
 - `<myPT_system>...<myPT_user>...<myPT_assistant>RESPONSE</myPT_assistant><myPT_eot>` skeleton
 - Ultra-short responses (1-5 tokens)
 - Basic echo/repeat instructions (EN + DE)
@@ -445,7 +447,7 @@ Use this when you want original Phase2 acquisition behavior as the main signal, 
 # 1) Train mix (original phase2 dominant + minor 2.5/2.7)
 python scripts/sft/mix_sft_jsonl.py \
     --inputs data/sft_phase2_intermediate/phase2_mixed.jsonl:1.0 \
-             data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl:0.15 \
+             data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl:0.30 \
              data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl:0.15 \
     --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
     --shuffle --seed 2907
@@ -483,6 +485,7 @@ python train.py \
 
 **Why this section exists:**  
 After Phase 2, operator abstraction is usually strong, but edge behavior may still lag:
+
 - WRAP can underperform COPY/EXTRACT on delimiter variants
 - model may mirror nonce/gibberish instead of refusing/returning safe outputs
 - broad chat SFT (Phase 3+) can amplify those weaknesses if not corrected early
@@ -614,11 +617,13 @@ python scripts/eval/eval_phase2_8_bridge.py \
 
 For bridge phases, selecting `*_gold` by pure `val_loss` can miss task success.
 The trainer supports configurable GOLD strategies via config:
+
 - `val_loss` (legacy)
 - `hybrid` (gate-pass + val-loss improvement)
 - `external_gate` (gate metric/pass as primary objective)
 
 Example (used in `phase2_8b_echo_rebalance.json`):
+
 - run `scripts/eval/eval_phase2_8_bridge.py` at each eval
 - require `gate_passed=true`
 - maximize `hard_avg_rate`
@@ -650,7 +655,7 @@ python scripts/eval/eval_phase2_8_bridge.py --model phase2_8_echo_rebalance_gold
 1. **Gold episodes** (existing) -- bilingual conversations
 2. **HuggingFace** -- OASST2 (DE+EN), alpaca-gpt4_de, Dolci-Instruct
 3. **Augmented** -- paraphrased variants of gold episodes
-4. **Replay** -- 15% from Phase 1-2
+4. **Replay** -- ~20% Phase 2 remix existing (see `build_phase3_dataset.py` defaults)
 
 ### Generate & Prepare
 
@@ -677,15 +682,18 @@ python scripts/sft/generate_phase3_precision_sft.py \
     --output data/sft_phase3_intermediate/phase3_precision.jsonl \
     --num_examples 12000
 
-# 4. Augment gold episodes
+# 4. Augment gold episodes (use your repo’s bilingual gold file)
 python scripts/sft/augment_episodes_paraphrase.py \
-    --input data/gold_episodes/gold_bilingual.jsonl \
+    --input data/sft_conversation_goldset/mypt_phase3a_gold_bilingual.jsonl \
     --output data/sft_phase3_intermediate/gold_augmented.jsonl \
-    --target_count 1000
+    --target_count 1000 --no_model
+
+#    (Alternate path if you keep gold under data/gold_episodes/:)
+#    --input data/gold_episodes/gold_bilingual.jsonl
 
 # 5. Build Phase 3 mix with explicit policy:
-#    - operators maintenance ~8%
-#    - anti-echo maintenance ~2%
+#    - phase2 remix existing replay ~20% (default remix_train_file + remix_ratio)
+#    - operators / anti-echo optional (defaults 0; pass files + ratios if you want maintenance replay)
 #    - grounded context-only QA ~16%
 #    - open-ended chat capped
 #    - remainder strict/checkable precision tasks
@@ -694,8 +702,8 @@ python scripts/sft/build_phase3_dataset.py \
     --target_size 80000 \
     --precision_file data/sft_phase3_intermediate/phase3_precision.jsonl \
     --grounded_file data/sft_phase3_intermediate/rag_chat.jsonl \
-    --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
-    --anti_echo_file data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl \
+    --remix_train_file data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
+    --remix_ratio 0.20 \
     --open_chat_files data/sft_hf/oasst2.jsonl data/sft_hf/alpaca_de.jsonl data/sft_phase3_intermediate/gold_augmented.jsonl
 
 # 6. Audit Phase 3 composition and schema coverage before tokenization
@@ -703,14 +711,67 @@ python scripts/sft/audit_phase3_dataset.py \
     --input data/sft_phase3_intermediate/phase3_mixed.jsonl \
     --output data/sft_phase3_intermediate/phase3_mixed.audit.json
 
-# 7. Tokenize with packing (episodes average ~250 tokens, 2-10x efficiency gain)
+# 7. (If needed) Normalize operator replay schema — see “Phase 3 build log” below.
+# 8. Tokenize with packing + RAG tags + CHAT system prompt (not the default CONVERSATION prompt)
 python scripts/sft/prepare_chat_sft.py \
     --input data/sft_phase3_intermediate/phase3_mixed.jsonl \
     --output_dir data/sft_phase3_chat \
+    --val_split 0.05 \
     --enable_packing --pack_block_size 4096 \
     --enable_rag_tags \
-    --schema_validation_mode error
+    --schema_validation_mode error \
+    --system_prompt "You are MyPT, a helpful assistant. Answer based on the provided context when available."
+
+# 9. (Optional) Tokenize Phase 2 remix **validation** JSONL for an extra eval set (val-only dir; no train split).
+#    Run `normalize_phase3_inline_system.py` on the val JSONL first if episodes still have inline `role=system` in messages.
+#    Use the **same** `--system_prompt` (and RAG flags) as step 8 so eval matches Phase 3 CHAT training.
+python scripts/sft/prepare_chat_sft.py \
+    --input data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_val.jsonl \
+    --output_dir data/sft_phase3_eval_phase2_remix \
+    --val_only \
+    --enable_packing --pack_block_size 4096 \
+    --enable_rag_tags \
+    --schema_validation_mode error \
+    --system_prompt "You are MyPT, a helpful assistant. Answer based on the provided context when available."
 ```
+
+The `--system_prompt` string must match `CHAT_SYSTEM_PROMPT` in `core/system_prompts.py` (training serializes this; per-episode JSONL `"system"` is validated but not used as the system block unless you align generators separately).
+
+`configs/sft/phase3_chat_sft.json` **adds** `eval_sets.phase2_remix_existing` → `data/sft_phase3_eval_phase2_remix` alongside existing eval dirs (Phase 2 full configs may list many `eval_sets`; Phase 3 only adds this remix eval path).
+
+### Phase 3 dataset build log (March 2026)
+
+End-to-end run that produced `data/sft_phase3_chat/` (packed, RAG tags, `CHAT_SYSTEM_PROMPT`). The command block above (steps 1–8) reflects this run, with these **measured outputs** where relevant:
+
+| Step | Output notes |
+|------|----------------|
+| HF OASST2 | Requested 10k; after tree walk + language filter **~5.5k** episodes written (varies with HF snapshot). |
+| HF alpaca_de | Requested 5k; **~4.9k** episodes after filtering. |
+| RAG chat | **2000** episodes from `workspace/docs` markdown. |
+| Precision | **12000** episodes. |
+| Gold augment | **1000** episodes from `mypt_phase3a_gold_bilingual.jsonl` (rule-based `--no_model`). |
+| Mix | **80000** episodes → `phase3_mixed.jsonl`. |
+| Audit | `audit_phase3_dataset.py` → `phase3_mixed.audit.json` (e.g. schema OK ~92% before normalization — see below). |
+| Tokenize | `data/sft_phase3_chat/` with **~10.9M** train tokens (exact counts depend on split/pack). |
+
+**Code fixes applied in-repo for this build**
+
+1. **`scripts/sft/convert_hf_dataset.py` (OASST2)** — Some rows have `rank: null`. `max(..., key=lambda ...)` must not compare `None` to `int`. Use a helper (e.g. `_oasst2_rank_key`) that treats `None` like a worst rank before `max()`.
+
+2. **`scripts/sft/generate_rag_chat_sft.py`** — (a) `sys.path.insert(...)` **before** any `from core...` imports. (b) `generate_context_answer`: define `topic = rng.choice(doc["topics"])` before formatting questions/thinks. (c) `generate_insufficient_context`: ensure `distractor_topic` is defined where used. (d) Lineage metadata: use `args.docs_dir`, not a non-existent `workspace_docs` attribute.
+
+3. **`scripts/sft/generate_phase3_precision_sft.py`** — Move `sys.path.insert(0, ...)` **above** `from core.dataset_lineage ...` so `py scripts/sft/generate_phase3_precision_sft.py` works from the repo root without `PYTHONPATH`. Until that edit is in your tree, Windows users can set `PYTHONPATH` to the project root.
+
+**Schema normalization before tokenization (`--schema_validation_mode error`)**
+
+- **`build_phase3_dataset.py`** samples **phase2 remix existing** replay (and optional operator/anti-echo rows when you pass those files). Those episodes can use **`messages[0].role == "system"`** with **no top-level `"system"`** field. `prepare_chat_sft` schema validation allows only `user` / `assistant` / `assistant_context` in `messages`, so **6400** such rows failed validation in one run.
+- **Fix:** `scripts/sft/normalize_phase3_inline_system.py` — hoists the first `messages` entry when `role == "system"` into `episode["system"]` and removes it from `messages`. Run with `--backup` on `phase3_mixed.jsonl` (or on `phase2_remix_existing_val.jsonl` before step 9), then rerun `prepare_chat_sft.py`.
+
+**Validation: do not use `validate_sft_dataset.py` as a hard gate on packed chat SFT**
+
+- Packing uses **`myPT_eot` as the pad token ID**; padding positions are **mask 0**.
+- `validate_sft_dataset.py` flags **every** `<myPT_eot>` with mask 0 as **`EOT_NOT_MASKED`**, which **floods false positives** on packed data (pad EOTs are not end-of-turn tokens).
+- Prefer **`inspect_sft_dataset.py`** on `data/sft_phase3_chat`, or extend the validator to **ignore EOT where `segment_ids.bin` is 0** (padding), if present.
 
 ### Train
 
@@ -908,27 +969,27 @@ python scripts/sft/convert_hf_dataset.py \
 
 **Phase 3 (Chat):**
 
-| Dataset                        | Command                                                                | Notes              |
-|--------------------------------|------------------------------------------------------------------------|--------------------|
-| OASST2 (EN+DE)                | `--dataset OpenAssistant/oasst2 --languages en de`                     | Native German!     |
-| Alpaca-GPT4 DE                | `--dataset mayflowergmbh/alpaca-gpt4_de`                               | 50K German         |
-| Dolci-Instruct                 | `--dataset allenai/Dolci-Instruct-SFT --max_examples 10000`           | 2.15M, 70+ langs   |
-| OpenSchnabeltier               | `--dataset LeoLM/OpenSchnabeltier`                                     | 21.7K German       |
+| Dataset          | Command                                                     | Notes            |
+| ---------------- | ----------------------------------------------------------- | ---------------- |
+| OASST2 (EN+DE)   | `--dataset OpenAssistant/oasst2 --languages en de`          | Native German!   |
+| Alpaca-GPT4 DE   | `--dataset mayflowergmbh/alpaca-gpt4_de`                    | 50K German       |
+| Dolci-Instruct   | `--dataset allenai/Dolci-Instruct-SFT --max_examples 10000` | 2.15M, 70+ langs |
+| OpenSchnabeltier | `--dataset LeoLM/OpenSchnabeltier`                          | 21.7K German     |
 
 **Phase 4 (Multi-turn):**
 
-| Dataset                        | Command                                                                | Notes              |
-|--------------------------------|------------------------------------------------------------------------|--------------------|
-| OASST2 multi-turn             | `--dataset OpenAssistant/oasst2 --languages en de`                     | Tree depth >= 2    |
-| Ultra-Chat DE                  | `--dataset mayflowergmbh/ultra-chat_de --max_examples 10000`          | 208K multi-turn    |
+| Dataset           | Command                                                      | Notes           |
+| ----------------- | ------------------------------------------------------------ | --------------- |
+| OASST2 multi-turn | `--dataset OpenAssistant/oasst2 --languages en de`           | Tree depth >= 2 |
+| Ultra-Chat DE     | `--dataset mayflowergmbh/ultra-chat_de --max_examples 10000` | 208K multi-turn |
 
 **Phase 5-6 (Tool Calling):**
 
-| Dataset                        | Command                                                                | Notes              |
-|--------------------------------|------------------------------------------------------------------------|--------------------|
-| Dolci Tool-Use                 | `--dataset allenai/Dolci-Instruct-SFT-Tool-Use --max_examples 10000`  | XML -> JSON mapped |
-| German Function Calling        | `--dataset flozi00/german-function-calling`                            | 1.33K German       |
-| German RAG SFT                 | `--dataset avemio/German-RAG-SFT-ShareGPT-HESSIAN-AI`                 | 200K+ with RAG     |
+| Dataset                 | Command                                                              | Notes              |
+| ----------------------- | -------------------------------------------------------------------- | ------------------ |
+| Dolci Tool-Use          | `--dataset allenai/Dolci-Instruct-SFT-Tool-Use --max_examples 10000` | XML -> JSON mapped |
+| German Function Calling | `--dataset flozi00/german-function-calling`                          | 1.33K German       |
+| German RAG SFT          | `--dataset avemio/German-RAG-SFT-ShareGPT-HESSIAN-AI`                | 200K+ with RAG     |
 
 All datasets have permissive licenses (ODC-BY, Apache-2.0, CC-BY-SA).
 
@@ -940,11 +1001,11 @@ System prompt tokens are **always masked** (loss=0). In short episodes (Phase 1-
 a long system prompt dramatically reduces the fraction of supervised tokens per
 sequence. We use a three-tier strategy to maximize loss mask %:
 
-| Phases | Prompt | ~Tokens | Rationale |
-|:--|:--|--:|:--|
-| 1-2 (Format Lock, Operators) | `"You are MyPT."` | 4 | Episodes are ultra-short; every masked token hurts |
-| 3-4 (Chat, Multi-turn) | `CHAT_SYSTEM_PROMPT` | 15-20 | Episodes are long enough to absorb it |
-| 5-6 (Toolcall, Agentic) | `AGENTIC_STANDARD_PROMPT` | ~80 | Tool episodes are long; need to list available tools |
+| Phases                       | Prompt                    | ~Tokens | Rationale                                            |
+| :--------------------------- | :------------------------ | ------: | :--------------------------------------------------- |
+| 1-2 (Format Lock, Operators) | `"You are MyPT."`         |       4 | Episodes are ultra-short; every masked token hurts   |
+| 3-4 (Chat, Multi-turn)       | `CHAT_SYSTEM_PROMPT`      |   15-20 | Episodes are long enough to absorb it                |
+| 5-6 (Toolcall, Agentic)      | `AGENTIC_STANDARD_PROMPT` |     ~80 | Tool episodes are long; need to list available tools |
 
 All prompts are defined in `core/system_prompts.py`. Phase 3-4 uses 4 short
 variants (via `CHAT_SYSTEM_PROMPTS` list) for surface diversity without token
@@ -998,18 +1059,19 @@ overwrites what Phase 2 taught.
 
 **Mandatory cross-phase replay schedule:**
 
-| Training Phase | Replay Sources | Ratios |
-|:--|:--|:--|
-| Phase 2 (Operators) | Phase 1 format lock | 5% Phase 1 + 95% Phase 2 |
-| Phase 3 (Chat SFT) | Phase 1 + Phase 2 | 3% P1 + 3% P2 + 94% P3 |
-| Phase 4 (Multi-turn) | Phase 1-3 | 2% P1 + 2% P2 + 3% P3 + 93% P4 |
-| Phase 5 (Toolcall) | Phase 1-4 | 2% P1 + 2% P2 + 2% P3 + 2% P4 + 92% P5 |
-| Phase 6 (Agentic) | Phase 1-5 | 1% each P1-P5 + 95% P6 |
+| Training Phase       | Replay Sources      | Ratios                                 |
+| :------------------- | :------------------ | :------------------------------------- |
+| Phase 2 (Operators)  | Phase 1 format lock | 5% Phase 1 + 95% Phase 2               |
+| Phase 3 (Chat SFT)   | Phase 1 + Phase 2   | 3% P1 + 3% P2 + 94% P3                 |
+| Phase 4 (Multi-turn) | Phase 1-3           | 2% P1 + 2% P2 + 3% P3 + 93% P4         |
+| Phase 5 (Toolcall)   | Phase 1-4           | 2% P1 + 2% P2 + 2% P3 + 2% P4 + 92% P5 |
+| Phase 6 (Agentic)    | Phase 1-5           | 1% each P1-P5 + 95% P6                 |
 
 Plus 5% pre-training replay in every phase (included in the ratios above as
 part of the phase-specific data).
 
 Example for Phase 3:
+
 ```bash
 python scripts/sft/mix_sft_jsonl.py \
     --inputs data/sft_replay/pretrain_replay.jsonl:1.0 \
@@ -1031,12 +1093,12 @@ Held-out evaluation prompts using **novel phrasings not seen during training**
 detect overfitting to synthetic templates (audit item A4). Four JSONL files in
 `data/eval_ood/` cover Phases 3-6:
 
-| File | Phase | What it tests |
-|:--|:--|:--|
-| `phase3_chat_ood.jsonl` | 3 | RAG-context answering with novel question styles |
-| `phase4_multiturn_ood.jsonl` | 4 | Multi-turn follow-up with unseen phrasings |
-| `phase5_toolcall_ood.jsonl` | 5 | Tool selection from unfamiliar request forms |
-| `phase6_agentic_ood.jsonl` | 6 | Multi-step tool chaining with novel phrasing |
+| File                         | Phase | What it tests                                    |
+| :--------------------------- | :---- | :----------------------------------------------- |
+| `phase3_chat_ood.jsonl`      | 3     | RAG-context answering with novel question styles |
+| `phase4_multiturn_ood.jsonl` | 4     | Multi-turn follow-up with unseen phrasings       |
+| `phase5_toolcall_ood.jsonl`  | 5     | Tool selection from unfamiliar request forms     |
+| `phase6_agentic_ood.jsonl`   | 6     | Multi-step tool chaining with novel phrasing     |
 
 The regression gate automatically picks up these files for phases >= 3 and
 reports pass rates (currently as warnings, not hard failures).
@@ -1059,6 +1121,7 @@ token embeddings during training. This simple regularization technique shows
 ### How It Works
 
 After the embedding lookup and before the transformer blocks, noise is added:
+
 ```
 embed += uniform(-alpha, alpha) / sqrt(seq_len * embed_dim)
 ```
@@ -1069,6 +1132,7 @@ completely unaffected.
 ### Configuration
 
 Add `neftune_alpha` to the SFT config JSON:
+
 ```json
 {
   "neftune_alpha": 5.0
@@ -1077,14 +1141,14 @@ Add `neftune_alpha` to the SFT config JSON:
 
 Recommended values per phase:
 
-| Phase | neftune_alpha | Rationale |
-|:--|:--|:--|
-| Phase 1 (Format Lock) | 5.0 | Light noise, don't interfere with tag learning |
-| Phase 2 (Operators) | 5.0 | Light noise for abstract patterns |
-| Phase 3 (Chat SFT) | 10.0 | Moderate, improves response diversity |
-| Phase 4 (Multi-turn) | 10.0 | Moderate, prevents template memorization |
-| Phase 5 (Toolcall) | 5.0 | Light, JSON structure must be precise |
-| Phase 6 (Agentic) | 5.0 | Light, multi-step chains need precision |
+| Phase                 | neftune_alpha | Rationale                                      |
+| :-------------------- | :------------ | :--------------------------------------------- |
+| Phase 1 (Format Lock) | 5.0           | Light noise, don't interfere with tag learning |
+| Phase 2 (Operators)   | 5.0           | Light noise for abstract patterns              |
+| Phase 3 (Chat SFT)    | 10.0          | Moderate, improves response diversity          |
+| Phase 4 (Multi-turn)  | 10.0          | Moderate, prevents template memorization       |
+| Phase 5 (Toolcall)    | 5.0           | Light, JSON structure must be precise          |
+| Phase 6 (Agentic)     | 5.0           | Light, multi-step chains need precision        |
 
 Set to `0.0` to disable (default).
 
@@ -1098,20 +1162,21 @@ loss masking assigns higher importance to structural control tokens that
 
 ### Weight Scheme
 
-| Token Type | Weight | Rationale |
-|:--|:--|:--|
-| System, user, toolresult | 0.0 | Never train |
-| `<myPT_assistant>` (open) | 0.0 | Given in prompt |
-| Normal assistant content | 1.0 | Standard training |
-| `</myPT_assistant>` (close) | 2.0 | Critical stop signal |
-| `<myPT_eot>` | 2.0 | Critical stop signal |
-| `<myPT_think>` / `</myPT_think>` | 1.5 | Steering tokens |
-| `<myPT_cite>` / `</myPT_cite>` | 1.5 | Steering tokens |
-| `<myPT_toolcall>` / `</myPT_toolcall>` | 2.0 | Critical action triggers |
+| Token Type                             | Weight | Rationale                |
+| :------------------------------------- | :----- | :----------------------- |
+| System, user, toolresult               | 0.0    | Never train              |
+| `<myPT_assistant>` (open)              | 0.0    | Given in prompt          |
+| Normal assistant content               | 1.0    | Standard training        |
+| `</myPT_assistant>` (close)            | 2.0    | Critical stop signal     |
+| `<myPT_eot>`                           | 2.0    | Critical stop signal     |
+| `<myPT_think>` / `</myPT_think>`       | 1.5    | Steering tokens          |
+| `<myPT_cite>` / `</myPT_cite>`         | 1.5    | Steering tokens          |
+| `<myPT_toolcall>` / `</myPT_toolcall>` | 2.0    | Critical action triggers |
 
 ### Usage
 
 Add `--weighted_mask` to the prepare scripts:
+
 ```bash
 python scripts/sft/prepare_chat_sft.py \
     --input data/episodes.jsonl \
@@ -1133,69 +1198,70 @@ so no model changes are needed.
 
 ### Generators (produce JSONL)
 
-| Script | Phase | What it does |
-|--------|-------|-------------|
-| `generate_format_lock_dataset.py` | 1 | Combinatorial Q&A (EN+DE), short answers |
-| `generate_echo_dataset.py` | 1 | Echo/repeat instructions, anti-echo, gibberish |
-| `generate_operator_dataset.py` | 2 | COPY/WRAP/EXTRACT with contrastive design |
-| `generate_rag_chat_sft.py` | 3 | RAG episodes with user_context + think + cite (EN+DE) |
-| `generate_phase3_precision_sft.py` | 3 | High-precision checkable tasks + conflicts + abstention |
-| `generate_multiturn_sft.py` | 4 | Multi-turn conversations: followup, clarification, topic switch |
-| `generate_agent_sft.py` | 5 | Single-step tool-calling (EN+DE, think+cite, NO_TOOL) |
-| `generate_sft_tool_episodes.py` | 6 | Multi-step agentic tool chains (validated, EN+DE) |
-| `convert_hf_dataset.py` | 3-6 | Universal HuggingFace dataset converter |
+| Script                             | Phase | What it does                                                    |
+| ---------------------------------- | ----- | --------------------------------------------------------------- |
+| `generate_format_lock_dataset.py`  | 1     | Combinatorial Q&A (EN+DE), short answers                        |
+| `generate_echo_dataset.py`         | 1     | Echo/repeat instructions, anti-echo, gibberish                  |
+| `generate_operator_dataset.py`     | 2     | COPY/WRAP/EXTRACT with contrastive design                       |
+| `generate_rag_chat_sft.py`         | 3     | RAG episodes with user_context + think + cite (EN+DE)           |
+| `generate_phase3_precision_sft.py` | 3     | High-precision checkable tasks + conflicts + abstention         |
+| `generate_multiturn_sft.py`        | 4     | Multi-turn conversations: followup, clarification, topic switch |
+| `generate_agent_sft.py`            | 5     | Single-step tool-calling (EN+DE, think+cite, NO_TOOL)           |
+| `generate_sft_tool_episodes.py`    | 6     | Multi-step agentic tool chains (validated, EN+DE)               |
+| `convert_hf_dataset.py`            | 3-6   | Universal HuggingFace dataset converter                         |
 
 ### Pipeline (mix, tokenize)
 
-| Script | What it does |
-|--------|-------------|
-| `prepare_phase1_format_lock.py` | Automated Phase 1 pipeline (generate + mix + tokenize) |
-| `prepare_phase2_5_wrap_antiecho.py` | Build 2.5 bridge intermediate dataset |
-| `prepare_phase2_6_antiecho.py` | Build 2.6 anti-echo micro-phase dataset |
-| `prepare_phase2_7_rebalance.py` | Build 2.7 rebalance dataset |
-| `prepare_phase2_8_echo_rebalance.py` | Build 2.8 replay+specialized bridge dataset |
-| `mix_sft_jsonl.py` | Mix multiple JSONL files with sampling ratios |
-| `build_phase3_dataset.py` | Policy-driven Phase 3 mixer (maintenance + strict tasks + turn caps) |
-| `prepare_chat_sft.py` | Tokenize chat JSONL to binary (Phase 1-4) |
-| `prepare_tool_sft.py` | Tokenize tool JSONL to binary (Phase 5-6) |
+| Script                               | What it does                                                         |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| `prepare_phase1_format_lock.py`      | Automated Phase 1 pipeline (generate + mix + tokenize)               |
+| `prepare_phase2_5_wrap_antiecho.py`  | Build 2.5 bridge intermediate dataset                                |
+| `prepare_phase2_6_antiecho.py`       | Build 2.6 anti-echo micro-phase dataset                              |
+| `prepare_phase2_7_rebalance.py`      | Build 2.7 rebalance dataset                                          |
+| `prepare_phase2_8_echo_rebalance.py` | Build 2.8 replay+specialized bridge dataset                          |
+| `mix_sft_jsonl.py`                   | Mix multiple JSONL files with sampling ratios                        |
+| `build_phase3_dataset.py`            | Policy-driven Phase 3 mixer (maintenance + strict tasks + turn caps) |
+| `normalize_phase3_inline_system.py`  | Hoist `messages[0]` `role=system` into `episode["system"]` before tokenize (Phase 3 operator replay) |
+| `prepare_chat_sft.py`                | Tokenize chat JSONL to binary (Phase 1-4)                            |
+| `prepare_tool_sft.py`                | Tokenize tool JSONL to binary (Phase 5-6)                            |
 
 ### Quality (inspect, validate, deduplicate)
 
-| Script | What it does |
-|--------|-------------|
-| `inspect_sft_dataset.py` | Show samples, stats from tokenized dataset |
-| `validate_sft_dataset.py` | Validate dataset integrity |
-| `validate_sft_episode_masks.py` | Check mask alignment |
-| `verify_loss_mask_direction.py` | Verify mask direction (assistant=1) |
-| `verify_mask_alignment.py` | Token-level mask alignment check |
-| `deduplicate_episodes.py` | Remove duplicate episodes |
-| `deduplicate_by_user_message.py` | Deduplicate by user message content |
-| `analyze_episode_diversity.py` | Analyze diversity metrics |
-| `audit_phase3_dataset.py` | Phase 3 schema/composition audit (global + per-source) |
+| Script                           | What it does                                           |
+| -------------------------------- | ------------------------------------------------------ |
+| `inspect_sft_dataset.py`         | Show samples, stats from tokenized dataset             |
+| `validate_sft_dataset.py`        | Validate mask/tag rules; **not packing-aware** (EOT pad false positives on packed data; see Phase 3 build log) |
+| `validate_sft_episode_masks.py`  | Check mask alignment                                   |
+| `verify_loss_mask_direction.py`  | Verify mask direction (assistant=1)                    |
+| `verify_mask_alignment.py`       | Token-level mask alignment check                       |
+| `deduplicate_episodes.py`        | Remove duplicate episodes                              |
+| `deduplicate_by_user_message.py` | Deduplicate by user message content                    |
+| `analyze_episode_diversity.py`   | Analyze diversity metrics                              |
+| `audit_phase3_dataset.py`        | Phase 3 schema/composition audit (global + per-source) |
 
 ### Augmentation
 
-| Script | What it does |
-|--------|-------------|
+| Script                           | What it does                               |
+| -------------------------------- | ------------------------------------------ |
 | `augment_episodes_paraphrase.py` | Rule-based paraphrasing to expand datasets |
-| `diversify_user_messages.py` | Vary user message templates |
+| `diversify_user_messages.py`     | Vary user message templates                |
 
 ### Evaluation
 
-| Script | What it does |
-|--------|-------------|
-| `scripts/eval/sft_eval_suite.py` | Full evaluation (format, echo, anti-echo, regression) |
-| `scripts/eval/eval_operator.py` | Operator exact-match evaluation |
-| `scripts/eval/eval_phase2_8_bridge.py` | Phase 2.8 ABCE hard gate (D report-only) |
+| Script                                 | What it does                                          |
+| -------------------------------------- | ----------------------------------------------------- |
+| `scripts/eval/sft_eval_suite.py`       | Full evaluation (format, echo, anti-echo, regression) |
+| `scripts/eval/eval_operator.py`        | Operator exact-match evaluation                       |
+| `scripts/eval/eval_phase2_8_bridge.py` | Phase 2.8 ABCE hard gate (D report-only)              |
 
 ### Translation (DE/EN)
 
-| Script | What it does |
-|--------|-------------|
-| `scripts/translation/extract_for_translation.py` | Extract translatable strings |
-| `scripts/translation/translate_deepl.py` | Translate via DeepL API |
-| `scripts/translation/recombine_translations.py` | Recombine translated strings |
-| `scripts/translation/merge_bilingual_episodes.py` | Merge EN + DE episodes |
+| Script                                            | What it does                 |
+| ------------------------------------------------- | ---------------------------- |
+| `scripts/translation/extract_for_translation.py`  | Extract translatable strings |
+| `scripts/translation/translate_deepl.py`          | Translate via DeepL API      |
+| `scripts/translation/recombine_translations.py`   | Recombine translated strings |
+| `scripts/translation/merge_bilingual_episodes.py` | Merge EN + DE episodes       |
 
 ---
 
@@ -1203,16 +1269,17 @@ so no model changes are needed.
 
 All SFT configs include the LLaMA-2 architecture fields. Key configs by phase:
 
-| Phase | Config File | LR | Iters | Block |
-|-------|-------------|-----|-------|-------|
-| 1 | `configs/sft/phase1_format_lock.json` | 7e-5 | 2000 | 4096 |
-| 2 | `configs/sft/phase2_operators.json` | 3e-5 | 1200 | 4096 |
-| 3 | `configs/sft/phase3_chat_sft.json` | 3e-5 | 5000 | 4096 |
-| 4 | `configs/sft/phase4_multiturn.json` | 2.5e-5 | 3000 | 4096 |
-| 5 | `configs/sft/phase5_simple_toolcall.json` | 2e-5 | 3000 | 4096 |
-| 6 | `configs/sft/phase6_agentic_rag.json` | 1.5e-5 | 4000 | 4096 |
+| Phase | Config File                               | LR     | Iters | Block |
+| ----- | ----------------------------------------- | ------ | ----- | ----- |
+| 1     | `configs/sft/phase1_format_lock.json`     | 7e-5   | 2000  | 4096  |
+| 2     | `configs/sft/phase2_operators.json`       | 3e-5   | 1200  | 4096  |
+| 3     | `configs/sft/phase3_chat_sft.json`        | 3e-5   | 5000  | 4096  |
+| 4     | `configs/sft/phase4_multiturn.json`       | 2.5e-5 | 3000  | 4096  |
+| 5     | `configs/sft/phase5_simple_toolcall.json` | 2e-5   | 3000  | 4096  |
+| 6     | `configs/sft/phase6_agentic_rag.json`     | 1.5e-5 | 4000  | 4096  |
 
 All configs use:
+
 - `use_loss_mask: true`
 - `batch_sampling_mode: "epoch"`
 - `use_amp: true` / `amp_dtype: "bf16"`

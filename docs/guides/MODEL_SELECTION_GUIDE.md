@@ -185,7 +185,7 @@ For Phase 2 (domain adaptation), consider:
 **Recommendation:**
 ```bash
 python train.py \
-    --config_file configs/pretrain/small.json \
+    --config_file configs/base/archiv/small.json \
     --model_name my_blog_model \
     --input_file data/blog_posts.txt \
     --max_iters 5000
@@ -200,13 +200,13 @@ python train.py \
 **Recommendation:**
 ```bash
 # Prepare data
-python scripts/prepare_weighted_dataset.py \
+python scripts/data_prep/prepare_weighted_dataset.py \
     --source docs:data/company_docs/*.txt \
     --out_dir data/company_shards
 
 # Train with high context
 python train.py \
-    --config_file configs/pretrain/350M_1024.json \
+    --config_file configs/base/archiv/350M_1024.json \
     --model_name company_model \
     --dataset_dir data/company_shards \
     --max_iters 50000
@@ -222,14 +222,14 @@ python train.py \
 ```bash
 # Phase 1: Base model on general data
 python train.py \
-    --config_file configs/pretrain/750M_1024.json \
+    --config_file configs/base/archiv/750M_1024.json \
     --model_name base_750M \
     --dataset_dir data/wiki_goldset \
     --max_iters 128000
 
 # Phase 2: Domain adaptation
 python train.py \
-    --config_file configs/pretrain/750M_1024_domain_adapt.json \
+    --config_file configs/base/archiv/750M_1024_domain_adapt.json \
     --model_name security_expert \
     --dataset_dir data/security_corpus \
     --init_from_model checkpoints/base_750M \
@@ -277,7 +277,7 @@ Before committing to a long training run:
 1. **Quick validation run:**
    ```bash
    python train.py \
-       --config_file configs/pretrain/YOUR_CHOICE.json \
+       --config_file configs/base/archiv/YOUR_CHOICE.json \
        --model_name test_run \
        --input_file data/sample.txt \
        --max_iters 100

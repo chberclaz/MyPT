@@ -3,8 +3,8 @@
 Build Phase 3 mixed dataset with explicit composition targets.
 
 Targets (defaults aligned with plan):
-- operators maintenance: 5-10% (default 8%)
-- anti-echo maintenance: 2-5% (default 4%)
+- phase2 remix existing replay: ~20% (default)
+- optional operators / anti-echo replay when paths and ratios are set
 - grounded context-only QA: 10-20% (default 16%)
 - remainder: strict/checkable instruction data
 - open-ended chat capped to avoid obedience drift
@@ -155,12 +155,18 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--precision_file", type=str, required=True)
     p.add_argument("--grounded_file", type=str, required=True, help="RAG/context dataset JSONL")
-    p.add_argument("--operators_file", type=str, required=True)
-    p.add_argument("--anti_echo_file", type=str, required=True)
+    p.add_argument(
+        "--remix_train_file",
+        type=str,
+        default="data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl",
+    )
+    p.add_argument("--remix_ratio", type=float, default=0.20)
+    p.add_argument("--operators_file", type=str, default=None)
+    p.add_argument("--anti_echo_file", type=str, default=None)
     p.add_argument("--open_chat_files", nargs="*", default=[], help="HF/open-ended chat JSONL files")
 
-    p.add_argument("--operators_ratio", type=float, default=0.08)
-    p.add_argument("--anti_echo_ratio", type=float, default=0.02)
+    p.add_argument("--operators_ratio", type=float, default=0.0)
+    p.add_argument("--anti_echo_ratio", type=float, default=0.0)
     p.add_argument("--grounded_ratio", type=float, default=0.16)
     p.add_argument("--open_chat_cap_ratio", type=float, default=0.20)
     p.add_argument("--multiturn_cap_ratio", type=float, default=0.22)
@@ -171,13 +177,30 @@ def main() -> None:
     args = parse_args()
     rng = random.Random(args.seed)
 
+    if args.operators_ratio > 0 and not args.operators_file:
+        raise ValueError("operators_ratio > 0 requires --operators_file")
+    if args.anti_echo_ratio > 0 and not args.anti_echo_file:
+        raise ValueError("anti_echo_ratio > 0 requires --anti_echo_file")
+
     out_path = Path(args.output)
     meta_path = Path(args.meta_output) if args.meta_output else out_path.with_suffix(".meta.json")
 
     precision_rows = _add_source(_read_jsonl(Path(args.precision_file)), "phase3_precision")
     grounded_rows = _add_source(_read_jsonl(Path(args.grounded_file)), "phase3_grounded")
-    operators_rows = _add_source(_read_jsonl(Path(args.operators_file)), "phase3_operators_replay")
-    anti_rows = _add_source(_read_jsonl(Path(args.anti_echo_file)), "phase3_anti_echo_replay")
+    remix_path = Path(args.remix_train_file)
+    if args.remix_ratio > 0:
+        if not remix_path.exists():
+            raise FileNotFoundError(f"remix_train_file not found: {remix_path}")
+        remix_rows = _add_source(_read_jsonl(remix_path), "phase2_remix_existing_replay")
+    else:
+        remix_rows = []
+
+    operators_rows: List[Dict[str, Any]] = []
+    if args.operators_file and args.operators_ratio > 0:
+        operators_rows = _add_source(_read_jsonl(Path(args.operators_file)), "phase3_operators_replay")
+    anti_rows: List[Dict[str, Any]] = []
+    if args.anti_echo_file and args.anti_echo_ratio > 0:
+        anti_rows = _add_source(_read_jsonl(Path(args.anti_echo_file)), "phase3_anti_echo_replay")
     open_rows: List[Dict[str, Any]] = []
     for f in args.open_chat_files:
         p = Path(f)
@@ -189,19 +212,24 @@ def main() -> None:
     anti_rows = [r for r in anti_rows if _is_clean_anti_echo(r)]
 
     n_total = args.target_size
-    n_op = int(round(n_total * args.operators_ratio))
-    n_anti = int(round(n_total * args.anti_echo_ratio))
+    n_remix = round(n_total * args.remix_ratio)
+    n_op = round(n_total * args.operators_ratio) if (args.operators_file and args.operators_ratio > 0) else 0
+    n_anti = round(n_total * args.anti_echo_ratio) if (args.anti_echo_file and args.anti_echo_ratio > 0) else 0
     n_grounded = int(round(n_total * args.grounded_ratio))
-    n_open_cap = int(round(n_total * args.open_chat_cap_ratio))
+    n_open_cap = round(n_total * args.open_chat_cap_ratio)
 
-    fixed = n_op + n_anti + n_grounded
+    fixed = n_remix + n_op + n_anti + n_grounded
     if fixed > n_total:
-        raise ValueError("operators_ratio + anti_echo_ratio + grounded_ratio exceed 100%")
+        raise ValueError(
+            "remix_ratio + operators_ratio + anti_echo_ratio + grounded_ratio exceed 100% "
+            f"(fixed={fixed}, n_total={n_total})"
+        )
     n_remaining = n_total - fixed
     n_open = min(n_open_cap, n_remaining)
     n_precision = n_remaining - n_open
 
     mixed: List[Dict[str, Any]] = []
+    mixed.extend(_sample(remix_rows, n_remix, args.seed + 7))
     mixed.extend(_sample(operators_rows, n_op, args.seed + 11))
     mixed.extend(_sample(anti_rows, n_anti, args.seed + 17))
     mixed.extend(_sample(grounded_rows, n_grounded, args.seed + 23))
@@ -222,12 +250,14 @@ def main() -> None:
         "target_size": n_total,
         "actual_size": len(mixed),
         "requested_ratios": {
+            "remix": args.remix_ratio,
             "operators": args.operators_ratio,
             "anti_echo": args.anti_echo_ratio,
             "grounded": args.grounded_ratio,
             "open_chat_cap": args.open_chat_cap_ratio,
         },
         "allocated_counts": {
+            "remix": n_remix,
             "operators": n_op,
             "anti_echo": n_anti,
             "grounded": n_grounded,
@@ -245,6 +275,7 @@ def main() -> None:
         "inputs": {
             "precision_file": args.precision_file,
             "grounded_file": args.grounded_file,
+            "remix_train_file": args.remix_train_file,
             "operators_file": args.operators_file,
             "anti_echo_file": args.anti_echo_file,
             "open_chat_files": args.open_chat_files,
@@ -254,12 +285,25 @@ def main() -> None:
     for src, key in [
         (args.precision_file, "phase3_precision"),
         (args.grounded_file, "phase3_grounded"),
-        (args.operators_file, "phase3_operators_replay"),
-        (args.anti_echo_file, "phase3_anti_echo_replay"),
+        (args.remix_train_file, "phase2_remix_existing_replay"),
     ]:
         c = source_counts.get(key, 0)
         lineage_inputs.append({
             "path": str(Path(src).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.operators_file and args.operators_ratio > 0:
+        c = source_counts.get("phase3_operators_replay", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.operators_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.anti_echo_file and args.anti_echo_ratio > 0:
+        c = source_counts.get("phase3_anti_echo_replay", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.anti_echo_file).resolve()),
             "sampled_rows": int(c),
             "effective_ratio": c / max(1, len(mixed)),
         })

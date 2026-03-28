@@ -210,7 +210,11 @@ def parse_oasst2(dataset, languages: List[str], max_examples: int, add_think: bo
     # Find root messages (no parent = conversation starters)
     roots = [mid for mid, msg in messages_by_id.items() 
              if msg.get('parent_id') is None and msg.get('role') == 'prompter']
-    
+
+    def _oasst2_rank_key(k):
+        r = messages_by_id.get(k, {}).get("rank")
+        return 999 if r is None else r
+
     for root_id in roots:
         if len(episodes) >= max_examples:
             break
@@ -230,7 +234,7 @@ def parse_oasst2(dataset, languages: List[str], max_examples: int, add_think: bo
             if not kids:
                 break
             
-            best_kid = max(kids, key=lambda k: messages_by_id.get(k, {}).get('rank', 999))
+            best_kid = max(kids, key=_oasst2_rank_key)
             current_id = best_kid
         
         # Convert path to messages list

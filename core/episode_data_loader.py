@@ -80,6 +80,7 @@ class GPTEpisodeDataLoader:
         epoch_seed: Random seed for epoch shuffling (for reproducibility)
         pad_token_id: Token ID for padding (defaults to tokenizer's EOS)
         episode_min_tokens: Minimum episode length (shorter episodes are skipped)
+        eval_only: If True, validation split is required; missing train/ is OK (e.g. val-only eval dirs).
     """
     
     def __init__(
@@ -93,7 +94,8 @@ class GPTEpisodeDataLoader:
         epoch_drop_last: bool = None,
         epoch_seed: int = None,
         pad_token_id: Optional[int] = None,
-        episode_min_tokens: int = None
+        episode_min_tokens: int = None,
+        eval_only: bool = False,
     ):
         """
         Initialize the episode data loader.
@@ -112,6 +114,7 @@ class GPTEpisodeDataLoader:
         self.epoch_drop_last = epoch_drop_last if epoch_drop_last is not None else getattr(config, 'epoch_drop_last', True)
         self.epoch_seed = epoch_seed if epoch_seed is not None else getattr(config, 'epoch_seed', 1337)
         self.episode_min_tokens = episode_min_tokens if episode_min_tokens is not None else getattr(config, 'episode_min_tokens', 2)
+        self.eval_only = eval_only
         
         # Determine pad token ID
         if pad_token_id is not None:
@@ -169,6 +172,8 @@ class GPTEpisodeDataLoader:
             split_dir = os.path.join(dataset_dir, split)
             if not os.path.exists(split_dir):
                 if split == 'train':
+                    if self.eval_only:
+                        continue
                     raise FileNotFoundError(f"Training data not found: {split_dir}")
                 continue
             
@@ -195,14 +200,22 @@ class GPTEpisodeDataLoader:
             print(f"   [{split}] {len(self._data[split]['shards'])} shard(s), "
                   f"{total_episodes:,} episodes, {total_tokens:,} tokens")
         
-        if not self._data['train']['loaded']:
+        if self.eval_only:
+            if not self._data['val']['loaded']:
+                raise FileNotFoundError("eval_only requires val/ data to be loaded")
+        elif not self._data['train']['loaded']:
             raise FileNotFoundError("No training data loaded")
         
-        # Check mask availability
+        # Check mask availability (use train shards when present, else val for eval-only)
+        ref_shards = (
+            self._data['train']['shards']
+            if self._data['train']['loaded']
+            else self._data['val']['shards']
+        )
         if self.use_loss_mask:
             has_masks = all(
                 s['mask'] is not None 
-                for s in self._data['train']['shards']
+                for s in ref_shards
             )
             if not has_masks:
                 print("   ⚠️ Warning: use_loss_mask=True but mask files not found/incomplete")
@@ -214,16 +227,16 @@ class GPTEpisodeDataLoader:
         # Check for segment_ids (packed sequences with segment-isolated attention)
         has_segment_ids = all(
             s.get('segment_ids') is not None
-            for s in self._data['train']['shards']
+            for s in ref_shards
         )
         if has_segment_ids:
             print(f"   🔒 Segment IDs detected: enabling segment-isolated attention for packed sequences")
         
         # Audit: Dataset loaded
         if AUDIT_AVAILABLE:
-            train_episodes = sum(len(s['valid_ids']) for s in self._data['train']['shards'])
+            train_episodes = sum(len(s['valid_ids']) for s in self._data['train']['shards']) if self._data['train']['loaded'] else 0
             val_episodes = sum(len(s['valid_ids']) for s in self._data['val']['shards']) if self._data['val']['loaded'] else 0
-            train_tokens = sum(len(s['tokens']) for s in self._data['train']['shards'])
+            train_tokens = sum(len(s['tokens']) for s in self._data['train']['shards']) if self._data['train']['loaded'] else 0
             val_tokens = sum(len(s['tokens']) for s in self._data['val']['shards']) if self._data['val']['loaded'] else 0
             
             audit.training(
@@ -238,6 +251,7 @@ class GPTEpisodeDataLoader:
                 batch_sampling_mode=self.batch_sampling_mode,
                 epoch_seed=self.epoch_seed,
                 epoch_shuffle=self.epoch_shuffle,
+                eval_only=self.eval_only,
                 details=f"Episode-indexed dataset loaded: {train_episodes} train episodes, {train_tokens:,} tokens, seed={self.epoch_seed}"
             )
     
@@ -590,31 +604,39 @@ class GPTEpisodeDataLoader:
         self._init_epoch_state(split)
 
 
+def _split_has_episode_index(split_dir: str) -> bool:
+    """
+    Check if a split directory (train/ or val/) contains episode-indexed format.
+    """
+    if not os.path.exists(split_dir):
+        return False
+    if os.path.exists(os.path.join(split_dir, "episodes.idx")):
+        return True
+    shard_dirs = glob.glob(os.path.join(split_dir, "shard_*"))
+    if shard_dirs:
+        first_shard = sorted(shard_dirs)[0]
+        if os.path.exists(os.path.join(first_shard, "episodes.idx")):
+            return True
+    return False
+
+
 def is_episode_indexed_dataset(dataset_dir: str) -> bool:
     """
     Check if a dataset directory contains episode-indexed format.
     
     Returns True if episodes.idx exists in train/ (or train/shard_*/),
-    False otherwise (assume shard-based format).
+    or in val/ when train is absent (val-only eval datasets).
     """
     if not os.path.exists(dataset_dir):
         return False
     
     train_dir = os.path.join(dataset_dir, "train")
-    if not os.path.exists(train_dir):
-        return False
-    
-    # Check for single-file format
-    if os.path.exists(os.path.join(train_dir, "episodes.idx")):
+    if _split_has_episode_index(train_dir):
         return True
     
-    # Check for multi-shard format
-    shard_dirs = glob.glob(os.path.join(train_dir, "shard_*"))
-    if shard_dirs:
-        # Check first shard
-        first_shard = sorted(shard_dirs)[0]
-        if os.path.exists(os.path.join(first_shard, "episodes.idx")):
-            return True
+    val_dir = os.path.join(dataset_dir, "val")
+    if _split_has_episode_index(val_dir):
+        return True
     
     return False
 

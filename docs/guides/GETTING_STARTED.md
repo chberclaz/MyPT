@@ -110,7 +110,7 @@ Place your text file(s) in the `data/` folder:
 ## Step 3: View Available Configurations (2 minutes)
 
 ```bash
-python scripts/show_configs.py
+python scripts/utils/show_configs.py
 ```
 
 **Output (partial):**
@@ -135,7 +135,7 @@ For your first model, we'll use `small.json` (~40M parameters):
 
 ```bash
 python train.py \
-    --config_file configs/pretrain/small.json \
+    --config_file configs/base/archiv/small.json \
     --model_name my_first_model \
     --input_file data/input.txt \
     --max_iters 2000
@@ -227,7 +227,7 @@ python generate.py --model_name my_first_model --prompt "The secret" --temperatu
 ### 6.1 View Model Info
 
 ```bash
-python scripts/inspect_model.py --model_name my_first_model
+python scripts/model/inspect_model.py --model_name my_first_model
 ```
 
 **Output:**
@@ -273,7 +273,7 @@ You've successfully:
 ```bash
 # 150M parameters (needs ~12GB GPU VRAM)
 python train.py \
-    --config_file configs/pretrain/150M.json \
+    --config_file configs/base/archiv/150M.json \
     --model_name my_150M_model \
     --input_file data/input.txt \
     --max_iters 10000
@@ -285,14 +285,14 @@ For datasets > 100MB, use sharded training:
 
 ```bash
 # 1. Prepare sharded dataset
-python scripts/prepare_dataset.py \
+python scripts/data_prep/prepare_dataset.py \
     --input_dir data/my_corpus/ \
     --output_dir data/my_shards \
     --tokenization gpt2
 
 # 2. Train on shards
 python train.py \
-    --config_file configs/pretrain/150M.json \
+    --config_file configs/base/archiv/150M.json \
     --model_name my_model \
     --dataset_dir data/my_shards \
     --max_iters 50000
@@ -319,7 +319,7 @@ Want to specialize your model for a specific domain? See:
 
 **Solution:** Use a smaller config or reduce batch size:
 ```bash
-python train.py --config_file configs/pretrain/small.json --batch_size 16 ...
+python train.py --config_file configs/base/archiv/small.json --batch_size 16 ...
 ```
 
 ### "ModuleNotFoundError"
@@ -349,10 +349,10 @@ pip install -e .
 
 | Task | Command |
 |------|---------|
-| Train model | `python train.py --config_file configs/pretrain/small.json --model_name NAME --input_file FILE` |
+| Train model | `python train.py --config_file configs/base/archiv/small.json --model_name NAME --input_file FILE` |
 | Generate text | `python generate.py --model_name NAME --prompt "TEXT"` |
-| List configs | `python scripts/show_configs.py` |
-| Inspect model | `python scripts/inspect_model.py --model_name NAME` |
+| List configs | `python scripts/utils/show_configs.py` |
+| Inspect model | `python scripts/model/inspect_model.py --model_name NAME` |
 | Launch web UI | `python -m webapp.main` |
 
 ---

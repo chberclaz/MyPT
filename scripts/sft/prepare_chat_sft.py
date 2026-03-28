@@ -241,6 +241,8 @@ def parse_args():
                         help="Validation split ratio (default: 0.1). Ignored if --val_file is provided.")
     parser.add_argument("--val_file", type=str, default=None,
                         help="Separate validation JSONL file (overrides --val_split)")
+    parser.add_argument("--val_only", action="store_true",
+                        help="Write all --input conversations to val/ only; train/ stays empty (eval corpus).")
     parser.add_argument("--tokens_per_shard", type=int, default=50_000_000,
                         help="Max tokens per shard (default: 50M, for multi-shard support)")
     parser.add_argument("--vocab_size", type=int, default=50304,
@@ -1039,8 +1041,11 @@ def main():
             )
         sys.exit(1)
     
+    if args.val_only and args.val_file:
+        print("Note: --val_only ignores --val_file; all rows from --input are written to val/ only.")
+
     # Validate --val_file if provided
-    if args.val_file:
+    if args.val_file and not args.val_only:
         if not os.path.exists(args.val_file):
             print(f"Error: Validation file not found: {args.val_file}")
             sys.exit(1)
@@ -1066,7 +1071,9 @@ def main():
     print(f"  Input: {args.input}")
     print(f"  Output: {args.output_dir}")
     print(f"  Tokenization: {args.tokenization}")
-    if args.val_file:
+    if args.val_only:
+        print(f"  Split: VAL_ONLY (all rows from input → val/, train empty)")
+    elif args.val_file:
         print(f"  Val file: {args.val_file} (separate file)")
     else:
         print(f"  Val split: {args.val_split}")
@@ -1123,8 +1130,19 @@ def main():
     payload_overlap_count = 0
     template_overlap_count = 0
     val_rag_stats = None
-    
-    if args.val_file:
+    val_schema_report = None
+
+    if args.val_only:
+        train_conversations = []
+        val_conversations = conversations
+        use_separate_val = True
+        val_indices = set()
+        val_rag_stats = collect_rag_field_stats(val_conversations)
+        print_rag_field_stats(val_rag_stats, "val (val_only)", args.enable_rag_tags)
+        val_schema_report = validate_conversation_schema(val_conversations)
+        print_schema_validation(val_schema_report, "val (val_only)")
+        print("\n  VAL_ONLY: all conversations are tokenized into val/; train/ will be empty.\n")
+    elif args.val_file:
         # Separate validation file provided
         val_conversations = load_jsonl(args.val_file)
         print(f"  Loaded {len(val_conversations)} validation conversations from {args.val_file}")
@@ -1180,7 +1198,10 @@ def main():
         val_schema_report = None
 
     if args.schema_validation_mode != "off":
-        invalid_total = input_schema_report["invalid"] + (val_schema_report["invalid"] if val_schema_report else 0)
+        if args.val_only:
+            invalid_total = input_schema_report["invalid"]
+        else:
+            invalid_total = input_schema_report["invalid"] + (val_schema_report["invalid"] if val_schema_report else 0)
         if invalid_total > 0:
             msg = (
                 f"Schema validation found {invalid_total} invalid conversations "
@@ -1290,40 +1311,44 @@ def main():
         
         # --- TOKENIZE ALL ---
         print(f"\nTokenizing {len(train_convs)} train conversations...")
-        train_episodes = tokenize_all(train_convs, "train")
+        train_episodes = tokenize_all(train_convs, "train") if train_convs else []
         
         print(f"Tokenizing {len(val_convs)} val conversations...")
         val_episodes = tokenize_all(val_convs, "val")
         
         # --- PACK TRAIN ---
-        print(f"\nPacking train episodes...")
-        if args.pack_by_field:
-            # Group by category
-            train_groups = group_by_field(
-                [{"_tokens": t, "_mask": m, **meta} for t, m, meta in train_episodes],
-                "_category"
-            )
-            print(f"  Found {len(train_groups)} groups: {list(train_groups.keys())}")
-            
-            # Pack within each group
-            train_packed = []
-            for group_name, items in train_groups.items():
-                group_episodes = [(item["_tokens"], item["_mask"], item) for item in items]
+        train_packed = []
+        if train_episodes:
+            print(f"\nPacking train episodes...")
+            if args.pack_by_field:
+                # Group by category
+                train_groups = group_by_field(
+                    [{"_tokens": t, "_mask": m, **meta} for t, m, meta in train_episodes],
+                    "_category"
+                )
+                print(f"  Found {len(train_groups)} groups: {list(train_groups.keys())}")
+                
+                # Pack within each group
+                for group_name, items in train_groups.items():
+                    group_episodes = [(item["_tokens"], item["_mask"], item) for item in items]
+                    if args.pack_shuffle:
+                        import random
+                        random.seed(args.seed)
+                        random.shuffle(group_episodes)
+                    
+                    packed = greedy_bin_pack(group_episodes, args.pack_block_size, pad_token_id)
+                    print(f"    {group_name}: {len(group_episodes)} episodes → {len(packed)} packed sequences")
+                    train_packed.extend(packed)
+            else:
+                # Pack all together
+                te = list(train_episodes)
                 if args.pack_shuffle:
                     import random
                     random.seed(args.seed)
-                    random.shuffle(group_episodes)
-                
-                packed = greedy_bin_pack(group_episodes, args.pack_block_size, pad_token_id)
-                print(f"    {group_name}: {len(group_episodes)} episodes → {len(packed)} packed sequences")
-                train_packed.extend(packed)
-        else:
-            # Pack all together
-            if args.pack_shuffle:
-                import random
-                random.seed(args.seed)
-                random.shuffle(train_episodes)
-            train_packed = greedy_bin_pack(train_episodes, args.pack_block_size, pad_token_id)
+                    random.shuffle(te)
+                train_packed = greedy_bin_pack(te, args.pack_block_size, pad_token_id)
+        elif args.val_only:
+            print(f"\nPacking train episodes... (skipped: val_only, no train rows)")
         
         # --- PACK VAL ---
         print(f"\nPacking val episodes...")
@@ -1345,7 +1370,7 @@ def main():
         packing_stats_train = compute_packing_stats(
             [(t, m) for t, m, _ in train_episodes],
             train_packed,
-            args.pack_block_size
+            args.pack_block_size,
         )
         packing_stats_val = compute_packing_stats(
             [(t, m) for t, m, _ in val_episodes],
@@ -1372,13 +1397,17 @@ def main():
         print(f"  PACKING RESULTS")
         print(f"{'='*60}")
         print(f"\n  TRAIN:")
-        print(f"    Original: {packing_stats_train['original_episodes']} episodes, {packing_stats_train['original_tokens']:,} tokens")
-        print(f"    Avg episode length: {packing_stats_train['avg_episode_len']:.1f} tokens")
-        print(f"    Packed:   {packing_stats_train['packed_sequences']} sequences × {args.pack_block_size} = {packing_stats_train['packed_tokens']:,} tokens")
-        print(f"    Content utilization: {packing_stats_train['nonpad_ratio']:.1%} (was {packing_stats_train['avg_episode_len']/args.pack_block_size:.1%} without packing)")
-        print(f"    Supervised tokens/step: {packing_stats_train['unpacked_effective_mask']:.1%} → {packing_stats_train['packed_effective_mask']:.1%}")
-        print(f"    ⚡ TRAINING EFFICIENCY: {packing_stats_train['training_efficiency_gain']:.1f}x more supervised signal per step")
-        print(f"    Avg episodes/pack: {packing_stats_train['avg_episodes_per_pack']:.1f} (range: {packing_stats_train['min_episodes_per_pack']}-{packing_stats_train['max_episodes_per_pack']})")
+        if packing_stats_train["original_episodes"] == 0:
+            print(f"    (empty — val_only or zero train rows)")
+        else:
+            print(f"    Original: {packing_stats_train['original_episodes']} episodes, {packing_stats_train['original_tokens']:,} tokens")
+            print(f"    Avg episode length: {packing_stats_train['avg_episode_len']:.1f} tokens")
+            print(f"    Packed:   {packing_stats_train['packed_sequences']} sequences × {args.pack_block_size} = {packing_stats_train['packed_tokens']:,} tokens")
+            pct_was = packing_stats_train['avg_episode_len'] / args.pack_block_size if args.pack_block_size else 0
+            print(f"    Content utilization: {packing_stats_train['nonpad_ratio']:.1%} (was {pct_was:.1%} without packing)")
+            print(f"    Supervised tokens/step: {packing_stats_train['unpacked_effective_mask']:.1%} → {packing_stats_train['packed_effective_mask']:.1%}")
+            print(f"    ⚡ TRAINING EFFICIENCY: {packing_stats_train['training_efficiency_gain']:.1f}x more supervised signal per step")
+            print(f"    Avg episodes/pack: {packing_stats_train['avg_episodes_per_pack']:.1f} (range: {packing_stats_train['min_episodes_per_pack']}-{packing_stats_train['max_episodes_per_pack']})")
         
         print(f"\n  VAL:")
         print(f"    Original: {packing_stats_val['original_episodes']} episodes, {packing_stats_val['original_tokens']:,} tokens")
@@ -1491,9 +1520,18 @@ def main():
         "tokens_per_shard": args.tokens_per_shard,
         "special_tokens_used": list(SPECIAL_TOKEN_STRINGS.keys()),
         # Provenance
-        "prepare_mode": "explicit_val_file" if use_separate_val else "val_split",
-        "source_train_file": os.path.abspath(args.input),
-        "source_val_file": os.path.abspath(args.val_file) if args.val_file else None,
+        "prepare_mode": (
+            "val_only"
+            if args.val_only
+            else ("explicit_val_file" if use_separate_val else "val_split")
+        ),
+        "val_only": bool(args.val_only),
+        "source_train_file": None if args.val_only else os.path.abspath(args.input),
+        "source_val_file": (
+            os.path.abspath(args.input)
+            if args.val_only
+            else (os.path.abspath(args.val_file) if args.val_file else None)
+        ),
         "val_split": 0.0 if use_separate_val else args.val_split,
         # System prompt settings
         "skip_system_prompt": args.no_system_prompt,
@@ -1506,19 +1544,26 @@ def main():
         "val_schema_report": val_schema_report if use_separate_val else None,
     }
 
-    lineage_inputs = []
-    train_rows = count_jsonl_rows(Path(args.input)) if use_separate_val else metadata["num_train_conversations"]
-    lineage_inputs.append({
-        "path": str(Path(args.input).resolve()),
-        "sampled_rows": int(train_rows),
-        "effective_ratio": metadata["num_train_conversations"] / max(1, metadata["num_conversations"]),
-    })
-    if args.val_file:
+    if args.val_only:
+        lineage_inputs = [{
+            "path": str(Path(args.input).resolve()),
+            "sampled_rows": int(metadata["num_val_conversations"]),
+            "effective_ratio": 1.0,
+        }]
+    else:
+        lineage_inputs = []
+        train_rows = count_jsonl_rows(Path(args.input)) if use_separate_val else metadata["num_train_conversations"]
         lineage_inputs.append({
-            "path": str(Path(args.val_file).resolve()),
-            "sampled_rows": int(count_jsonl_rows(Path(args.val_file))),
-            "effective_ratio": metadata["num_val_conversations"] / max(1, metadata["num_conversations"]),
+            "path": str(Path(args.input).resolve()),
+            "sampled_rows": int(train_rows),
+            "effective_ratio": metadata["num_train_conversations"] / max(1, metadata["num_conversations"]),
         })
+        if args.val_file:
+            lineage_inputs.append({
+                "path": str(Path(args.val_file).resolve()),
+                "sampled_rows": int(count_jsonl_rows(Path(args.val_file))),
+                "effective_ratio": metadata["num_val_conversations"] / max(1, metadata["num_conversations"]),
+            })
     lineage = merge_lineage(
         inputs=lineage_inputs,
         output_rows=metadata["num_conversations"],
@@ -1528,6 +1573,7 @@ def main():
             "args": {
                 "input": args.input,
                 "val_file": args.val_file,
+                "val_only": args.val_only,
                 "output_dir": args.output_dir,
                 "enable_packing": args.enable_packing,
                 "pack_block_size": args.pack_block_size,
@@ -1560,8 +1606,13 @@ def main():
         metadata["num_train_mask_tokens"] = train_mask_sum
         metadata["num_val_mask_tokens"] = val_mask_sum
     
-    # Add file hashes for provenance (when using explicit val file)
-    if use_separate_val:
+    # Add file hashes for provenance (when using explicit val file or val_only)
+    if args.val_only:
+        metadata["source_train_sha256"] = None
+        metadata["source_val_sha256"] = file_sha256(args.input)
+        metadata["payload_overlap_count"] = 0
+        metadata["template_overlap_count"] = 0
+    elif use_separate_val:
         metadata["source_train_sha256"] = file_sha256(args.input)
         metadata["source_val_sha256"] = file_sha256(args.val_file)
         metadata["payload_overlap_count"] = payload_overlap_count

@@ -209,7 +209,7 @@ docker-compose build
 docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up
 ```
 
-See **[Docker Guide](docs/DOCKER.md)** for complete container deployment documentation.
+See **[Docker Guide](docs/setup/DOCKER.md)** for complete container deployment documentation.
 
 ---
 
@@ -274,14 +274,14 @@ python scripts/utils/show_configs.py
 
 # Train a model from scratch (Phase 1)
 python train.py \
-    --config_file configs/pretrain/150M.json \
+    --config_file configs/base/archiv/150M.json \
     --model_name my_model \
     --input_file data/your_corpus.txt \
     --max_iters 10000
 
 # Domain adaptation (Phase 2) with dual evaluation
 python train.py \
-    --config_file configs/pretrain/750M_1024_domain_adapt.json \
+    --config_file configs/base/archiv/750M_1024_domain_adapt.json \
     --model_name domain_model \
     --dataset_dir data/domain_corpus \
     --init_from_model checkpoints/base_model \
@@ -301,13 +301,13 @@ Continue pretraining on domain-specific data while monitoring general capability
 - `--eval_dataset_dir` - Additional evaluation set to detect catastrophic forgetting
 - Logs both metrics: `step 100: val 2.15 | eval_general 2.89`
 
-See [Large Dataset Training Guide](docs/LARGE_DATASET_TRAINING.md) for details.
+See [Large Dataset Training Guide](docs/training/LARGE_DATASET_TRAINING.md) for details.
 
 ### Supervised Fine-Tuning (SFT)
 
 Episode-indexed SFT training for conversations with **full reproducibility and audit traceability**.
 Set `epoch_seed` in your config for deterministic training order?same seed always produces identical results.
-See [Episode-Indexed SFT Guide](docs/EPISODE_INDEXED_SFT.md) for details.
+See [SFT Pipeline Guide](docs/sft/SFT_PIPELINE_GUIDE.md) for details.
 
 ---
 
@@ -348,7 +348,7 @@ MyPT provides enterprise-grade audit logging:
 - **Daily log rotation** with configurable retention
 - **Compliance support**: SOC 2, GDPR, HIPAA, ISO 27001
 
-See **[Audit & Compliance Guide](docs/AUDIT_COMPLIANCE.md)** for details.
+See **[Audit & Compliance Guide](docs/compliance/AUDIT_COMPLIANCE.md)** for details.
 
 ---
 
@@ -358,31 +358,31 @@ See **[Audit & Compliance Guide](docs/AUDIT_COMPLIANCE.md)** for details.
 
 | Document                                       | Description                 |
 | ---------------------------------------------- | --------------------------- |
-| [Installation Guide](docs/INSTALL.md)          | Detailed setup instructions |
-| [Docker Guide](docs/DOCKER.md)                 | Container deployment & GPU  |
-| [Web Application Guide](docs/WEBAPP_GUIDE.md)  | GUI documentation           |
-| [Authentication](docs/AUTHENTICATION.md)       | User management & security  |
-| [Audit & Compliance](docs/AUDIT_COMPLIANCE.md) | Audit logging & retention   |
+| [Installation Guide](docs/setup/INSTALL.md)          | Detailed setup instructions |
+| [Docker Guide](docs/setup/DOCKER.md)                 | Container deployment & GPU  |
+| [Web Application Guide](docs/webapp/WEBAPP_GUIDE.md)  | GUI documentation           |
+| [Authentication](docs/webapp/AUTHENTICATION.md)       | User management & security  |
+| [Audit & Compliance](docs/compliance/AUDIT_COMPLIANCE.md) | Audit logging & retention   |
 
 ### Training
 
 | Document                                                   | Description                           |
 | ---------------------------------------------------------- | ------------------------------------- |
-| [Configuration Presets](docs/CONFIG_PRESETS.md)            | Model architecture options            |
-| [Large Dataset Training](docs/LARGE_DATASET_TRAINING.md)   | Handling billions of tokens           |
-| [SFT Loss Masking](docs/SFT_LOSS_MASKING.md)               | Fine-tuning techniques                |
-| [Episode-Indexed SFT](docs/EPISODE_INDEXED_SFT.md)         | Deterministic conversation training   |
-| [Episode Augmentation](docs/EPISODE_AUGMENTATION_GUIDE.md) | Expand gold episodes via paraphrasing |
-| [Phase 3a Chat SFT Guide](docs/PHASE3A_CHAT_SFT_GUIDE.md)  | Fine-tuning 750M on gold episodes     |
-| [Tool-call SFT](docs/toolcall_sft.md)                      | Training tool-using agents            |
+| [Configuration Presets](docs/reference/CONFIG_PRESETS.md)            | Model architecture options            |
+| [Large Dataset Training](docs/training/LARGE_DATASET_TRAINING.md)   | Handling billions of tokens           |
+| [SFT Loss Masking](docs/sft/archive/SFT_LOSS_MASKING.md)               | Fine-tuning techniques                |
+| [Episode-Indexed SFT](docs/sft/archive/EPISODE_INDEXED_SFT.md)         | Deterministic conversation training   |
+| [Episode Augmentation](docs/sft/archive/EPISODE_AUGMENTATION_GUIDE.md) | Expand gold episodes via paraphrasing |
+| [Phase 3a Chat SFT Guide](docs/sft/archive/PHASE3A_SFT_COMPLETE_GUIDE.md)  | Fine-tuning 750M on gold episodes     |
+| [Tool-call SFT](docs/sft/archive/toolcall_sft.md)                      | Training tool-using agents            |
 
 ### Inference & RAG
 
 | Document                                       | Description                   |
 | ---------------------------------------------- | ----------------------------- |
-| [Generation Guide](docs/GENERATION_GUIDE.md)   | Sampling parameters & presets |
-| [Workspace API](docs/workspace_api.md)         | Agentic RAG reference         |
-| [Checkpoint Format](docs/CHECKPOINT_FORMAT.md) | Model storage format          |
+| [Generation Guide](docs/model/GENERATION_GUIDE.md)   | Sampling parameters & presets |
+| [Workspace API](docs/webapp/workspace_api.md)         | Agentic RAG reference         |
+| [Checkpoint Format](docs/model/CHECKPOINT_FORMAT.md) | Model storage format          |
 
 ---
 

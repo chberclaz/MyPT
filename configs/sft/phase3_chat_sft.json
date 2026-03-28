@@ -40,7 +40,8 @@
 
   "eval_sets": {
     "phase1_format": "data/sft_phase1_format_lock",
-    "phase2_operators": "data/sft_phase2_operators"
+    "phase2_operators": "data/sft_phase2_operators",
+    "phase2_remix_existing": "data/sft_phase3_eval_phase2_remix"
   },
   "eval_seed": 1337,
   "log_file": "logs/train/phase3_chat_sft.jsonl"

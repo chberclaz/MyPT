@@ -105,7 +105,7 @@ Domain adaptation allows you to specialize a general-purpose language model for 
 
 ```powershell
 python train.py `
-    --config configs/pretrain/750M_1024_reasoning.json `
+    --config_file configs/base/archiv/750M_1024_reasoning.json `
     --dataset_dir data/multilingual_1.5B_wiki90 `
     --model_name base_750M
 ```
@@ -418,13 +418,13 @@ python tools/build_phase2_corpus.py `
     --seed 42
 
 # Tokenize
-python scripts/prepare_weighted_dataset.py `
+python scripts/data_prep/prepare_weighted_dataset.py `
     --source domain:data/itsec_v3_corpus/corpus_shards/*.txt `
     --total_tokens 500000000 `
     --out_dir data/itsec_v3_tokenized
 
 # Append Swiss law
-python scripts/append_to_dataset.py `
+python scripts/data_prep/append_to_dataset.py `
     --dataset_dir data/itsec_v3_tokenized `
     --source swiss_law:data/swiss_law_domain/fedlex_de_en.txt `
     --target_tokens 50000000
@@ -434,7 +434,7 @@ python scripts/append_to_dataset.py `
 
 ```powershell
 # Create mixed dataset with 20% replay
-python scripts/mix_tokenized_datasets.py `
+python scripts/data_prep/mix_tokenized_datasets.py `
     --domain_dir data/itsec_v3_tokenized `
     --replay_dir data/multilingual_1.5B_wiki90 `
     --output_dir data/domain_mixed_20pct `
@@ -448,7 +448,7 @@ Conservative first pass with maximum forgetting protection:
 
 ```powershell
 # Create dataset with 30% replay for maximum safety
-python scripts/mix_tokenized_datasets.py `
+python scripts/data_prep/mix_tokenized_datasets.py `
     --domain_dir data/itsec_v3_tokenized `
     --replay_dir data/multilingual_1.5B_wiki90 `
     --output_dir data/domain_mixed_30pct `
@@ -456,7 +456,7 @@ python scripts/mix_tokenized_datasets.py `
 
 # Train foundation model
 python train.py `
-    --config configs/pretrain/750M_1024_domain_adapt.json `
+    --config_file configs/base/archiv/750M_1024_domain_adapt.json `
     --dataset_dir data/domain_mixed_30pct `
     --init_from_model checkpoints/base_750M `
     --model_name domain_v3 `
@@ -469,7 +469,7 @@ Continue from v3 with moderate aggression:
 
 ```powershell
 # Create dataset with 20% replay
-python scripts/mix_tokenized_datasets.py `
+python scripts/data_prep/mix_tokenized_datasets.py `
     --domain_dir data/itsec_v3_tokenized `
     --replay_dir data/multilingual_1.5B_wiki90 `
     --output_dir data/domain_mixed_20pct `
@@ -477,7 +477,7 @@ python scripts/mix_tokenized_datasets.py `
 
 # Continue from v3 foundation
 python train.py `
-    --config configs/pretrain/750M_1024_domain_adapt.json `
+    --config_file configs/base/archiv/750M_1024_domain_adapt.json `
     --dataset_dir data/domain_mixed_20pct `
     --init_from_model checkpoints/domain_v3 `
     --model_name domain_v5 `
@@ -491,7 +491,7 @@ Continue from v3 with aggressive domain focus:
 ```powershell
 # Uses same 20% replay dataset as v5
 python train.py `
-    --config configs/pretrain/750M_1024_domain_adapt.json `
+    --config_file configs/base/archiv/750M_1024_domain_adapt.json `
     --dataset_dir data/domain_mixed_20pct `
     --init_from_model checkpoints/domain_v3 `
     --model_name domain_v7 `
@@ -505,7 +505,7 @@ Continue from v7 for absolute maximum domain performance:
 ```powershell
 # Uses same 20% replay dataset
 python train.py `
-    --config configs/pretrain/750M_1024_domain_adapt.json `
+    --config_file configs/base/archiv/750M_1024_domain_adapt.json `
     --dataset_dir data/domain_mixed_20pct `
     --init_from_model checkpoints/domain_v7 `
     --model_name domain_v8 `
@@ -567,10 +567,10 @@ Watch for:
 
 | File | Purpose |
 |------|---------|
-| `configs/pretrain/750M_1024_domain_adapt.json` | Domain adaptation config |
+| `configs/base/archiv/750M_1024_domain_adapt.json` | Domain adaptation config |
 | `tools/build_phase2_corpus.py` | Domain corpus builder |
-| `scripts/mix_tokenized_datasets.py` | Dataset mixing tool |
-| `scripts/append_to_dataset.py` | Append data to existing dataset |
+| `scripts/data_prep/mix_tokenized_datasets.py` | Dataset mixing tool |
+| `scripts/data_prep/append_to_dataset.py` | Append data to existing dataset |
 | `data/sources/phase2_domain.json` | Domain source definitions |
 
 ---

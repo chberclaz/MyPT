@@ -34,13 +34,14 @@ import random
 import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 from core.dataset_lineage import iso_now, write_lineage_sidecar
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from core.system_prompts import CHAT_SYSTEM_PROMPTS
 
@@ -485,6 +486,7 @@ def generate_context_answer(
     passage_obj = rng.choice(doc["passages"])
     passage = passage_obj["text"]
     chunk_id = passage_obj["chunk_id"]
+    topic = rng.choice(doc["topics"])
     # Adversarial negative retrieval: ask plausible but irrelevant topic.
     distractor_topic = rng.choice(GENERAL_TOPICS_DE if lang == "de" else GENERAL_TOPICS_EN)[0]
 
@@ -578,7 +580,7 @@ def generate_insufficient_context(
     passage_obj = rng.choice(doc["passages"])
     passage = passage_obj["text"]
     chunk_id = passage_obj["chunk_id"]
-    topic = rng.choice(doc["topics"])
+    distractor_topic = rng.choice(GENERAL_TOPICS_DE if lang == "de" else GENERAL_TOPICS_EN)[0]
     sentences = [s.strip() + "." for s in passage.replace("\n", " ").split(".")
                  if len(s.strip()) > 15]
     if not sentences:
@@ -847,9 +849,9 @@ def main():
             f.write(json.dumps(ep, ensure_ascii=False) + "\n")
     out_path = Path(args.output)
     lineage = {
-        "direct_inputs": [{"path": str(Path(args.workspace_docs).resolve()), "sampled_rows": len(episodes), "effective_ratio": 1.0}],
-        "recursive_origins": [{"origin_path": str(Path(args.workspace_docs).resolve()), "rows": len(episodes)}],
-        "flattened_contributions": [{"origin_path": str(Path(args.workspace_docs).resolve()), "effective_rows": len(episodes), "effective_percent": 100.0}],
+        "direct_inputs": [{"path": str(Path(args.docs_dir).resolve()), "sampled_rows": len(episodes), "effective_ratio": 1.0}],
+        "recursive_origins": [{"origin_path": str(Path(args.docs_dir).resolve()), "rows": len(episodes)}],
+        "flattened_contributions": [{"origin_path": str(Path(args.docs_dir).resolve()), "effective_rows": len(episodes), "effective_percent": 100.0}],
         "creation_context": {"timestamp": iso_now(), "script": "scripts/sft/generate_rag_chat_sft.py", "args": vars(args)},
         "upstream_configs": [],
     }
