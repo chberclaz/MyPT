@@ -14,8 +14,13 @@ Targets (defaults aligned with plan):
 import argparse
 import json
 import random
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
 
 

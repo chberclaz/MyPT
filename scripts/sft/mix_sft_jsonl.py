@@ -2,30 +2,19 @@
 """
 Mix SFT JSONL Datasets with Sampling Ratios
 
-Combines multiple SFT JSONL files with configurable sampling ratios.
-Use this for replay strategies where you want X% of previous stage data
-mixed with 100% of current stage data.
+Combines multiple SFT JSONL files in two different semantics (see --output_blend):
 
-Usage:
-    # Mix 20% of Run1 with 100% of Run2
-    python scripts/mix_sft_jsonl.py \
-        --inputs data/sft_format_lock/mypt_format_lock_v1.jsonl:0.2 \
-                 data/sft_run2_minimal_qa/mypt_run2_minimal_qa_v1.jsonl:1.0 \
-        --output data/sft_run2_mixed/mypt_run2_with_replay.jsonl
-    
-    # Mix multiple sources with different ratios
-    python scripts/mix_sft_jsonl.py \
-        --inputs run1.jsonl:0.1 run2.jsonl:0.2 run3.jsonl:1.0 \
-        --output mixed.jsonl \
-        --shuffle
+1) **Source-relative (default)** — `path:RATIO` or `--weights` with `--output_blend` off:
+   RATIO is a fraction **of that file's row count** (not of the output):
+   - 1.0 = take all episodes from that file
+   - 0.2 = sample 20% **of that source**
+   - 2.0 = duplicate (upsample) that source
+   Output size is the **sum** of per-source draws; composition depends on file sizes.
 
-Input format:
-    path/to/file.jsonl:RATIO
-    
-    RATIO is a float:
-    - 1.0 = use 100% of episodes
-    - 0.2 = randomly sample 20% of episodes
-    - 2.0 = duplicate all episodes 2x (for upweighting)
+2) **Output-relative** — `--output_blend` + `--target_size N` + `--weights w1 w2 ...`:
+   Weights are **only relative** and normalized so each source contributes a fixed
+   **share of N output rows** (e.g. weights 1 0.3 0.15 ≈ 68.9% / 20.7% / 10.3% of N).
+   Use this when you want "20% of the mix is source B", not "20% of B's rows".
 
 Output:
     Combined JSONL file ready for prepare_chat_sft.py
@@ -171,6 +160,45 @@ def load_jsonl(filepath: Path) -> list:
     return episodes
 
 
+def allocate_output_counts(target_size: int, weights: List[float]) -> List[int]:
+    """
+    Split target_size across sources proportionally to weights (normalized).
+    Adjusts for rounding so counts sum exactly to target_size.
+    """
+    if target_size < 0:
+        raise ValueError("target_size must be non-negative")
+    if not weights or any(w < 0 for w in weights):
+        raise ValueError("weights must be non-empty and non-negative")
+    wsum = sum(weights)
+    if wsum <= 0:
+        raise ValueError("sum(weights) must be positive")
+    normed = [w / wsum for w in weights]
+    raw = [target_size * p for p in normed]
+    counts = [int(x) for x in raw]
+    drift = target_size - sum(counts)
+    if drift > 0:
+        fracs = sorted(enumerate([raw[i] - counts[i] for i in range(len(weights))]), key=lambda t: -t[1])
+        for j in range(drift):
+            counts[fracs[j % len(fracs)][0]] += 1
+    return counts
+
+
+def sample_row_target(episodes: list, n: int, seed: int) -> list:
+    """
+    Draw exactly n rows from episodes. If n > len(episodes), upsample with replacement.
+    """
+    if n <= 0:
+        return []
+    rng = random.Random(seed)
+    if n <= len(episodes):
+        return rng.sample(episodes, n)
+    out = episodes.copy()
+    rng.shuffle(out)
+    deficit = n - len(out)
+    out.extend(rng.choices(episodes, k=deficit))
+    return out
+
+
 def sample_episodes(episodes: list, ratio: float, seed: int) -> list:
     """Sample episodes according to ratio."""
     if ratio >= 1.0:
@@ -209,9 +237,16 @@ Examples:
         --inputs run1.jsonl:0.2 run2.jsonl:1.0 \\
         --output mixed.jsonl
     
-    # Multiple replay sources
+    # Multiple replay sources (each ratio is fraction OF THAT FILE)
     python scripts/mix_sft_jsonl.py \\
         --inputs run1.jsonl:0.1 run2.jsonl:0.2 run3.jsonl:1.0 \\
+        --output mixed.jsonl --shuffle
+
+    # Target-sized mix: weights are shares of OUTPUT (normalized), not % of each file
+    python scripts/mix_sft_jsonl.py \\
+        --output_blend --target_size 100000 \\
+        --inputs data/a.jsonl data/b.jsonl data/c.jsonl \\
+        --weights 1.0 0.3 0.15 \\
         --output mixed.jsonl --shuffle
 """
     )
@@ -219,8 +254,16 @@ Examples:
     parser.add_argument("--inputs", nargs='+', required=True,
                         help="Input files. Can include ratios inline (data.jsonl:0.2) or use --weights")
     parser.add_argument("--weights", nargs='+', type=float, default=None,
-                        help="Explicit weights for each input (e.g., --weights 0.7 0.2 0.1). "
-                             "If provided, must match number of inputs. Overrides inline ratios.")
+                        help="Per-input weights. "
+                             "Default mode: same as inline ratios — fraction of EACH SOURCE sampled. "
+                             "With --output_blend: relative share of --target_size output rows (normalized).")
+    parser.add_argument(
+        "--output_blend",
+        action="store_true",
+        help="Interpret --weights as output composition: each source contributes a fixed fraction "
+             "of --target_size rows (weights normalized). Requires --target_size. "
+             "Inputs should be plain paths (ratios in path:ratio are ignored; use --weights only).",
+    )
     parser.add_argument("--output", type=str, required=True,
                         help="Output JSONL file")
     parser.add_argument("--shuffle", action="store_true",
@@ -235,6 +278,14 @@ Examples:
                         help="Optional final cap after mixing/filtering. Deterministic sample if larger.")
     
     args = parser.parse_args()
+
+    if args.output_blend:
+        if args.weights is None or len(args.weights) != len(args.inputs):
+            print("\n  ERROR: --output_blend requires --weights with one float per --inputs")
+            sys.exit(1)
+        if args.target_size is None or args.target_size <= 0:
+            print("\n  ERROR: --output_blend requires a positive --target_size (total output rows)")
+            sys.exit(1)
     
     print_banner("MyPT", "SFT JSONL Mixer")
     
@@ -247,28 +298,38 @@ Examples:
     if args.target_size is not None:
         print(f"  Target size: {args.target_size}")
     
-    # Parse input specifications
+    # Parse input specifications -> list of (Path, ratio_or_weight)
     input_specs = []
     
-    # Check if --weights is provided
-    if args.weights is not None:
+    if args.output_blend:
+        counts_preview = allocate_output_counts(args.target_size, list(args.weights))
+        for i, spec in enumerate(args.inputs):
+            path, _ = parse_input_spec(spec)
+            input_specs.append((Path(path), float(counts_preview[i])))
+        print(f"\n  Mode: OUTPUT_BLEND (each source target row count -> second argument is integer n)")
+    elif args.weights is not None:
         if len(args.weights) != len(args.inputs):
             print(f"\n  ERROR: --weights has {len(args.weights)} values but --inputs has {len(args.inputs)} files")
             print("         These must match.")
             sys.exit(1)
-        # Use explicit weights, strip any inline ratios from paths
+        # Use explicit weights as *source* sampling fractions (see sample_episodes)
         for i, spec in enumerate(args.inputs):
             path = spec.rsplit(':', 1)[0] if ':' in spec and spec.rsplit(':', 1)[1].replace('.', '').isdigit() else spec
             input_specs.append((Path(path), args.weights[i]))
     else:
-        # Parse inline ratios
         for spec in args.inputs:
             path, ratio = parse_input_spec(spec)
             input_specs.append((Path(path), ratio))
     
     print(f"\n  Inputs ({len(input_specs)}):")
-    for path, ratio in input_specs:
-        print(f"    - {path} @ {ratio:.0%}")
+    if args.output_blend:
+        wsum = sum(args.weights)
+        for (path, nrows), w in zip(input_specs, args.weights):
+            pct = 100.0 * (w / wsum) if wsum > 0 else 0
+            print(f"    - {path} -> {int(nrows):,} rows ({pct:.1f}% of output weight)")
+    else:
+        for path, ratio in input_specs:
+            print(f"    - {path} @ source_sample={ratio} ({'fraction of file' if ratio < 1.0 else 'multiplier'})")
     
     # Load and sample from each input
     print("\n" + "=" * 60)
@@ -278,7 +339,7 @@ Examples:
     all_episodes = []
     source_stats = []
     
-    for path, ratio in input_specs:
+    for idx, (path, ratio) in enumerate(input_specs):
         if not path.exists():
             # Try relative to project root
             path = PROJECT_ROOT / path
@@ -292,9 +353,20 @@ Examples:
         original_count = len(episodes)
         print(f"    Original episodes: {original_count}")
         
-        sampled = sample_episodes(episodes, ratio, args.seed)
-        sampled_count = len(sampled)
-        print(f"    After {ratio:.0%} sampling: {sampled_count}")
+        if args.output_blend:
+            n_target = int(ratio)
+            sampled = sample_row_target(episodes, n_target, args.seed + idx * 17)
+            sampled_count = len(sampled)
+            print(f"    Drawn rows for output blend: {sampled_count} (quota {n_target})")
+            if n_target > original_count:
+                print(
+                    f"    [INFO] Quota {n_target} > source size {original_count}; "
+                    f"upsampled with replacement to hit blend target."
+                )
+        else:
+            sampled = sample_episodes(episodes, ratio, args.seed)
+            sampled_count = len(sampled)
+            print(f"    After source_fraction={ratio} sampling: {sampled_count}")
         
         # Tag episodes with source for debugging
         source_name = path.stem
@@ -303,12 +375,17 @@ Examples:
                 ep['mix_source'] = source_name
         
         all_episodes.extend(sampled)
-        source_stats.append({
+        stat: Dict[str, Any] = {
             'source': str(path),
             'original': original_count,
-            'ratio': ratio,
             'sampled': sampled_count,
-        })
+        }
+        if args.output_blend:
+            stat['blend_weight'] = args.weights[idx]
+            stat['output_rows_quota'] = int(ratio)
+        else:
+            stat['source_sample_ratio'] = ratio
+        source_stats.append(stat)
     
     total_episodes = len(all_episodes)
     print(f"\n  Total combined: {total_episodes} episodes")
@@ -390,6 +467,7 @@ Examples:
             "args": {
                 "inputs": args.inputs,
                 "weights": args.weights,
+                "output_blend": args.output_blend,
                 "output": str(output_path),
                 "shuffle": args.shuffle,
                 "seed": args.seed,

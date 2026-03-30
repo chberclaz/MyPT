@@ -403,9 +403,47 @@ The **final** operator phase for this project is a **single SFT run** on data bu
 
 **Why remix?** Sequential training (2 → 2.5 → 2.7 → 2.8) each moved specific skills forward; **remixing validated JSONLs** into one acquisition run preserved **original Phase 2–style abstraction** while adding **targeted** statistics from 2.5 and 2.7. A monolithic re-synthesized “unified Phase 2” mix did **not** match that behavior in practice.
 
-**Train mix (canonical):** `1.0 : 0.3 : 0.15` — `phase2_mixed` : `phase2_5_mixed` : `phase2_7_mixed` in `mix_sft_jsonl.py`. Phase 2 stays the largest signal by construction; **0.3** on 2.5 adds more WRAP/anti-echo mass than a minimal 0.15 sprinkle. Adjust 2.7 only if you rebalance intermediates.
+**Train mix (canonical):** `1.0 : 0.3 : 0.15` in `mix_sft_jsonl.py` means, **by default**, “take **100%** of `phase2_mixed` rows, **30%** of `phase2_5_mixed` rows, **15%** of `phase2_7_mixed` rows” and **concatenate** — i.e. ratios are **per-source fractions**, **not** guaranteed shares of the final row count (output size depends on each file’s length). For a **fixed output size** and **normalized blend weights** (e.g. “~68.9% phase2 / ~20.7% phase2.5 / ~10.3% phase2.7 of **N** rows”), use **`--output_blend --target_size N`** with **`--weights 1.0 0.3 0.15`** and plain input paths (see script docstring).
 
 **Validation:** Combine candidates from **operator val**, **wrap_focus val**, and **phase2_8 val**, then enforce **train/val disjointness** with `--exclude_from_train` and `--disjoint_keys payload,template,pair`, and cap with `--target_size` (e.g. 5000). Use the `phase2_8_val.jsonl` path that exists on your machine (`.../sft_phase2_8_intermediate/...` or `.../sft_phase2_8b_intermediate/...`).
+
+#### Remix reassessment: COPY, echo, and anti-echo (bridge-aligned)
+
+`eval_phase2_8_bridge.py` stresses **exact** operator outputs, **literal echo**, and **anti-echo** (assistant must **not** contain a quoted “forbidden” token). Phase 3 chat/RAG then **pulls** the policy toward paraphrase and long answers, so the **remix train** should carry **enough marginal mass** on those manifolds before you ever fine-tune chat.
+
+| Bridge pain | What to reinforce | Best corpus leverage |
+| ----------- | ----------------- | --------------------- |
+| **COPY / WRAP / EXTRACT** exact match | Abstract operator + delimiter habits | **`phase2_mixed.jsonl`** (backbone); **2.5** adds **WRAP** style diversity |
+| **Echo basic** (repeat exact string) | Literal copy under instruction | **`phase2_5_mixed`** (echo + contrast stream from `prepare_phase2_5_wrap_antiecho.py`); optional **`phase2_6_mixed_train`** (~20% of 2.6 is echo) |
+| **Anti-echo** (e.g. must not say `Blurpix`) | Short safe answers; no leakage of quoted token | **`phase2_7_mixed`** (**40%** anti-echo design in `prepare_phase2_7_rebalance.py`); **2.5** (`--echo_anti_ratio` default **0.4**); **`phase2_6_mixed_train`** (**60%** anti-echo + **strict-safe** injections in `prepare_phase2_6_antiecho.py`) |
+
+**Design rule:** Prefer **`mix_sft_jsonl.py --output_blend --target_size N`** so weights are **shares of the final row count**, not “30% of file B’s rows.” Legacy `path:0.3` mixing often **underweights** 2.5/2.7 relative to 2 once file sizes differ.
+
+**Presets (weights are relative; script normalizes to `N`/`target_size` rows):**
+
+1. **Balanced repair (default if bridge echo/anti-echo regressed after Phase 3):**  
+   `--weights 1.0 0.45 0.22` on **(phase2_mixed, phase2_5_mixed, phase2_7_mixed)** → about **60% / 27% / 13%** of `N`. Keeps Phase 2 abstraction largest while **lifting** echo/anti-echo density vs canonical `1.0 / 0.3 / 0.15` *output* proportions (~69% / 21% / 10%).
+
+2. **Strong bridge focus (recommended when anti-echo COPY/echo still fail):** add **`phase2_6_mixed_train.jsonl`** (run `prepare_phase2_6_antiecho.py` once if missing):  
+   `--weights 1.0 0.35 0.15 0.12` on **(phase2, 2.5, 2.7, 2.6)** → about **62% / 22% / 9% / 7%**. The **~7%** from 2.6 is **dense** echo + anti-echo + operator replay (high ROI per row for gate-shaped errors).
+
+3. **Aggressive:** e.g. **`0.85 0.50 0.28 0.15`** on the same four files (**~48% / 28% / 16% / 8%**) — use only if you accept less Phase-2-pure abstraction share in exchange for more contrast.
+
+Pick **`N`** (`--target_size`) as the **exact episode count** in the merged train JSONL (e.g. **~110k**). After rebuilding **`phase2_remix_existing_train.jsonl`**, **re-tokenize** with **`--pack_block_size 4096`** (packed **shard** count will be lower than `N`; that is expected). **Retrain** `phase2_remix_existing`, then **rebuild Phase 3** as needed.
+
+```bash
+# Example: ~110k episodes, 4-way bridge-focused blend, 4096 packing in step 3
+python scripts/sft/prepare_phase2_6_antiecho.py --output_dir data/sft_phase2_6_intermediate
+
+python scripts/sft/mix_sft_jsonl.py --output_blend --target_size 110000 \
+    --inputs data/sft_phase2_intermediate/phase2_mixed.jsonl \
+             data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl \
+             data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
+             data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl \
+    --weights 1.0 0.35 0.15 0.12 \
+    --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
+    --shuffle --seed 2907
+```
 
 #### Prerequisites (intermediate JSONLs)
 
@@ -413,17 +451,27 @@ The **final** operator phase for this project is a **single SFT run** on data bu
 2. **Phase 2.5** — `data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl` + `wrap_focus_val.jsonl` from `prepare_phase2_5_wrap_antiecho.py`.
 3. **Phase 2.7** — `data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl` from `prepare_phase2_7_rebalance.py`.
 4. **Phase 2.8** — `phase2_8_val.jsonl` from `prepare_phase2_8_echo_rebalance.py`.
+5. **(Optional, bridge-heavy remix)** — `data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl` from `prepare_phase2_6_antiecho.py` for **echo + anti-echo** density.
 
 #### Build remix → tokenize → train
 
 ```bash
-# 1) Training JSONL: Phase 2 dominant + 0.3 phase2.5 + 0.15 phase2.7
+# 1) Training JSONL — legacy: 100% phase2 + 30% of phase2.5 file + 15% of phase2.7 file (source-relative)
 python scripts/sft/mix_sft_jsonl.py \
     --inputs data/sft_phase2_intermediate/phase2_mixed.jsonl:1.0 \
              data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl:0.3 \
              data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl:0.15 \
     --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
     --shuffle --seed 2907
+
+# Alternative — ~110k rows, 3-way output proportions 1 : 0.45 : 0.22 (normalized)
+# python scripts/sft/mix_sft_jsonl.py --output_blend --target_size 110000 \
+#     --inputs data/sft_phase2_intermediate/phase2_mixed.jsonl \
+#              data/sft_phase2_5_intermediate/phase2_5_mixed.jsonl \
+#              data/sft_phase2_7_intermediate/phase2_7_mixed.jsonl \
+#     --weights 1.0 0.45 0.22 \
+#     --output data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
+#     --shuffle --seed 2907
 
 # 2) Validation JSONL: broad sources, disjoint from train (adjust phase2_8 path if needed)
 python scripts/sft/mix_sft_jsonl.py \
@@ -570,6 +618,13 @@ python scripts/sft/prepare_phase2_8_echo_rebalance.py \
 3. **Augmented** -- paraphrased variants of gold episodes
 4. **Replay** -- ~20% Phase 2 remix existing (see `build_phase3_dataset.py` defaults)
 
+**Phase 3 mix vs Phase 2 remix (easy to confuse):**
+
+| What you want | Where to do it |
+| --------------- | -------------- |
+| **Stronger copy / echo / anti-echo in the *Phase 3* chat dataset** (more replay from Phase 2–style JSONL, without necessarily retraining Phase 2) | **`build_phase3_dataset.py`**: increase `--remix_ratio` (target-fraction of `target_size`), optionally add `--anti_echo_file` + `--anti_echo_ratio`, `--operators_file` + `--operators_ratio`, and lower `--open_chat_cap_ratio` if you keep a fixed `--target_size`. These ratios apply to the **Phase 3 mix total**, not “% of a source file.” |
+| **A different `phase2_remix_existing_train.jsonl`** (new blend, new `phase2_remix_existing_gold`) | **`mix_sft_jsonl.py`** + Phase 2 intermediates + **Phase 2 remix train** — a **separate** step. Only required if the replay **file** itself must change; otherwise you can leave it and only turn up **`--remix_ratio`** in Phase 3. |
+
 ### Generate & Prepare
 
 ```bash
@@ -605,11 +660,9 @@ python scripts/sft/augment_episodes_paraphrase.py \
 #    --input data/gold_episodes/gold_bilingual.jsonl
 
 # 5. Build Phase 3 mix with explicit policy:
-#    - phase2 remix existing replay ~20% (default remix_train_file + remix_ratio)
-#    - operators / anti-echo optional (defaults 0; pass files + ratios if you want maintenance replay)
-#    - grounded context-only QA ~16%
-#    - open-ended chat capped
-#    - remainder strict/checkable precision tasks
+#    - phase2 remix replay: --remix_ratio is a fraction OF target_size (e.g. 0.28 = 28% of 80k rows from remix file)
+#    - optional: --anti_echo_file + --anti_echo_ratio, --operators_file + --operators_ratio (copy/echo/anti-echo maintenance)
+#    - grounded ~16%, open chat capped, remainder precision — adjust open_chat_cap_ratio if fixed buckets exceed target_size
 python scripts/sft/build_phase3_dataset.py \
     --output data/sft_phase3_intermediate/phase3_mixed.jsonl \
     --target_size 80000 \
@@ -618,6 +671,22 @@ python scripts/sft/build_phase3_dataset.py \
     --remix_train_file data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
     --remix_ratio 0.20 \
     --open_chat_files data/sft_hf/oasst2.jsonl data/sft_hf/alpaca_de.jsonl data/sft_phase3_intermediate/gold_augmented.jsonl
+
+# Example — higher Phase 2 replay + maintenance (recreate Phase 3 chat data; no Phase 2 remix rebuild required
+# if phase2_remix_existing_train.jsonl is unchanged). Tune ratios so remix + grounded + op + anti + open cap + precision <= 100%.
+# python scripts/sft/build_phase3_dataset.py \
+#     --output data/sft_phase3_intermediate/phase3_mixed.jsonl \
+#     --target_size 80000 \
+#     --precision_file data/sft_phase3_intermediate/phase3_precision.jsonl \
+#     --grounded_file data/sft_phase3_intermediate/rag_chat.jsonl \
+#     --remix_train_file data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl \
+#     --remix_ratio 0.28 \
+#     --anti_echo_file data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl \
+#     --anti_echo_ratio 0.04 \
+#     --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl \
+#     --operators_ratio 0.02 \
+#     --open_chat_cap_ratio 0.14 \
+#     --open_chat_files data/sft_hf/oasst2.jsonl data/sft_hf/alpaca_de.jsonl data/sft_phase3_intermediate/gold_augmented.jsonl
 
 # 6. Audit Phase 3 composition and schema coverage before tokenization
 python scripts/sft/audit_phase3_dataset.py \
@@ -696,7 +765,7 @@ python train.py \
     --init_from_model checkpoints/phase2_5_wrap_antiecho_gold
 ```
 
-`phase3_chat_sft.json` sets **`max_iters` ~763** to target **~3.5× epoch coverage** for a ~2.6k-episode train split (effective batch 12 episodes per step). `train.py` prints episode coverage before training; if your packed corpus has many more/fewer episodes, scale `max_iters` (or data) so coverage stays roughly in the **2×–5×** band the analyzer recommends.
+`phase3_chat_sft.json` sets **`max_iters` ~763** to target **~3.5× epoch coverage** for a ~2.6k-episode train split (effective batch 12 episodes per step). For a **~110k-row** Phase 3 mix (≈3.6k packed train episodes at similar packing density), use **`configs/sft/phase3_chat_sft_110k.json`** (`max_iters` **1051**, separate log path). `train.py` prints episode coverage before training; rescale if your packed `num_train_episodes` differs.
 
 ### Success Gate
 
@@ -1189,6 +1258,7 @@ All SFT configs include the LLaMA-2 architecture fields. Key configs by phase:
 | 1     | `configs/sft/phase1_format_lock.json`     | 7e-5   | 2000  | 4096  |
 | 2     | `configs/sft/phase2_operators.json`       | 3e-5   | 1200  | 4096  |
 | 3     | `configs/sft/phase3_chat_sft.json`        | 3e-5   | 763   | 4096  |
+| 3b    | `configs/sft/phase3_chat_sft_110k.json`   | 3e-5   | 1051  | 4096  |
 | 4     | `configs/sft/phase4_multiturn.json`       | 2.5e-5 | 3000  | 4096  |
 | 5     | `configs/sft/phase5_simple_toolcall.json` | 2e-5   | 3000  | 4096  |
 | 6     | `configs/sft/phase6_agentic_rag.json`     | 1.5e-5 | 4000  | 4096  |
