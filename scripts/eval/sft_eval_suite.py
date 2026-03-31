@@ -736,6 +736,8 @@ def run_evaluation(
         results["buckets"]["context_citation"] = bucket_j
     
     # Bucket E: Operators (EXACT MATCH)
+    # OPERATOR_PROMPTS is filled in main(); regression gate imports run_evaluation only—build prompts here.
+    operator_prompts = OPERATOR_PROMPTS or build_operator_prompts(use_val_templates=False)
     print("\n📋 Bucket E: Operators (EXACT MATCH)")
     bucket_e = {
         "passed": 0, 
@@ -745,7 +747,7 @@ def run_evaluation(
         "by_word_count": {"1w": {"passed": 0, "failed": 0}, "2w": {"passed": 0, "failed": 0}, "3w": {"passed": 0, "failed": 0}, "4w": {"passed": 0, "failed": 0}},
     }
     
-    for name, prompt, operator, expected in OPERATOR_PROMPTS:
+    for name, prompt, operator, expected in operator_prompts:
         gen = generate(prompt)
         passed, reason = check_operator_exact(gen, expected, operator)
         bucket_e["details"].append({"name": name, "passed": passed, "reason": reason, "operator": operator, "expected": expected, "generated": gen[:100]})

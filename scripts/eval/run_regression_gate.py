@@ -158,22 +158,42 @@ def run_gate(
         if bucket_data is None:
             actual_rate = 0.0
             status = "MISSING"
+            total = 0
         else:
             total = bucket_data["passed"] + bucket_data["failed"]
-            actual_rate = (bucket_data["passed"] / total * 100) if total > 0 else 0.0
-            status = "PASS" if actual_rate >= min_rate else "FAIL"
+            if total == 0:
+                actual_rate = 0.0
+                status = "FAIL"
+            else:
+                actual_rate = bucket_data["passed"] / total * 100
+                status = "PASS" if actual_rate >= min_rate else "FAIL"
         
-        passed = (status == "PASS")
+        passed = status == "PASS"
         icon = "PASS" if passed else "FAIL"
         
         gate_results["requirements"][bucket_name] = {
             "min_pass_rate": min_rate,
             "actual_pass_rate": round(actual_rate, 1),
+            "passed_count": bucket_data["passed"] if bucket_data else 0,
+            "failed_count": bucket_data["failed"] if bucket_data else 0,
+            "total_count": total,
             "description": desc,
             "status": status,
         }
         
-        print(f"  [{icon}] {bucket_name}: {actual_rate:.1f}% (threshold: {min_rate:.0f}%) - {desc}")
+        if status == "MISSING":
+            print(
+                f"  [{icon}] {bucket_name}: MISSING (threshold: {min_rate:.0f}%) - {desc}"
+            )
+        elif total == 0:
+            print(
+                f"  [{icon}] {bucket_name}: INCOMPLETE 0 tests (threshold: {min_rate:.0f}%) - {desc}"
+            )
+        else:
+            print(
+                f"  [{icon}] {bucket_name}: {actual_rate:.1f}% "
+                f"({bucket_data['passed']}/{total}) (threshold: {min_rate:.0f}%) - {desc}"
+            )
         
         if not passed:
             gate_results["gate_passed"] = False
