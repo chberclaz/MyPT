@@ -44,5 +44,13 @@
     "phase2_remix_existing": "data/sft_phase3_eval_phase2_remix"
   },
   "eval_seed": 1337,
-  "log_file": "logs/train/phase3_1_corrective.jsonl"
+  "log_file": "logs/train/phase3_1_corrective.jsonl",
+  "token_accuracy_saturation": {
+    "enabled": true,
+    "window": 4,
+    "min_steps_before_check": 200,
+    "min_delta": 0.002,
+    "gap_growth_threshold": 0.01,
+    "action": "log_and_flag"
+  }
 }

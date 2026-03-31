@@ -180,7 +180,7 @@ def main():
             "warmup_iters", "grad_clip", "weight_decay", "use_amp", "amp_dtype",
             "eval_sets", "eval_seed", "log_file", "terminal_log_file",
             "freeze_layers", "freeze_embeddings", "curriculum", "grad_accum_steps",
-            "gold_selection",
+            "gold_selection", "token_accuracy_saturation",
         ]
         for key in training_keys:
             if key in config_dict:
@@ -675,6 +675,7 @@ def main():
         initial_phase=initial_phase_name,
         model_name=args.model_name,
         gold_selection=config_training.get('gold_selection'),
+            token_accuracy_saturation=config_training.get('token_accuracy_saturation'),
     )
     
     print("\n========== Training Complete ==========")

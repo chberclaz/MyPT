@@ -1178,6 +1178,50 @@ class GPT(nn.Module):
             out[split] = losses.mean()
         self.train()
         return out
+
+    @torch.no_grad()
+    def estimate_masked_token_accuracy(self, data_loader, eval_iters, splits=['train', 'val']):
+        """
+        Estimate top-1 token accuracy on masked (loss_mask==1) positions.
+
+        Returns:
+            Dict split -> {"acc": float|None, "count": int}
+            acc=None when a split has no masked tokens or the loader does not provide loss_mask.
+        """
+        out = {}
+        self.eval()
+        for split in splits:
+            total_correct = 0
+            total_count = 0
+            for _ in range(eval_iters):
+                batch = data_loader.get_batch(split)
+
+                if isinstance(batch, (tuple, list)) and len(batch) == 4:
+                    X, Y, loss_mask, segment_ids = batch
+                    logits, _, _ = self(X, Y, loss_mask=loss_mask, segment_ids=segment_ids)
+                elif isinstance(batch, (tuple, list)) and len(batch) == 3:
+                    X, Y, loss_mask = batch
+                    logits, _, _ = self(X, Y, loss_mask=loss_mask)
+                else:
+                    # No mask available for this split/loader; skip metric.
+                    loss_mask = None
+                    logits = None
+
+                if loss_mask is None or logits is None:
+                    continue
+
+                preds = torch.argmax(logits, dim=-1)
+                mask = loss_mask.to(preds.device).bool()
+                if mask.any():
+                    total_correct += int(((preds == Y.to(preds.device)) & mask).sum().item())
+                    total_count += int(mask.sum().item())
+
+            out[split] = {
+                "acc": (float(total_correct) / float(total_count)) if total_count > 0 else None,
+                "count": int(total_count),
+            }
+        self.train()
+        return out
     
     def fit(self, data_loader, optimizer, max_iters, eval_interval=20, 
             eval_iters=50, checkpoint_dir=None, start_step=0, learning_rate=None,
@@ -1186,7 +1230,8 @@ class GPT(nn.Module):
             eval_seed=None, config_file=None, dataset_dir=None,
             eval_prompts_file=None, eval_max_new_tokens=64,
             data_loader_schedule=None, grad_accum_steps=1,
-            initial_phase=None, model_name=None, gold_selection=None):
+            initial_phase=None, model_name=None, gold_selection=None,
+            token_accuracy_saturation=None):
         """
         Main training loop - the model trains itself!
         
@@ -1323,6 +1368,23 @@ class GPT(nn.Module):
                 print("Mixed precision disabled (CPU training)")
         
         # Prepare training configuration for saving
+        sat_defaults = {
+            "enabled": bool(getattr(self.config, "use_loss_mask", False)),
+            "window": 4,
+            "min_steps_before_check": 200,
+            "min_delta": 0.002,
+            "gap_growth_threshold": 0.01,
+            "action": "log_and_flag",
+        }
+        if isinstance(token_accuracy_saturation, dict):
+            sat_defaults.update(token_accuracy_saturation)
+        sat_cfg = sat_defaults
+
+        sat_history_train: list[tuple[int, float]] = []
+        sat_history_val: list[tuple[int, float]] = []
+        sat_history_gap: list[tuple[int, float]] = []
+        sat_first_step = None
+
         training_config = {
             "max_iters": max_iters,
             "eval_interval": eval_interval,
@@ -1337,6 +1399,11 @@ class GPT(nn.Module):
             "config_file": config_file,
             "dataset_dir": dataset_dir,
             "gold_selection": gold_selection,
+            "token_accuracy_saturation": {
+                **sat_cfg,
+                "saturation_detected": False,
+                "saturation_step": None,
+            },
             # Model architecture (for quick reference without loading config.json)
             "model_params": {
                 "n_layer": self.config.n_layer,
@@ -1470,6 +1537,55 @@ class GPT(nn.Module):
                 
                 # Evaluate on main data loader (train split for train_loss reference)
                 losses = self.estimate_loss(data_loader, eval_iters, splits=['val'])
+                masked_acc = self.estimate_masked_token_accuracy(
+                    data_loader, eval_iters, splits=['train', 'val']
+                )
+                train_masked_acc = masked_acc.get("train", {}).get("acc", None)
+                val_masked_acc = masked_acc.get("val", {}).get("acc", None)
+                train_masked_count = int(masked_acc.get("train", {}).get("count", 0))
+                val_masked_count = int(masked_acc.get("val", {}).get("count", 0))
+                masked_gap = None
+                if train_masked_acc is not None and val_masked_acc is not None:
+                    masked_gap = float(train_masked_acc - val_masked_acc)
+
+                sat_detected_now = False
+                sat_reason = None
+                if sat_cfg["enabled"] and train_masked_acc is not None and val_masked_acc is not None:
+                    sat_history_train.append((iter, float(train_masked_acc)))
+                    sat_history_val.append((iter, float(val_masked_acc)))
+                    sat_history_gap.append((iter, float(masked_gap)))
+
+                    window = max(2, int(sat_cfg["window"]))
+                    if iter >= int(sat_cfg["min_steps_before_check"]) and len(sat_history_train) >= window:
+                        t_recent = [x for _, x in sat_history_train[-window:]]
+                        v_recent = [x for _, x in sat_history_val[-window:]]
+                        g_recent = [x for _, x in sat_history_gap[-window:]]
+                        train_gain = (t_recent[-1] - t_recent[0]) / float(window - 1)
+                        val_gain = (v_recent[-1] - v_recent[0]) / float(window - 1)
+                        gap_growth = g_recent[-1] - g_recent[0]
+                        min_delta = float(sat_cfg["min_delta"])
+                        gap_thr = float(sat_cfg["gap_growth_threshold"])
+
+                        plateau = (train_gain < min_delta) and (val_gain < min_delta)
+                        memorization_shift = (val_gain < min_delta) and (train_gain > min_delta) and (gap_growth > 0.0)
+                        gap_widening = gap_growth > gap_thr
+                        if plateau or memorization_shift or gap_widening:
+                            sat_detected_now = True
+                            reasons = []
+                            if plateau:
+                                reasons.append(
+                                    f"plateau train_gain={train_gain:.4f}, val_gain={val_gain:.4f}, min_delta={min_delta:.4f}"
+                                )
+                            if memorization_shift:
+                                reasons.append(
+                                    f"memorization_shift train_gain={train_gain:.4f}, val_gain={val_gain:.4f}, gap_growth={gap_growth:.4f}"
+                                )
+                            if gap_widening:
+                                reasons.append(f"gap_widening gap_growth={gap_growth:.4f}, threshold={gap_thr:.4f}")
+                            sat_reason = "; ".join(reasons)
+                            if sat_first_step is None:
+                                sat_first_step = iter
+                                print(f"  ⚠️  Saturation signal detected at step {iter}: {sat_reason}")
                 
                 # Build log entry with full context
                 log_entry = {
@@ -1482,8 +1598,25 @@ class GPT(nn.Module):
                     "lr": current_lr,
                     "phase": current_phase,
                     "val_loss": round(float(losses['val']), 6),
+                    "train_masked_token_acc": round(float(train_masked_acc), 6) if train_masked_acc is not None else None,
+                    "val_masked_token_acc": round(float(val_masked_acc), 6) if val_masked_acc is not None else None,
+                    "train_masked_token_count": train_masked_count,
+                    "val_masked_token_count": val_masked_count,
+                    "masked_acc_gap": round(float(masked_gap), 6) if masked_gap is not None else None,
+                    "saturation_detected": bool(sat_detected_now or sat_first_step is not None),
+                    "saturation_reason": sat_reason,
+                    "saturation_step": sat_first_step,
                 }
                 eval_count += 1
+
+                training_config["token_accuracy_saturation"].update({
+                    "saturation_detected": bool(sat_detected_now or sat_first_step is not None),
+                    "saturation_step": sat_first_step,
+                    "last_train_masked_token_acc": train_masked_acc,
+                    "last_val_masked_token_acc": val_masked_acc,
+                    "last_masked_acc_gap": masked_gap,
+                    "last_saturation_reason": sat_reason,
+                })
                 
                 # Evaluate on additional eval sets if provided
                 eval_losses = {}

@@ -1285,6 +1285,8 @@ All configs use:
 - `use_loss_mask: true`
 - `batch_sampling_mode: "epoch"`
 - `use_amp: true` / `amp_dtype: "bf16"`
+- Optional train-time diagnostic: `token_accuracy_saturation` (masked token accuracy saturation signal)
+- Usage: add `token_accuracy_saturation` in a phase config to enable/tune; details are documented in [`docs/training/TOKEN_ACCURACY_SATURATION.md`](d:/coding/MyPT/docs/training/TOKEN_ACCURACY_SATURATION.md).
 
 ---
 
