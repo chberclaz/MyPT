@@ -784,6 +784,23 @@ python scripts/eval/run_regression_gate.py --model phase3_chat --phase 3 -v
 
 If this gate fails: adjust Phase 3 data mix first (especially strict/checkable vs open chat ratio) before changing LR.
 
+### Phase 3.1 corrective (echo/operators/anti-echo + JSON strict)
+
+Use this when Phase 3 quality is good overall but gate buckets regress on exactness/control.
+
+Windows one-liners:
+
+```powershell
+py.exe scripts/sft/generate_phase3_json_sft.py --output data/sft_phase3_intermediate/phase3_json_strict.jsonl --num_examples 6000 --seed 3311 --de_ratio 0.35
+py.exe scripts/sft/build_phase3_dataset.py --output data/sft_phase3_intermediate/phase3_1_corrective_mixed.jsonl --target_size 80000 --seed 3331 --precision_file data/sft_phase3_intermediate/phase3_precision.jsonl --grounded_file data/sft_phase3_intermediate/rag_chat.jsonl --remix_train_file data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl --remix_ratio 0.30 --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl --operators_ratio 0.05 --anti_echo_file data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl --anti_echo_ratio 0.05 --json_file data/sft_phase3_intermediate/phase3_json_strict.jsonl --json_ratio 0.08 --grounded_ratio 0.14 --open_chat_cap_ratio 0.10 --multiturn_cap_ratio 0.22 --open_chat_files data/sft_hf/oasst2.jsonl data/sft_hf/alpaca_de.jsonl data/sft_phase3_intermediate/gold_augmented.jsonl
+py.exe scripts/sft/audit_phase3_dataset.py --input data/sft_phase3_intermediate/phase3_1_corrective_mixed.jsonl --output data/sft_phase3_intermediate/phase3_1_corrective_mixed.audit.json
+py.exe scripts/sft/normalize_phase3_inline_system.py --input data/sft_phase3_intermediate/phase3_1_corrective_mixed.jsonl --backup
+py.exe scripts/sft/prepare_chat_sft.py --input data/sft_phase3_intermediate/phase3_1_corrective_mixed.jsonl --output_dir data/sft_phase3_1_corrective_chat --val_split 0.05 --enable_packing --pack_block_size 4096 --enable_rag_tags --schema_validation_mode error --system_prompt "You are MyPT, a helpful assistant. Answer based on the provided context when available."
+py.exe train.py --model_name phase3_1_corrective --config_file configs/sft/phase3_1_corrective.json --dataset_dir data/sft_phase3_1_corrective_chat --init_from_model phase3_chat_110k_gold
+py.exe scripts/eval/sft_eval_suite.py --model phase3_1_corrective_gold -v
+py.exe scripts/eval/run_regression_gate.py --model phase3_1_corrective_gold --phase 3 -v
+```
+
 ---
 
 ## 7. Phase 4: Multi-turn Boundaries

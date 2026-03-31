@@ -168,10 +168,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--remix_ratio", type=float, default=0.20)
     p.add_argument("--operators_file", type=str, default=None)
     p.add_argument("--anti_echo_file", type=str, default=None)
+    p.add_argument("--json_file", type=str, default=None, help="Strict JSON-output dataset JSONL")
     p.add_argument("--open_chat_files", nargs="*", default=[], help="HF/open-ended chat JSONL files")
 
     p.add_argument("--operators_ratio", type=float, default=0.0)
     p.add_argument("--anti_echo_ratio", type=float, default=0.0)
+    p.add_argument("--json_ratio", type=float, default=0.0)
     p.add_argument("--grounded_ratio", type=float, default=0.16)
     p.add_argument("--open_chat_cap_ratio", type=float, default=0.20)
     p.add_argument("--multiturn_cap_ratio", type=float, default=0.22)
@@ -186,6 +188,8 @@ def main() -> None:
         raise ValueError("operators_ratio > 0 requires --operators_file")
     if args.anti_echo_ratio > 0 and not args.anti_echo_file:
         raise ValueError("anti_echo_ratio > 0 requires --anti_echo_file")
+    if args.json_ratio > 0 and not args.json_file:
+        raise ValueError("json_ratio > 0 requires --json_file")
 
     out_path = Path(args.output)
     meta_path = Path(args.meta_output) if args.meta_output else out_path.with_suffix(".meta.json")
@@ -206,6 +210,9 @@ def main() -> None:
     anti_rows: List[Dict[str, Any]] = []
     if args.anti_echo_file and args.anti_echo_ratio > 0:
         anti_rows = _add_source(_read_jsonl(Path(args.anti_echo_file)), "phase3_anti_echo_replay")
+    json_rows: List[Dict[str, Any]] = []
+    if args.json_file and args.json_ratio > 0:
+        json_rows = _add_source(_read_jsonl(Path(args.json_file)), "phase3_json_strict")
     open_rows: List[Dict[str, Any]] = []
     for f in args.open_chat_files:
         p = Path(f)
@@ -220,13 +227,14 @@ def main() -> None:
     n_remix = round(n_total * args.remix_ratio)
     n_op = round(n_total * args.operators_ratio) if (args.operators_file and args.operators_ratio > 0) else 0
     n_anti = round(n_total * args.anti_echo_ratio) if (args.anti_echo_file and args.anti_echo_ratio > 0) else 0
+    n_json = round(n_total * args.json_ratio) if (args.json_file and args.json_ratio > 0) else 0
     n_grounded = int(round(n_total * args.grounded_ratio))
     n_open_cap = round(n_total * args.open_chat_cap_ratio)
 
-    fixed = n_remix + n_op + n_anti + n_grounded
+    fixed = n_remix + n_op + n_anti + n_json + n_grounded
     if fixed > n_total:
         raise ValueError(
-            "remix_ratio + operators_ratio + anti_echo_ratio + grounded_ratio exceed 100% "
+            "remix_ratio + operators_ratio + anti_echo_ratio + json_ratio + grounded_ratio exceed 100% "
             f"(fixed={fixed}, n_total={n_total})"
         )
     n_remaining = n_total - fixed
@@ -237,6 +245,7 @@ def main() -> None:
     mixed.extend(_sample(remix_rows, n_remix, args.seed + 7))
     mixed.extend(_sample(operators_rows, n_op, args.seed + 11))
     mixed.extend(_sample(anti_rows, n_anti, args.seed + 17))
+    mixed.extend(_sample(json_rows, n_json, args.seed + 19))
     mixed.extend(_sample(grounded_rows, n_grounded, args.seed + 23))
     mixed.extend(_sample(open_rows, n_open, args.seed + 29))
     mixed.extend(_sample(precision_rows, n_precision, args.seed + 31))
@@ -258,6 +267,7 @@ def main() -> None:
             "remix": args.remix_ratio,
             "operators": args.operators_ratio,
             "anti_echo": args.anti_echo_ratio,
+            "json_strict": args.json_ratio,
             "grounded": args.grounded_ratio,
             "open_chat_cap": args.open_chat_cap_ratio,
         },
@@ -265,6 +275,7 @@ def main() -> None:
             "remix": n_remix,
             "operators": n_op,
             "anti_echo": n_anti,
+            "json_strict": n_json,
             "grounded": n_grounded,
             "open_chat": n_open,
             "precision": n_precision,
@@ -283,6 +294,7 @@ def main() -> None:
             "remix_train_file": args.remix_train_file,
             "operators_file": args.operators_file,
             "anti_echo_file": args.anti_echo_file,
+            "json_file": args.json_file,
             "open_chat_files": args.open_chat_files,
         },
     }
@@ -309,6 +321,13 @@ def main() -> None:
         c = source_counts.get("phase3_anti_echo_replay", 0)
         lineage_inputs.append({
             "path": str(Path(args.anti_echo_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.json_file and args.json_ratio > 0:
+        c = source_counts.get("phase3_json_strict", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.json_file).resolve()),
             "sampled_rows": int(c),
             "effective_ratio": c / max(1, len(mixed)),
         })
