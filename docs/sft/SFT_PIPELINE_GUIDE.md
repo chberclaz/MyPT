@@ -801,6 +801,31 @@ py.exe scripts/eval/sft_eval_suite.py --model phase3_1_corrective_gold -v
 py.exe scripts/eval/run_regression_gate.py --model phase3_1_corrective_gold --phase 3 -v
 ```
 
+### Phase 3.2 corrective (control-focused: injection/hierarchy + abstention + JSON strict)
+
+Use this when Phase 3.1 still fails control buckets (`prompt_injection`, `instruction_hierarchy`, `abstention_context`, `strict_json_schema`) and exactness buckets need maintenance.
+
+Windows one-liners:
+
+```powershell
+py.exe scripts/sft/generate_phase3_json_sft.py --output data/sft_phase3_intermediate/phase3_json_strict_3_2.jsonl --num_examples 10000 --seed 3411 --de_ratio 0.35
+py.exe scripts/sft/generate_phase3_injection_hierarchy_sft.py --output data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.jsonl --num_examples 8000 --seed 3421 --de_ratio 0.30
+py.exe scripts/sft/generate_phase3_abstention_sft.py --output data/sft_phase3_intermediate/phase3_abstention_strict.jsonl --num_examples 8000 --seed 3427 --de_ratio 0.35
+py.exe scripts/sft/build_phase3_dataset.py --output data/sft_phase3_intermediate/phase3_2_corrective_mixed.jsonl --target_size 80000 --seed 3431 --precision_file data/sft_phase3_intermediate/phase3_precision.jsonl --grounded_file data/sft_phase3_intermediate/rag_chat.jsonl --remix_train_file data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl --remix_ratio 0.34 --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl --operators_ratio 0.06 --anti_echo_file data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl --anti_echo_ratio 0.06 --json_file data/sft_phase3_intermediate/phase3_json_strict_3_2.jsonl --json_ratio 0.10 --injection_file data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.jsonl --injection_ratio 0.08 --abstention_file data/sft_phase3_intermediate/phase3_abstention_strict.jsonl --abstention_ratio 0.08 --grounded_ratio 0.12 --open_chat_cap_ratio 0.08 --multiturn_cap_ratio 0.20 --open_chat_files data/sft_hf/oasst2.jsonl data/sft_hf/alpaca_de.jsonl data/sft_phase3_intermediate/gold_augmented.jsonl
+py.exe scripts/sft/audit_phase3_dataset.py --input data/sft_phase3_intermediate/phase3_2_corrective_mixed.jsonl --output data/sft_phase3_intermediate/phase3_2_corrective_mixed.audit.json
+py.exe scripts/sft/normalize_phase3_inline_system.py --input data/sft_phase3_intermediate/phase3_2_corrective_mixed.jsonl --backup
+py.exe scripts/sft/prepare_chat_sft.py --input data/sft_phase3_intermediate/phase3_2_corrective_mixed.jsonl --output_dir data/sft_phase3_2_corrective_chat --val_split 0.05 --enable_packing --pack_block_size 4096 --enable_rag_tags --schema_validation_mode error --system_prompt "You are MyPT, a helpful assistant. Answer based on the provided context when available."
+py.exe train.py --model_name phase3_2_corrective --config_file configs/sft/phase3_2_corrective.json --dataset_dir data/sft_phase3_2_corrective_chat --init_from_model phase3_1_corrective_gold
+py.exe scripts/eval/sft_eval_suite.py --model phase3_2_corrective_gold -v
+py.exe scripts/eval/run_regression_gate.py --model phase3_2_corrective_gold --phase 3 -v
+```
+
+Dataset-only ZIP (for RunPod upload):
+
+```powershell
+powershell -NoProfile -Command "Compress-Archive -Path 'data/sft_phase3_intermediate/phase3_json_strict_3_2.jsonl','data/sft_phase3_intermediate/phase3_json_strict_3_2.meta.json','data/sft_phase3_intermediate/phase3_json_strict_3_2.lineage.json','data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.jsonl','data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.meta.json','data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.lineage.json','data/sft_phase3_intermediate/phase3_abstention_strict.jsonl','data/sft_phase3_intermediate/phase3_abstention_strict.meta.json','data/sft_phase3_intermediate/phase3_abstention_strict.lineage.json','data/sft_phase3_intermediate/phase3_2_corrective_mixed.jsonl','data/sft_phase3_intermediate/phase3_2_corrective_mixed.meta.json','data/sft_phase3_intermediate/phase3_2_corrective_mixed.lineage.json','data/sft_phase3_2_corrective_chat/tokens.bin','data/sft_phase3_2_corrective_chat/mask.bin','data/sft_phase3_2_corrective_chat/episodes.idx','data/sft_phase3_2_corrective_chat/meta.json','data/sft_phase3_2_corrective_chat/stats.json' -DestinationPath 'mypt_phase3_2_corrective_datasets_only.zip' -Force"
+```
+
 ---
 
 ## 7. Phase 4: Multi-turn Boundaries

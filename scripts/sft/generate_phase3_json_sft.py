@@ -117,10 +117,68 @@ def _sample_list_extract(rng: random.Random, language: str) -> Tuple[str, str, s
     return user, assistant, "json_items"
 
 
+def _sample_triplet(rng: random.Random, language: str) -> Tuple[str, str, str]:
+    rows = [
+        ("A", 1, "safe"),
+        ("B", 0, "unsafe"),
+        ("C", 2, "review"),
+    ]
+    label, score, reason = rng.choice(rows)
+    if language == "de":
+        user = (
+            "Erzeuge genau ein JSON-Objekt mit den Schluesseln label (String), score (Zahl), reason (String). "
+            f"Daten: label={label}, score={score}, reason={reason}. {rng.choice(SCHEMA_SUFFIX_DE)}"
+        )
+    else:
+        user = (
+            "Return exactly one JSON object with keys label (string), score (number), reason (string). "
+            f"Data: label={label}, score={score}, reason={reason}. {rng.choice(SCHEMA_SUFFIX_EN)}"
+        )
+    assistant = json.dumps(
+        {"label": label, "score": score, "reason": reason},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return user, assistant, "json_triplet"
+
+
+def _sample_schema_contract(rng: random.Random, language: str) -> Tuple[str, str, str]:
+    rows = [
+        ("network", "pass", 0.92),
+        ("policy", "fail", 0.11),
+        ("safety", "pass", 0.78),
+    ]
+    check, status, confidence = rng.choice(rows)
+    if language == "de":
+        user = (
+            "Formatiere als JSON mit exakt diesen Schluesseln: check, status, confidence. "
+            "confidence muss eine Zahl sein. "
+            f"Werte: check={check}, status={status}, confidence={confidence}. {rng.choice(SCHEMA_SUFFIX_DE)}"
+        )
+    else:
+        user = (
+            "Format as JSON with exactly these keys: check, status, confidence. "
+            "confidence must be numeric. "
+            f"Values: check={check}, status={status}, confidence={confidence}. {rng.choice(SCHEMA_SUFFIX_EN)}"
+        )
+    assistant = json.dumps(
+        {"check": check, "status": status, "confidence": confidence},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return user, assistant, "json_schema_contract"
+
+
 def generate_rows(num_examples: int, seed: int, de_ratio: float) -> List[Dict]:
     rng = random.Random(seed)
     systems = CHAT_SYSTEM_PROMPTS
-    builders = [_sample_label_score, _sample_bool_reason, _sample_list_extract]
+    builders = [
+        _sample_label_score,
+        _sample_bool_reason,
+        _sample_list_extract,
+        _sample_triplet,
+        _sample_schema_contract,
+    ]
     out: List[Dict] = []
     for _ in range(num_examples):
         language = "de" if rng.random() < de_ratio else "en"
@@ -158,6 +216,8 @@ def main() -> None:
             "json_label_score": sum(1 for r in rows if r["_meta"]["category"] == "json_label_score"),
             "json_allowed_reason": sum(1 for r in rows if r["_meta"]["category"] == "json_allowed_reason"),
             "json_items": sum(1 for r in rows if r["_meta"]["category"] == "json_items"),
+            "json_triplet": sum(1 for r in rows if r["_meta"]["category"] == "json_triplet"),
+            "json_schema_contract": sum(1 for r in rows if r["_meta"]["category"] == "json_schema_contract"),
         },
     }
     meta_path = out_path.with_suffix(".meta.json")
