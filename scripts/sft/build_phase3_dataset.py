@@ -169,15 +169,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--operators_file", type=str, default=None)
     p.add_argument("--anti_echo_file", type=str, default=None)
     p.add_argument("--json_file", type=str, default=None, help="Strict JSON-output dataset JSONL")
+    p.add_argument("--json_hf_file", type=str, default=None, help="HF-converted strict JSON chat JSONL")
     p.add_argument("--injection_file", type=str, default=None, help="Prompt-injection/hierarchy corrective JSONL")
     p.add_argument("--abstention_file", type=str, default=None, help="Abstention corrective JSONL")
+    p.add_argument("--phase31_control_file", type=str, default=None, help="Phase 3.1 eval-aligned control JSONL")
     p.add_argument("--open_chat_files", nargs="*", default=[], help="HF/open-ended chat JSONL files")
 
     p.add_argument("--operators_ratio", type=float, default=0.0)
     p.add_argument("--anti_echo_ratio", type=float, default=0.0)
     p.add_argument("--json_ratio", type=float, default=0.0)
+    p.add_argument("--json_hf_ratio", type=float, default=0.0)
     p.add_argument("--injection_ratio", type=float, default=0.0)
     p.add_argument("--abstention_ratio", type=float, default=0.0)
+    p.add_argument("--phase31_control_ratio", type=float, default=0.0)
     p.add_argument("--grounded_ratio", type=float, default=0.16)
     p.add_argument("--open_chat_cap_ratio", type=float, default=0.20)
     p.add_argument("--multiturn_cap_ratio", type=float, default=0.22)
@@ -194,6 +198,10 @@ def main() -> None:
         raise ValueError("anti_echo_ratio > 0 requires --anti_echo_file")
     if args.json_ratio > 0 and not args.json_file:
         raise ValueError("json_ratio > 0 requires --json_file")
+    if args.json_hf_ratio > 0 and not args.json_hf_file:
+        raise ValueError("json_hf_ratio > 0 requires --json_hf_file")
+    if args.phase31_control_ratio > 0 and not args.phase31_control_file:
+        raise ValueError("phase31_control_ratio > 0 requires --phase31_control_file")
     if args.injection_ratio > 0 and not args.injection_file:
         raise ValueError("injection_ratio > 0 requires --injection_file")
     if args.abstention_ratio > 0 and not args.abstention_file:
@@ -221,6 +229,12 @@ def main() -> None:
     json_rows: List[Dict[str, Any]] = []
     if args.json_file and args.json_ratio > 0:
         json_rows = _add_source(_read_jsonl(Path(args.json_file)), "phase3_json_strict")
+    json_hf_rows: List[Dict[str, Any]] = []
+    if args.json_hf_file and args.json_hf_ratio > 0:
+        json_hf_rows = _add_source(_read_jsonl(Path(args.json_hf_file)), "phase3_json_hf")
+    phase31_rows: List[Dict[str, Any]] = []
+    if args.phase31_control_file and args.phase31_control_ratio > 0:
+        phase31_rows = _add_source(_read_jsonl(Path(args.phase31_control_file)), "phase3_phase31_control")
     injection_rows: List[Dict[str, Any]] = []
     if args.injection_file and args.injection_ratio > 0:
         injection_rows = _add_source(_read_jsonl(Path(args.injection_file)), "phase3_injection_strict")
@@ -242,15 +256,17 @@ def main() -> None:
     n_op = round(n_total * args.operators_ratio) if (args.operators_file and args.operators_ratio > 0) else 0
     n_anti = round(n_total * args.anti_echo_ratio) if (args.anti_echo_file and args.anti_echo_ratio > 0) else 0
     n_json = round(n_total * args.json_ratio) if (args.json_file and args.json_ratio > 0) else 0
+    n_json_hf = round(n_total * args.json_hf_ratio) if (args.json_hf_file and args.json_hf_ratio > 0) else 0
+    n_phase31 = round(n_total * args.phase31_control_ratio) if (args.phase31_control_file and args.phase31_control_ratio > 0) else 0
     n_injection = round(n_total * args.injection_ratio) if (args.injection_file and args.injection_ratio > 0) else 0
     n_abstention = round(n_total * args.abstention_ratio) if (args.abstention_file and args.abstention_ratio > 0) else 0
     n_grounded = int(round(n_total * args.grounded_ratio))
     n_open_cap = round(n_total * args.open_chat_cap_ratio)
 
-    fixed = n_remix + n_op + n_anti + n_json + n_injection + n_abstention + n_grounded
+    fixed = n_remix + n_op + n_anti + n_json + n_json_hf + n_phase31 + n_injection + n_abstention + n_grounded
     if fixed > n_total:
         raise ValueError(
-            "remix_ratio + operators_ratio + anti_echo_ratio + json_ratio + injection_ratio + abstention_ratio + grounded_ratio exceed 100% "
+            "remix_ratio + operators_ratio + anti_echo_ratio + json_ratio + json_hf_ratio + phase31_control_ratio + injection_ratio + abstention_ratio + grounded_ratio exceed 100% "
             f"(fixed={fixed}, n_total={n_total})"
         )
     n_remaining = n_total - fixed
@@ -262,6 +278,8 @@ def main() -> None:
     mixed.extend(_sample(operators_rows, n_op, args.seed + 11))
     mixed.extend(_sample(anti_rows, n_anti, args.seed + 17))
     mixed.extend(_sample(json_rows, n_json, args.seed + 19))
+    mixed.extend(_sample(json_hf_rows, n_json_hf, args.seed + 20))
+    mixed.extend(_sample(phase31_rows, n_phase31, args.seed + 20))
     mixed.extend(_sample(injection_rows, n_injection, args.seed + 21))
     mixed.extend(_sample(abstention_rows, n_abstention, args.seed + 22))
     mixed.extend(_sample(grounded_rows, n_grounded, args.seed + 23))
@@ -286,6 +304,8 @@ def main() -> None:
             "operators": args.operators_ratio,
             "anti_echo": args.anti_echo_ratio,
             "json_strict": args.json_ratio,
+            "json_hf": args.json_hf_ratio,
+            "phase31_control": args.phase31_control_ratio,
             "injection_strict": args.injection_ratio,
             "abstention_strict": args.abstention_ratio,
             "grounded": args.grounded_ratio,
@@ -296,6 +316,8 @@ def main() -> None:
             "operators": n_op,
             "anti_echo": n_anti,
             "json_strict": n_json,
+            "json_hf": n_json_hf,
+            "phase31_control": n_phase31,
             "injection_strict": n_injection,
             "abstention_strict": n_abstention,
             "grounded": n_grounded,
@@ -317,6 +339,8 @@ def main() -> None:
             "operators_file": args.operators_file,
             "anti_echo_file": args.anti_echo_file,
             "json_file": args.json_file,
+            "json_hf_file": args.json_hf_file,
+            "phase31_control_file": args.phase31_control_file,
             "injection_file": args.injection_file,
             "abstention_file": args.abstention_file,
             "open_chat_files": args.open_chat_files,
@@ -352,6 +376,20 @@ def main() -> None:
         c = source_counts.get("phase3_json_strict", 0)
         lineage_inputs.append({
             "path": str(Path(args.json_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.json_hf_file and args.json_hf_ratio > 0:
+        c = source_counts.get("phase3_json_hf", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.json_hf_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.phase31_control_file and args.phase31_control_ratio > 0:
+        c = source_counts.get("phase3_phase31_control", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.phase31_control_file).resolve()),
             "sampled_rows": int(c),
             "effective_ratio": c / max(1, len(mixed)),
         })

@@ -22,6 +22,13 @@ from core.dataset_lineage import iso_now, write_lineage_sidecar
 from core.system_prompts import CHAT_SYSTEM_PROMPTS
 
 
+STRICT_JSON_EVAL_USER = (
+    'Return JSON only with schema {"label": "A|B", "score": number}. '
+    "Use label A and score 1."
+)
+STRICT_JSON_EVAL_ASSISTANT = '{"label":"A","score":1}'
+
+
 def _episode(system: str, user: str, assistant_json: str, language: str, category: str) -> Dict:
     return {
         "system": system,
@@ -51,6 +58,12 @@ SCHEMA_SUFFIX_DE = [
 ]
 
 
+def _sample_eval_json_mirror(rng: random.Random, language: str) -> Tuple[str, str, str]:
+    _ = rng
+    _ = language
+    return STRICT_JSON_EVAL_USER, STRICT_JSON_EVAL_ASSISTANT, "json_strict_eval_mirror"
+
+
 def _sample_label_score(rng: random.Random, language: str) -> Tuple[str, str, str]:
     rows = [
         ("A", 1),
@@ -66,7 +79,7 @@ def _sample_label_score(rng: random.Random, language: str) -> Tuple[str, str, st
         )
     else:
         user = (
-            f"Create a JSON object with keys label (string) and score (number). "
+            f"Create a JSON object with keys label (string) and score (integer). "
             f"label={label}, score={score}. {rng.choice(SCHEMA_SUFFIX_EN)}"
         )
     assistant = json.dumps({"label": label, "score": score}, ensure_ascii=False, separators=(",", ":"))
@@ -131,7 +144,7 @@ def _sample_triplet(rng: random.Random, language: str) -> Tuple[str, str, str]:
         )
     else:
         user = (
-            "Return exactly one JSON object with keys label (string), score (number), reason (string). "
+            "Return exactly one JSON object with keys label (string), score (integer), reason (string). "
             f"Data: label={label}, score={score}, reason={reason}. {rng.choice(SCHEMA_SUFFIX_EN)}"
         )
     assistant = json.dumps(
@@ -173,6 +186,7 @@ def generate_rows(num_examples: int, seed: int, de_ratio: float) -> List[Dict]:
     rng = random.Random(seed)
     systems = CHAT_SYSTEM_PROMPTS
     builders = [
+        _sample_eval_json_mirror,
         _sample_label_score,
         _sample_bool_reason,
         _sample_list_extract,
@@ -213,6 +227,7 @@ def main() -> None:
         "de_ratio": args.de_ratio,
         "source": "phase3_json_strict",
         "categories": {
+            "json_strict_eval_mirror": sum(1 for r in rows if r["_meta"]["category"] == "json_strict_eval_mirror"),
             "json_label_score": sum(1 for r in rows if r["_meta"]["category"] == "json_label_score"),
             "json_allowed_reason": sum(1 for r in rows if r["_meta"]["category"] == "json_allowed_reason"),
             "json_items": sum(1 for r in rows if r["_meta"]["category"] == "json_items"),

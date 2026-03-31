@@ -50,6 +50,7 @@ Usage:
 """
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -550,6 +551,164 @@ def parse_dolly(dataset, languages: List[str], max_examples: int, add_think: boo
     return episodes
 
 
+def _strip_leading_think_block(text: str) -> str:
+    """Remove a single leading fenced/backtick reasoning block if present."""
+    return re.sub(r"(?is)^\s*`\s*.*?\s*`", "", text, count=1)
+
+
+def _compact_json_if_parsable(text: str) -> str:
+    """Extract JSON from ```json fences or fall back after think-strip; return compact JSON literal."""
+    t = (text or "").strip()
+    t = _strip_leading_think_block(t)
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", t, re.IGNORECASE)
+    blob = m.group(1).strip() if m else t
+    try:
+        obj = json.loads(blob)
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        return t.strip()
+
+
+def parse_no_robots(dataset, languages: List[str], max_examples: int, add_think: bool) -> List[dict]:
+    """Parse HuggingFaceH4/no_robots (messages format, train+test)."""
+    episodes: List[dict] = []
+    for split_name in ("train", "test"):
+        if split_name not in dataset:
+            continue
+        for row in dataset[split_name]:
+            if len(episodes) >= max_examples:
+                return episodes
+            messages_raw = row.get("messages", [])
+            if not messages_raw:
+                continue
+            messages: List[Dict[str, Any]] = []
+            system_text = CONVERSATION_SYSTEM_PROMPT
+            first_user_text = ""
+            for msg in messages_raw:
+                role = msg.get("role", "")
+                content = (msg.get("content") or "").strip()
+                if not content:
+                    continue
+                if role == "system":
+                    system_text = content
+                elif role == "user":
+                    if not first_user_text:
+                        first_user_text = content
+                    messages.append(_build_user_message(content, raw_msg=msg, raw_row=row))
+                elif role == "assistant":
+                    messages.append(
+                        _build_assistant_message(content, raw_msg=msg, raw_row=row, add_think=add_think)
+                    )
+            if len(messages) < 2:
+                continue
+            lang = _detect_language(first_user_text or messages[0].get("content", ""))
+            if languages and lang not in languages:
+                continue
+            episodes.append(
+                {
+                    "system": system_text,
+                    "messages": messages,
+                    "language": lang,
+                    "source": "no_robots",
+                }
+            )
+    return episodes
+
+
+def _coerce_ast_list(raw: Any) -> Optional[List[Dict[str, Any]]]:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return raw  # type: ignore[return-value]
+    if isinstance(raw, str):
+        try:
+            v = ast.literal_eval(raw)
+            if isinstance(v, list):
+                return v  # type: ignore[return-value]
+        except (ValueError, SyntaxError, TypeError):
+            return None
+    return None
+
+
+def parse_amans_json_structuring(
+    dataset, languages: List[str], max_examples: int, add_think: bool
+) -> List[dict]:
+    """Parse AmanPriyanshu/reasoning-sft-JSON-structuring-and-correcting (input list + response)."""
+    episodes: List[dict] = []
+    for split_name in ("train", "test"):
+        if split_name not in dataset:
+            continue
+        for row in dataset[split_name]:
+            if len(episodes) >= max_examples:
+                return episodes
+            messages_raw = _coerce_ast_list(row.get("input"))
+            if not messages_raw:
+                continue
+            resp_raw = row.get("response", "")
+            if not isinstance(resp_raw, str) or not resp_raw.strip():
+                continue
+            assistant_text = _compact_json_if_parsable(resp_raw)
+            try:
+                json.loads(assistant_text)
+            except Exception:
+                continue
+
+            messages: List[Dict[str, Any]] = []
+            system_text = CONVERSATION_SYSTEM_PROMPT
+            first_user_text = ""
+            for msg in messages_raw:
+                role = str(msg.get("role", "")).strip().lower()
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    content = content.strip()
+                else:
+                    content = str(content).strip()
+                if role == "system":
+                    if content:
+                        system_text = content
+                    continue
+                if role == "user":
+                    if content:
+                        if not first_user_text:
+                            first_user_text = content
+                        messages.append(_build_user_message(content, raw_msg=msg, raw_row=row))
+                elif role == "assistant":
+                    if content:
+                        messages.append(
+                            _build_assistant_message(content, raw_msg=msg, raw_row=row, add_think=add_think)
+                        )
+                elif role == "tool":
+                    if content:
+                        messages.append(
+                            {
+                                "role": "toolresult",
+                                "name": str(msg.get("name", "tool")),
+                                "content": content,
+                            }
+                        )
+
+            if messages and messages[-1].get("role") == "assistant":
+                messages.pop()
+            if not messages:
+                continue
+            messages.append(_build_assistant_message(assistant_text, raw_row=row, add_think=False))
+
+            if len(messages) < 2:
+                continue
+            lang = _detect_language(first_user_text or "")
+            if languages and lang not in languages:
+                continue
+            episodes.append(
+                {
+                    "system": system_text,
+                    "messages": messages,
+                    "language": lang,
+                    "source": "amans_json_structuring",
+                }
+            )
+    return episodes
+
+
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
@@ -648,6 +807,8 @@ DATASET_PARSERS = {
     "flozi00/german-function-calling": lambda ds, l, m, t: parse_sharegpt_format(ds, l, m, t, "german_function_calling"),
     "mayflowergmbh/wiki_qa_de": lambda ds, l, m, t: parse_sharegpt_format(ds, l, m, t, "wiki_qa_de"),
     "DiscoResearch/germanrag": lambda ds, l, m, t: parse_sharegpt_format(ds, l, m, t, "germanrag"),
+    "HuggingFaceH4/no_robots": parse_no_robots,
+    "AmanPriyanshu/reasoning-sft-JSON-structuring-and-correcting": parse_amans_json_structuring,
 }
 
 
@@ -696,7 +857,7 @@ def main():
         print("Install with: pip install datasets")
         sys.exit(1)
     
-    load_kwargs = {"trust_remote_code": True}
+    load_kwargs: Dict[str, Any] = {}
     if args.subset:
         load_kwargs["name"] = args.subset
     

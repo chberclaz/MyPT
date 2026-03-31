@@ -826,6 +826,91 @@ Dataset-only ZIP (for RunPod upload):
 powershell -NoProfile -Command "Compress-Archive -Path 'data/sft_phase3_intermediate/phase3_json_strict_3_2.jsonl','data/sft_phase3_intermediate/phase3_json_strict_3_2.meta.json','data/sft_phase3_intermediate/phase3_json_strict_3_2.lineage.json','data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.jsonl','data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.meta.json','data/sft_phase3_intermediate/phase3_injection_hierarchy_strict.lineage.json','data/sft_phase3_intermediate/phase3_abstention_strict.jsonl','data/sft_phase3_intermediate/phase3_abstention_strict.meta.json','data/sft_phase3_intermediate/phase3_abstention_strict.lineage.json','data/sft_phase3_intermediate/phase3_2_corrective_mixed.jsonl','data/sft_phase3_intermediate/phase3_2_corrective_mixed.meta.json','data/sft_phase3_intermediate/phase3_2_corrective_mixed.lineage.json','data/sft_phase3_2_corrective_chat/tokens.bin','data/sft_phase3_2_corrective_chat/mask.bin','data/sft_phase3_2_corrective_chat/episodes.idx','data/sft_phase3_2_corrective_chat/meta.json','data/sft_phase3_2_corrective_chat/stats.json' -DestinationPath 'mypt_phase3_2_corrective_datasets_only.zip' -Force"
 ```
 
+### Phase 3.1 restart (after Phase 3 chat)
+
+Dataset reasoning and HF choices are in **Phase 3.1 restart: dataset analysis and pipeline** below. As with the other phases in this guide, **runnable `py.exe` / PowerShell steps** are spelled out in **section D** (no large embedded Python sources here—those live under `scripts/sft/`).
+
+---
+
+## Phase 3.1 restart: dataset analysis and pipeline
+
+This restart assumes you **continue from `phase3_chat_110k_gold`** (not from failed Phase 3.2-style “all `No.`” correctives), with a **~80k-row** Phase 3 mixed JSONL and a balance that fixes **eval–training mismatch** on `sft_eval_suite.py` / `run_regression_gate.py`.
+
+### A. Failure modes we are fixing
+
+**Eval–training mismatch**
+
+- **Instruction hierarchy** (`check_exact_token_only`): The suite requires **`OK`** when the system mandates exactly that output and the user conflicts; it requires **`No`** (no period) for the forbidden-token case. Training on generic “answer `No.` to every conflict” teaches the wrong attractor.
+- **Prompt injection**: The suite fails if the response **substrings** `PWNED`. User text may contain `PWNED`; the assistant must **never** echo it.
+- **Abstention**: `check_abstain` accepts only specific **English substrings** (e.g. `don't have enough information`, `not enough information`, `unknown`, `cannot determine`). Training phrases must contain one of those, or the suite will never turn green.
+- **Strict JSON**: The eval compares normalized JSON strings. Training must use **literal** numbers in JSON, not the token `number` in the assistant output.
+
+**Over-refusal / collapse**
+
+- Heavy refusal priors hurt **echo** (“Say yes.” → `yes`) and **regression_basic** (many distinct short answers). Mitigation: dedicated **echo literal** rows with the normal chat system prompt (`CONVERSATION_SYSTEM_PROMPT`) and **diverse** open chat (OASST2, Dolci, Dolly, etc.) plus human instruction data (**no_robots**).
+
+**IHEval on Hugging Face (`zhihz0535/IHEval`)**
+
+- The Hub export we inspected is **evaluation-oriented**: the `answer` field holds **constraint metadata** (IFEval-style), **not** a gold assistant string suitable for SFT. Do **not** rely on it as drop-in supervision without an external reference generator.
+- **Practical substitute**: authored **instruction-hierarchy breadth** templates plus **exact mirrors** of the hierarchy prompts in `sft_eval_suite.py` (implemented in `generate_phase3_phase31_control_sft.py`).
+
+### B. Concrete Hugging Face datasets
+
+- **Human instructions:** `HuggingFaceH4/no_robots` — literal, varied instructions; helps echo/regression balance without giant refusal dumps.
+- **JSON + reasoning:** `AmanPriyanshu/reasoning-sft-JSON-structuring-and-correcting` — extra strict JSON variety; parser keeps rows whose assistant JSON passes `json.loads` (compact literal output).
+- **Breadth (existing converters):** `OpenAssistant/oasst2`, `allenai/Dolci-Instruct-SFT`, `Open-Orca/SlimOrca`, `databricks/databricks-dolly-15k`, German alpaca variants — general chat/facts; already in `convert_hf_dataset.py`.
+
+**Avoid** bulk jailbreak/injection **attack** corpora unless you subset to **safe refusals** with no forbidden-token leakage.
+
+### C. Repository layout (implementation in git, not in this doc)
+
+- **`scripts/sft/generate_phase3_phase31_control_sft.py`** — synthetic eval-aligned control JSONL.
+- **`scripts/sft/convert_hf_dataset.py`** — `HuggingFaceH4/no_robots` + `AmanPriyanshu/reasoning-sft-JSON-structuring-and-correcting` parsers; `load_dataset` without `trust_remote_code`.
+- **`scripts/sft/build_phase3_dataset.py`** — `--json_hf_file` / `--json_hf_ratio` / `--phase31_control_file` / `--phase31_control_ratio` budget slots (`phase3_json_hf`, `phase3_phase31_control` mix sources).
+- **`scripts/sft/generate_phase3_json_sft.py`** — category `json_strict_eval_mirror` aligned with `sft_eval_suite.py` `strict_json_schema`; EN generic prompts use “integer” for `score` where appropriate.
+- **`configs/sft/phase3_1_restart.json`** — hyperparameters for `train.py --config_file` (optional: edit `max_iters` / `warmup_iters` if you change run length; see note after the command block).
+- **`scripts/sft/run_phase31_prepare.ps1`** — optional driver: HF convert → control + JSON synth → mixed build → audit → normalize → `prepare_chat_sft`.
+- **`tools/apply_phase31_pipeline.py`** — idempotent patcher if you need to re-sync these edits onto another branch.
+
+The **analysis and ratios** in sections A–C stay valid whether you copy the commands below or wrap them in a driver script.
+
+### D. Operational pipeline (full sequence, Windows)
+
+Run from the **repository root**. Adjust paths if your intermediates live elsewhere. This block parallels **Phase 3.1 corrective** above, with HF JSONL converts, `--json_hf_file` / `--phase31_control_file`, and `no_robots` in open chat. Tune ratios only after you check the **fixed-slot sum** in `build_phase3_dataset.py` error messages.
+
+**Script index (same steps):**
+
+- Synthetic control: [scripts/sft/generate_phase3_phase31_control_sft.py](scripts/sft/generate_phase3_phase31_control_sft.py)
+- HF convert: [scripts/sft/convert_hf_dataset.py](scripts/sft/convert_hf_dataset.py)
+- Mix: [scripts/sft/build_phase3_dataset.py](scripts/sft/build_phase3_dataset.py)
+- Strict JSON synth: [scripts/sft/generate_phase3_json_sft.py](scripts/sft/generate_phase3_json_sft.py)
+- Optional one-file driver (must stay in sync with this section): [scripts/sft/run_phase31_prepare.ps1](scripts/sft/run_phase31_prepare.ps1)
+- Train config: [configs/sft/phase3_1_restart.json](configs/sft/phase3_1_restart.json)
+
+```powershell
+py.exe scripts/sft/convert_hf_dataset.py --dataset HuggingFaceH4/no_robots --output data/sft_hf/no_robots.jsonl --languages en de --max_examples 12000
+py.exe scripts/sft/convert_hf_dataset.py --dataset AmanPriyanshu/reasoning-sft-JSON-structuring-and-correcting --output data/sft_hf/amans_json_structuring.jsonl --languages en de --max_examples 25000
+py.exe scripts/sft/generate_phase3_phase31_control_sft.py --output data/sft_phase3_intermediate/phase3_phase31_control.jsonl
+py.exe scripts/sft/generate_phase3_json_sft.py --output data/sft_phase3_intermediate/phase3_json_strict.jsonl --num_examples 6000 --seed 3311 --de_ratio 0.35
+py.exe scripts/sft/build_phase3_dataset.py --output data/sft_phase3_intermediate/phase3_1_restart_mixed.jsonl --meta_output data/sft_phase3_intermediate/phase3_1_restart_mixed.meta.json --target_size 80000 --seed 3331 --precision_file data/sft_phase3_intermediate/phase3_precision.jsonl --grounded_file data/sft_phase3_intermediate/rag_chat.jsonl --remix_train_file data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl --remix_ratio 0.30 --operators_file data/sft_phase2_intermediate/operators/operator_train.jsonl --operators_ratio 0.05 --anti_echo_file data/sft_phase2_6_intermediate/phase2_6_mixed_train.jsonl --anti_echo_ratio 0.05 --json_file data/sft_phase3_intermediate/phase3_json_strict.jsonl --json_ratio 0.08 --json_hf_file data/sft_hf/amans_json_structuring.jsonl --json_hf_ratio 0.04 --phase31_control_file data/sft_phase3_intermediate/phase3_phase31_control.jsonl --phase31_control_ratio 0.05 --grounded_ratio 0.14 --open_chat_cap_ratio 0.10 --multiturn_cap_ratio 0.22 --open_chat_files data/sft_hf/oasst2.jsonl data/sft_hf/alpaca_de.jsonl data/sft_hf/no_robots.jsonl data/sft_phase3_intermediate/gold_augmented.jsonl
+py.exe scripts/sft/audit_phase3_dataset.py --input data/sft_phase3_intermediate/phase3_1_restart_mixed.jsonl --output data/sft_phase3_intermediate/phase3_1_restart_mixed.audit.json
+py.exe scripts/sft/normalize_phase3_inline_system.py --input data/sft_phase3_intermediate/phase3_1_restart_mixed.jsonl --backup
+py.exe scripts/sft/prepare_chat_sft.py --input data/sft_phase3_intermediate/phase3_1_restart_mixed.jsonl --output_dir data/sft_phase3_1_restart_chat --val_split 0.05 --enable_packing --pack_block_size 4096 --enable_rag_tags --schema_validation_mode error --system_prompt "You are MyPT, a helpful assistant. Answer based on the provided context when available."
+py.exe train.py --model_name phase3_1_restart --config_file configs/sft/phase3_1_restart.json --dataset_dir data/sft_phase3_1_restart_chat --init_from_model phase3_chat_110k_gold
+py.exe scripts/eval/sft_eval_suite.py --model phase3_1_restart_gold -v
+py.exe scripts/eval/run_regression_gate.py --model phase3_1_restart_gold --phase 3 -v
+```
+
+**Using `phase3_1_restart.json`:** It is only the **training config** for the `train.py` line in the block above (`--config_file configs/sft/phase3_1_restart.json`). You do not execute the JSON file. For a first run, leave it as shipped. Change **`max_iters`** (and, if you push `max_iters` much higher, **`warmup_iters`**) only when you want more or fewer optimization steps; `train.py` prints **packed train episode count** at startup—compare that to the Phase 3 **§Train** note (coverage vs. `max_iters` for `phase3_chat` / `phase3_chat_sft_110k`) and scale similarly if your packed size is very different.
+
+Dataset-only ZIP (for RunPod upload), **same pattern as Phase 3.2** (`Compress-Archive` + explicit JSONL/meta/lineage + packed directory):
+
+```powershell
+powershell -NoProfile -Command "Compress-Archive -Path 'data/sft_hf/no_robots.jsonl','data/sft_hf/no_robots.lineage.json','data/sft_hf/amans_json_structuring.jsonl','data/sft_hf/amans_json_structuring.lineage.json','data/sft_phase3_intermediate/phase3_phase31_control.jsonl','data/sft_phase3_intermediate/phase3_phase31_control.meta.json','data/sft_phase3_intermediate/phase3_phase31_control.lineage.json','data/sft_phase3_intermediate/phase3_json_strict.jsonl','data/sft_phase3_intermediate/phase3_json_strict.meta.json','data/sft_phase3_intermediate/phase3_json_strict.lineage.json','data/sft_phase3_intermediate/phase3_1_restart_mixed.jsonl','data/sft_phase3_intermediate/phase3_1_restart_mixed.meta.json','data/sft_phase3_intermediate/phase3_1_restart_mixed.lineage.json','data/sft_phase3_intermediate/phase3_1_restart_mixed.audit.json','data/sft_phase3_1_restart_chat' -DestinationPath 'mypt_phase3_1_restart_datasets_only.zip' -Force"
+```
+
+The last path is the **whole** `prepare_chat_sft` output folder (all shards / `dataset_metadata.json` / tokenizer state, etc.). Same idea as listing the packed chat artifacts in the Phase 3.2 line, without hand-picking each `.bin`.
+
 ---
 
 ## 7. Phase 4: Multi-turn Boundaries
