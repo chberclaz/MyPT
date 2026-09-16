@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Chat{% endblock %}
+
+{% block content %}
+<!-- Sidebar -->
+<div class="sidebar">
+    <!-- Workspace Index Status -->
+    <div class="sidebar-section">
+        <div class="sidebar-title">Index Status</div>
+        
+        <!-- Status Indicator -->
+        <div class="index-status" id="index-status">
+            <div class="status-row">
+                <span class="status-label">Status</span>
+                <span class="status-value" id="index-status-badge">
+                    <span class="status-dot" id="status-dot"></span>
+                    <span id="index-status-text">Checking...</span>
+                </span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Documents</span>
+                <span class="status-value" id="docs-count">—</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Chunks</span>
+                <span class="status-value" id="chunks-count">—</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Embedding</span>
+                <span class="status-value" id="embedding-dim">256-dim</span>
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="mt-md flex gap-sm">
+            <button id="rebuild-index-btn" class="btn btn-secondary flex-1">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M23 4v6h-6"/>
+                    <path d="M1 20v-6h6"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+                Rebuild Index
+            </button>
+        </div>
+    </div>
+    
+    <!-- Indexed Files (Collapsible) -->
+    <div class="sidebar-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+        <div class="sidebar-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>Indexed Files</span>
+            <button id="toggle-files-btn" class="btn-icon-mini" title="Show/hide file list">
+                <svg id="toggle-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+            </button>
+        </div>
+        <div id="documents-list" class="file-list collapsed">
+            <div class="text-muted text-sm">No files indexed</div>
+        </div>
+    </div>
+    
+    <!-- Model Selection -->
+    <div class="sidebar-section">
+        <div class="sidebar-title">Model</div>
+        <select id="model-select" class="form-select">
+            <option disabled>Loading models...</option>
+        </select>
+        
+        <!-- Mode Selection -->
+        <div class="sidebar-title mt-md">Mode</div>
+        <select id="mode-select" class="form-select">
+            <option value="conversation">💬 Conversation</option>
+            <option value="agentic" selected>🔧 Agentic (RAG)</option>
+        </select>
+        <div class="text-muted text-xs mt-sm" id="mode-description">
+            Uses workspace tools to search documents
+        </div>
+        
+        <label class="flex items-center gap-sm mt-md" style="cursor: pointer;">
+            <input type="checkbox" id="verbose-check" style="width: 18px; height: 18px;">
+            <span class="text-sm">Verbose mode</span>
+        </label>
+    </div>
+</div>
+
+<!-- Chat Area -->
+<div class="chat-container">
+    <!-- Messages -->
+    <div id="chat-messages" class="chat-messages">
+        <div class="message system">
+            <strong>Welcome to MyPT Workspace Assistant</strong><br>
+            I can help you search and analyze documents in your workspace.
+            Try asking questions about your indexed documents.
+        </div>
+    </div>
+    
+    <!-- Loading indicator -->
+    <div id="loading-indicator" class="message assistant" style="display: none;">
+        <div class="flex items-center gap-sm">
+            <div class="loading-spinner"></div>
+            <span>Thinking...</span>
+        </div>
+    </div>
+    
+    <!-- Input Area -->
+    <div class="chat-input-container">
+        <div class="chat-input-wrapper">
+            <textarea 
+                id="chat-input"
+                class="chat-input" 
+                placeholder="Ask a question about your documents..."
+                rows="1"
+            ></textarea>
+            <button id="send-btn" class="btn btn-primary btn-icon" data-tooltip="Send message">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 2L11 13"/>
+                    <path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+                </svg>
+            </button>
+            <button id="clear-btn" class="btn btn-ghost btn-icon" data-tooltip="Clear chat">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}

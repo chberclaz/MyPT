@@ -1,0 +1,13 @@
+{
+  "name": "GPT-750M-1024-Deep",
+  "description": "750M maximum depth variant: 36 layers for complex reasoning chains. Trade-off: harder to train, needs warmup.",
+  "batch_size": 10,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1152,
+  "n_head": 18,
+  "n_layer": 36,
+  "dropout": 0.1,
+  "bias": false
+}
+

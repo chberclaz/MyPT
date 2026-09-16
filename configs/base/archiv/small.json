@@ -1,0 +1,12 @@
+{
+  "name": "GPT-Small",
+  "description": "Small GPT model for testing (fast training)",
+  "batch_size": 32,
+  "block_size": 256,
+  "vocab_size": 50304,
+  "n_embd": 384,
+  "n_head": 6,
+  "n_layer": 6,
+  "dropout": 0.2,
+  "bias": false
+}

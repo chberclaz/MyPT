@@ -1,0 +1,21 @@
+{
+  "<myPT_system>": 50257,
+  "</myPT_system>": 50258,
+  "<myPT_user>": 50259,
+  "</myPT_user>": 50260,
+  "<myPT_assistant>": 50261,
+  "</myPT_assistant>": 50262,
+  "<myPT_user_context>": 50263,
+  "</myPT_user_context>": 50264,
+  "<myPT_assistant_context>": 50265,
+  "</myPT_assistant_context>": 50266,
+  "<myPT_toolcall>": 50267,
+  "</myPT_toolcall>": 50268,
+  "<myPT_toolresult>": 50269,
+  "</myPT_toolresult>": 50270,
+  "<myPT_think>": 50271,
+  "</myPT_think>": 50272,
+  "<myPT_cite>": 50273,
+  "</myPT_cite>": 50274,
+  "<myPT_eot>": 50275
+}

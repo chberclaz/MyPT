@@ -1,0 +1,31 @@
+{
+  "name": "GPT-750M-1024-Phase1.5-Induction-Beta",
+  "description": "Phase 1.5b: continue from GOLD checkpoint (step 156k, val=3.38) with higher LR to strengthen weak induction heads. LR 1e-4 (up from 6e-5 which plateaued at 3.38-3.50). Short warmup (2k steps) since model is already trained. Fresh optimizer state. 330k iters on same 4.02B token dataset. Litmus test: must break below 3.38 by step 20k or LR is not the bottleneck.",
+
+  "batch_size": 12,
+  "block_size": 1024,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.1,
+  "bias": false,
+  "tie_weights": false,
+
+  "learning_rate": 1e-4,
+  "max_iters": 330000,
+  "eval_interval": 2000,
+  "eval_iters": 150,
+  "warmup_iters": 2000,
+  "grad_clip": 1.0,
+  "weight_decay": 0.1,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+
+  "eval_sets": {
+    "general": "data/multilingual_1.5B_wiki90",
+    "domain": "data/domain_161M_corpus_tokenized"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase1_5_induction_beta_eval.jsonl"
+}

@@ -1,0 +1,26 @@
+{# Generated from core.special_tokens + prepare_tool_sft block layout. Regen via generate_chat_template.py.
+   Every packer tag string must appear in this file. #}
+{%- for message in messages -%}
+{%- if message['role'] == 'system' -%}
+<myPT_system>{{ message['content'] }}</myPT_system>
+{%- elif message['role'] == 'user' -%}
+{%- if message.get('context') -%}
+<myPT_user><myPT_user_context>{{ message['context'] }}</myPT_user_context>{{ message['content'] }}</myPT_user>
+{%- else -%}
+<myPT_user>{{ message['content'] }}</myPT_user>
+{%- endif -%}
+{%- elif message['role'] == 'assistant_context' -%}
+<myPT_assistant_context>{{ message['content'] }}</myPT_assistant_context>
+{%- elif message['role'] in ['assistant_toolcall', 'assistant_frozen'] -%}
+<myPT_assistant> {% if message.get('think') %}<myPT_think>{{ message['think'] }}</myPT_think>{% endif %}<myPT_toolcall>{{ message['content'] }}</myPT_toolcall></myPT_assistant>
+{%- elif message['role'] == 'assistant' -%}
+<myPT_assistant> {% if message.get('think') %}<myPT_think>{{ message['think'] }}</myPT_think>{% endif %}{{ message['content'] }}{% if message.get('cite') %}<myPT_cite>{{ message['cite'] }}</myPT_cite>{% endif %}</myPT_assistant>
+{%- elif message['role'] == 'toolresult' -%}
+<myPT_toolresult>{{ message['content'] if message['content'] is string else message['content'] | tojson }}</myPT_toolresult>
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+<myPT_assistant> 
+{%- else -%}
+<myPT_eot>
+{%- endif -%}

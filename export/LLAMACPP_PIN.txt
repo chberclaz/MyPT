@@ -1,0 +1,6 @@
+sha=1b89a43e3835f0c8bbef5543977151972874a9ce
+source=https://github.com/ggml-org/llama.cpp
+note=Source tree cloned to third_party/llama.cpp (gitignored). Windows has no local C++ toolchain; runtime binaries are the matching GitHub release zip unpacked to third_party/llama.cpp-bin/.
+binaries_tag=b10731
+binaries_commit=0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0
+gguf_py=third_party/llama.cpp/gguf-py (install from this tree, not PyPI)

@@ -1,0 +1,173 @@
+[
+  {
+    "id": 50257,
+    "content": "<myPT_system>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50258,
+    "content": "</myPT_system>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50259,
+    "content": "<myPT_user>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50260,
+    "content": "</myPT_user>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50261,
+    "content": "<myPT_assistant>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50262,
+    "content": "</myPT_assistant>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50263,
+    "content": "<myPT_user_context>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50264,
+    "content": "</myPT_user_context>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50265,
+    "content": "<myPT_assistant_context>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50266,
+    "content": "</myPT_assistant_context>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50267,
+    "content": "<myPT_toolcall>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50268,
+    "content": "</myPT_toolcall>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50269,
+    "content": "<myPT_toolresult>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50270,
+    "content": "</myPT_toolresult>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50271,
+    "content": "<myPT_think>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50272,
+    "content": "</myPT_think>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50273,
+    "content": "<myPT_cite>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50274,
+    "content": "</myPT_cite>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  },
+  {
+    "id": 50275,
+    "content": "<myPT_eot>",
+    "single_word": false,
+    "lstrip": false,
+    "rstrip": false,
+    "normalized": false,
+    "special": true
+  }
+]

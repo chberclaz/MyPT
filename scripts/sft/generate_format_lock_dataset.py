@@ -1,0 +1,1376 @@
+#!/usr/bin/env python3
+"""
+Generate Phase 3a-1 Format Locking Dataset (Combinatorial Version)
+
+Creates diverse Q&A pairs to teach the model:
+1. The conversation format (system → user → assistant)
+2. When to stop generating (after closing tag)
+3. Basic response patterns
+
+Uses combinatorial expansion to generate many unique sequences.
+All responses are 1-5 tokens to maximize format exposure per token.
+"""
+
+import json
+import random
+import sys
+from pathlib import Path
+from typing import List, Tuple
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+# System prompt - keep consistent for format locking
+from core.system_prompts import CONVERSATION_SYSTEM_PROMPT
+SYSTEM_PROMPT = CONVERSATION_SYSTEM_PROMPT
+
+
+def generate_pairs(math_mode: str = "include", dataset_mode: str = "full") -> List[Tuple[str, str]]:
+    """Generate diverse Q&A pairs with minimal responses using combinatorial expansion.
+    
+    Args:
+        math_mode: "include" (all), "exclude" (no math), "only" (math only), "minimal" (~500)
+        dataset_mode: "full" (all categories), "minimal" (~1000 focused examples for format lock)
+    """
+    pairs = []
+    
+    # ==========================================================================
+    # COMBINATORIAL COMPONENTS - Define templates and content separately
+    # ==========================================================================
+    
+    # Question templates for single-word answers
+    SAY_TEMPLATES = [
+        "Say {word}.",
+        "Reply with {word}.",
+        "Respond {word}.",
+        "Answer {word}.",
+        "Output {word}.",
+        "Just say {word}.",
+        "One word: {word}.",
+        "Single word: {word}.",
+        "Brief: {word}.",
+        "Short answer: {word}.",
+    ]
+    
+    # Words for SAY templates - FULL set
+    BASIC_WORDS_FULL = [
+        "hello", "hi", "goodbye", "bye", "thanks", "please", "sorry", "welcome",
+        "done", "complete", "finished", "success", "failed", "error", "correct",
+        "wrong", "true", "false", "maybe", "perhaps", "definitely", "absolutely",
+        "certainly", "never", "always", "sometimes", "continue", "stop", "start",
+        "pause", "resume", "yes", "no", "OK", "confirmed", "denied", "approved",
+        "rejected", "accepted", "ready", "waiting", "loading", "processing",
+        "saved", "deleted", "updated", "created", "found", "missing", "valid",
+        "invalid", "enabled", "disabled", "active", "inactive", "online", "offline",
+        "test", "ID-008", "id-903",
+    ]
+    
+    # Words for SAY templates - MINIMAL set (both cases for key words)
+    # Target: ~60 unique words to get ~600 SAY pairs (60 words × 10 templates)
+    BASIC_WORDS_MINIMAL = [
+        # Core words in BOTH cases to teach case doesn't matter
+        "hello", "Hello", "HELLO",
+        "yes", "Yes", "YES",
+        "no", "No", "NO",
+        "ok", "OK", "Ok",
+        "hi", "Hi", "HI",
+        "bye", "Bye", "BYE",
+        "thanks", "Thanks", "THANKS",
+        "done", "Done", "DONE",
+        "ready", "Ready", "READY",
+        "stop", "Stop", "STOP",
+        "start", "Start", "START",
+        "true", "True", "TRUE",
+        "false", "False", "FALSE",
+        "error", "Error", "ERROR",
+        "success", "Success", "SUCCESS",
+        # Additional common words (mixed case)
+        "please", "Please",
+        "sorry", "Sorry",
+        "welcome", "Welcome",
+        "good", "Good",
+        "bad", "Bad",
+        "correct", "Correct",
+        "wrong", "Wrong",
+        "confirmed", "Confirmed",
+        "denied", "Denied",
+        "active", "Active",
+        "wait", "Wait",
+        "go", "Go",
+        "now", "Now",
+        "later", "Later",
+        "maybe", "Maybe",
+        "test", "Test",
+        "open", "Open",
+        "close", "Close",
+        "save", "Save",
+        "send", "Send",
+        # Common nouns for echo testing (both cases)
+        "apple", "Apple", "APPLE",
+        "banana", "Banana", "BANANA",
+        "cat", "Cat", "CAT",
+        "dog", "Dog", "DOG",
+        "red", "Red", "RED",
+        "blue", "Blue", "BLUE",
+    ]
+    
+    # Select word set based on mode
+    BASIC_WORDS = BASIC_WORDS_MINIMAL if dataset_mode == "minimal" else BASIC_WORDS_FULL
+    
+    # Generate SAY combinations
+    if math_mode != "only":
+        for template in SAY_TEMPLATES:
+            for word in BASIC_WORDS:
+                q = template.format(word=word)
+                a = f"{word}."
+                pairs.append((q, a))
+    
+    # ==========================================================================
+    # MATH - Combinatorial expansion
+    # - "include" or "only": full ~10k episodes
+    # - "minimal": ~500 episodes (small ranges, 2 templates each)
+    # ==========================================================================
+    
+    if math_mode not in ["exclude"]:
+        if math_mode == "minimal":
+            # Minimal math: smaller ranges, fewer templates (~500 episodes)
+            ADD_TEMPLATES = [("What is {a} + {b}?", "{r}."), ("{a} plus {b}?", "{r}.")]
+            SUB_TEMPLATES = [("What is {a} - {b}?", "{r}."), ("{a} minus {b}?", "{r}.")]
+            MUL_TEMPLATES = [("What is {a} × {b}?", "{r}."), ("{a} times {b}?", "{r}.")]
+            DIV_TEMPLATES = [("What is {a} ÷ {b}?", "{r}.")]
+            
+            # Addition: 0-20 + 0-10 = ~200 pairs
+            for a in range(0, 21):
+                for b in range(0, 11):
+                    for tq, ta in ADD_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
+            
+            # Subtraction: ~100 pairs
+            for a in range(1, 21):
+                for b in range(0, min(a+1, 11)):
+                    for tq, ta in SUB_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
+            
+            # Multiplication: 0-12 × 0-12 = ~150 pairs  
+            for a in range(0, 13):
+                for b in range(0, 13):
+                    for tq, ta in MUL_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
+            
+            # Division: ~50 pairs
+            for a in range(0, 51):
+                for b in range(1, 11):
+                    if a % b == 0:
+                        for tq, ta in DIV_TEMPLATES:
+                            pairs.append((tq.format(a=a, b=b), ta.format(r=a//b)))
+        else:
+            # Full math: larger ranges, all templates (~10k episodes)
+            ADD_TEMPLATES = [
+                ("What is {a} + {b}?", "{r}."),
+                ("{a} plus {b}?", "{r}."),
+                ("{a} + {b}?", "{r}."),
+                ("Add {a} and {b}.", "{r}."),
+            ]
+            SUB_TEMPLATES = [
+                ("What is {a} - {b}?", "{r}."),
+                ("{a} minus {b}?", "{r}."),
+                ("{a} - {b}?", "{r}."),
+                ("Subtract {b} from {a}.", "{r}."),
+            ]
+            MUL_TEMPLATES = [
+                ("What is {a} × {b}?", "{r}."),
+                ("{a} times {b}?", "{r}."),
+                ("{a} * {b}?", "{r}."),
+                ("Multiply {a} by {b}.", "{r}."),
+            ]
+            DIV_TEMPLATES = [
+                ("What is {a} ÷ {b}?", "{r}."),
+                ("{a} divided by {b}?", "{r}."),
+                ("{a} / {b}?", "{r}."),
+            ]
+            
+            # Addition (expanded range)
+            for a in range(0, 51):
+                for b in range(0, 21):
+                    for tq, ta in ADD_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
+            
+            # Subtraction (only valid results)
+            for a in range(0, 51):
+                for b in range(0, min(a+1, 21)):
+                    for tq, ta in SUB_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
+            
+            # Multiplication (times tables extended)
+            for a in range(0, 16):
+                for b in range(0, 16):
+                    for tq, ta in MUL_TEMPLATES:
+                        pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
+            
+            # Division (clean results only, expanded)
+            for a in range(0, 151):
+                for b in range(1, 16):
+                    if a % b == 0:
+                        for tq, ta in DIV_TEMPLATES:
+                            pairs.append((tq.format(a=a, b=b), ta.format(r=a//b)))
+    
+    # ==========================================================================
+    # Skip other content when in "only" mode for math
+    # ==========================================================================
+    if math_mode == "only":
+        return pairs
+    
+    # ==========================================================================
+    # MINIMAL MODE: Only essential categories for format locking
+    # Target: ~1000-1200 total examples (SAY pairs + extras below)
+    # ==========================================================================
+    if dataset_mode == "minimal":
+        # ----- YES/NO facts (expanded) -----
+        MINIMAL_YES = [
+            "Is water wet?", "Is the sky blue?", "Is 2+2=4?", "Is 10 > 5?",
+            "Is red a color?", "Is fire hot?", "Is ice cold?", "Is 1 odd?",
+            "Is grass green?", "Is the sun bright?", "Is snow white?", "Is 5 > 3?",
+            "Is Monday a day?", "Is Python a language?", "Is 100 > 50?", "Is 2 even?",
+            "Is sugar sweet?", "Is night dark?", "Is summer warm?", "Is 7 odd?",
+        ]
+        MINIMAL_NO = [
+            "Is fire cold?", "Is ice hot?", "Is 2+2=5?", "Is 3 > 7?",
+            "Is night bright?", "Is water dry?", "Is 1 even?", "Is 10 < 5?",
+            "Is snow black?", "Is 5 < 3?", "Is summer cold?", "Is the moon a star?",
+            "Is glass opaque?", "Is sugar salty?", "Is 100 < 50?", "Is 8 odd?",
+        ]
+        for fact in MINIMAL_YES:
+            pairs.append((fact, "Yes."))
+        for fact in MINIMAL_NO:
+            pairs.append((fact, "No."))
+        
+        # ----- Greetings (expanded) -----
+        MINIMAL_GREETINGS = [
+            ("Good morning!", "Good morning!"),
+            ("Good afternoon!", "Good afternoon!"),
+            ("Good evening!", "Good evening!"),
+            ("Good night!", "Good night!"),
+            ("Hello!", "Hello!"),
+            ("Hi!", "Hi!"),
+            ("Hey!", "Hey!"),
+            ("How are you?", "Good."),
+            ("How's it going?", "Good."),
+            ("What's up?", "Hello!"),
+            ("Greetings!", "Greetings!"),
+            ("Welcome!", "Welcome!"),
+        ]
+        pairs.extend(MINIMAL_GREETINGS)
+        
+        # ----- Status/Acknowledgments (expanded) -----
+        MINIMAL_STATUS = [
+            ("Status?", "OK."),
+            ("Ready?", "Ready."),
+            ("All good?", "Yes."),
+            ("Understood?", "Understood."),
+            ("Who are you?", "MyPT."),
+            ("What is your name?", "MyPT."),
+            ("Are you there?", "Yes."),
+            ("Can you help?", "Yes."),
+            ("Working?", "Yes."),
+            ("Online?", "Yes."),
+            ("Confirm?", "Confirmed."),
+            ("Clear?", "Clear."),
+            ("Copy?", "Copy."),
+            ("Got it?", "Got it."),
+        ]
+        pairs.extend(MINIMAL_STATUS)
+        
+        # ----- German (expanded with templates) -----
+        MINIMAL_GERMAN_SAY = [
+            "Hallo", "hallo", "HALLO",
+            "Ja", "ja", "JA",
+            "Nein", "nein", "NEIN",
+            "OK", "ok", "Ok",
+            "Danke", "danke",
+            "Bitte", "bitte",
+            "Gut", "gut",
+            "Fertig", "fertig",
+            "Bereit", "bereit",
+        ]
+        GERMAN_TEMPLATES = ["Sag {word}.", "Sage {word}.", "Antworte {word}."]
+        for template in GERMAN_TEMPLATES:
+            for word in MINIMAL_GERMAN_SAY:
+                pairs.append((template.format(word=word), f"{word}."))
+        
+        MINIMAL_GERMAN_QA = [
+            ("Guten Morgen!", "Guten Morgen!"),
+            ("Guten Tag!", "Guten Tag!"),
+            ("Guten Abend!", "Guten Abend!"),
+            ("Gute Nacht!", "Gute Nacht!"),
+            ("Wie geht's?", "Gut."),
+            ("Alles klar?", "Ja."),
+            ("Verstanden?", "Verstanden."),
+            ("Bereit?", "Bereit."),
+            ("Fertig?", "Fertig."),
+            ("Ist Wasser nass?", "Ja."),
+            ("Ist Feuer kalt?", "Nein."),
+            ("Ist der Himmel blau?", "Ja."),
+        ]
+        pairs.extend(MINIMAL_GERMAN_QA)
+        
+        # ----- Colors with multiple templates -----
+        MINIMAL_COLORS = [
+            "red", "Red", "RED", "blue", "Blue", "BLUE",
+            "green", "Green", "yellow", "Yellow",
+            "black", "Black", "white", "White",
+            "orange", "Orange", "purple", "Purple",
+        ]
+        COLOR_TEMPLATES_MIN = ["Say {color}.", "Color: {color}.", "Reply with {color}."]
+        for template in COLOR_TEMPLATES_MIN:
+            for color in MINIMAL_COLORS:
+                pairs.append((template.format(color=color), f"{color}."))
+        
+        # ----- Days with templates -----
+        DAYS_MIN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        DAY_TEMPLATES_MIN = ["Say {day}.", "What day is {day}?", "Day: {day}."]
+        for template in DAY_TEMPLATES_MIN:
+            for day in DAYS_MIN:
+                pairs.append((template.format(day=day), f"{day}."))
+        
+        # ----- Numbers 0-20 with templates -----
+        for num in range(0, 21):
+            pairs.append((f"Say {num}.", f"{num}."))
+            pairs.append((f"Number: {num}.", f"{num}."))
+            pairs.append((f"Reply with {num}.", f"{num}."))
+        
+        # ----- Simple opposites -----
+        MINIMAL_OPPOSITES = [
+            ("Opposite of hot?", "Cold."), ("Opposite of cold?", "Hot."),
+            ("Opposite of big?", "Small."), ("Opposite of small?", "Big."),
+            ("Opposite of fast?", "Slow."), ("Opposite of slow?", "Fast."),
+            ("Opposite of good?", "Bad."), ("Opposite of bad?", "Good."),
+            ("Opposite of yes?", "No."), ("Opposite of no?", "Yes."),
+            ("Opposite of up?", "Down."), ("Opposite of down?", "Up."),
+            ("Opposite of left?", "Right."), ("Opposite of right?", "Left."),
+            ("Opposite of open?", "Closed."), ("Opposite of closed?", "Open."),
+        ]
+        pairs.extend(MINIMAL_OPPOSITES)
+        
+        # ----- Polite responses -----
+        MINIMAL_POLITE = [
+            ("Thank you.", "You're welcome."),
+            ("Thanks!", "You're welcome!"),
+            ("Sorry.", "No problem."),
+            ("Please help.", "OK."),
+            ("Excuse me.", "Yes?"),
+        ]
+        pairs.extend(MINIMAL_POLITE)
+        
+        # Skip all other categories in minimal mode
+        return pairs
+    
+    # ==========================================================================
+    # COLORS - Multiple question templates
+    # ==========================================================================
+    
+    COLORS = [
+        "red", "blue", "green", "yellow", "orange", "purple", "black", "white",
+        "pink", "brown", "gray", "gold", "silver", "cyan", "magenta", "violet",
+        "indigo", "turquoise", "maroon", "navy", "teal", "olive", "coral", "lime",
+    ]
+    
+    COLOR_TEMPLATES = [
+        ("Name a color: {color}.", "{color}."),
+        ("Say {color}.", "{color}."),
+        ("What color is {color}?", "{color}."),
+        ("Color: {color}.", "{color}."),
+    ]
+    
+    for template_q, template_a in COLOR_TEMPLATES:
+        for color in COLORS:
+            q = template_q.format(color=color)
+            a = template_a.format(color=color)  # TRUE ECHO - no capitalization
+            pairs.append((q, a))
+    
+    # ==========================================================================
+    # DAYS & MONTHS - Multiple templates
+    # ==========================================================================
+    
+    DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    DAY_TEMPLATES = [
+        ("Say {day}.", "{day}."),
+        ("What day is {day}?", "{day}."),
+        ("Day: {day}.", "{day}."),
+    ]
+    
+    for template_q, template_a in DAY_TEMPLATES:
+        for day in DAYS:
+            pairs.append((template_q.format(day=day), template_a.format(day=day)))
+    
+    for i, day in enumerate(DAYS):
+        pairs.append((f"What day comes after {DAYS[i-1]}?", f"{day}."))
+        pairs.append((f"Day after {DAYS[i-1]}?", f"{day}."))
+        pairs.append((f"Day number {i+1}?", f"{day}."))
+    
+    MONTHS = ["January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
+    
+    MONTH_TEMPLATES = [
+        ("Say {month}.", "{month}."),
+        ("Month: {month}.", "{month}."),
+    ]
+    
+    for template_q, template_a in MONTH_TEMPLATES:
+        for month in MONTHS:
+            pairs.append((template_q.format(month=month), template_a.format(month=month)))
+    
+    for i, month in enumerate(MONTHS):
+        pairs.append((f"What month is number {i+1}?", f"{month}."))
+        pairs.append((f"Month {i+1}?", f"{month}."))
+        pairs.append((f"Month after {MONTHS[i-1]}?", f"{month}."))
+    
+    # ==========================================================================
+    # CAPITALS - Expanded with templates
+    # ==========================================================================
+    
+    CAPITALS = {
+        "France": "Paris", "Germany": "Berlin", "Japan": "Tokyo", "Italy": "Rome",
+        "Spain": "Madrid", "UK": "London", "USA": "Washington", "China": "Beijing",
+        "Russia": "Moscow", "Brazil": "Brasília", "Australia": "Canberra",
+        "Canada": "Ottawa", "India": "New Delhi", "Mexico": "Mexico City",
+        "Egypt": "Cairo", "Poland": "Warsaw", "Netherlands": "Amsterdam",
+        "Belgium": "Brussels", "Austria": "Vienna", "Switzerland": "Bern",
+        "Sweden": "Stockholm", "Norway": "Oslo", "Denmark": "Copenhagen",
+        "Finland": "Helsinki", "Greece": "Athens", "Portugal": "Lisbon",
+        "Ireland": "Dublin", "Turkey": "Ankara", "Thailand": "Bangkok",
+        "Vietnam": "Hanoi", "Indonesia": "Jakarta", "South Korea": "Seoul",
+        "Argentina": "Buenos Aires", "Chile": "Santiago", "Peru": "Lima",
+    }
+    
+    CAPITAL_TEMPLATES = [
+        "Capital of {country}?",
+        "What is the capital of {country}?",
+        "{country} capital?",
+    ]
+    
+    for country, capital in CAPITALS.items():
+        for template in CAPITAL_TEMPLATES:
+            pairs.append((template.format(country=country), f"{capital}."))
+    
+    # ==========================================================================
+    # OPPOSITES - Expanded
+    # ==========================================================================
+    
+    OPPOSITES = {
+        "hot": "Cold", "big": "Small", "fast": "Slow", "light": "Dark",
+        "good": "Bad", "happy": "Sad", "old": "Young", "rich": "Poor",
+        "easy": "Hard", "open": "Closed", "full": "Empty", "wet": "Dry",
+        "loud": "Quiet", "strong": "Weak", "tall": "Short", "wide": "Narrow",
+        "thick": "Thin", "heavy": "Light", "soft": "Hard", "smooth": "Rough",
+        "clean": "Dirty", "safe": "Dangerous", "new": "Old", "early": "Late",
+        "high": "Low", "near": "Far", "long": "Short", "deep": "Shallow",
+        "bright": "Dim", "sharp": "Dull", "sweet": "Sour", "warm": "Cool",
+    }
+    
+    OPPOSITE_TEMPLATES = [
+        "Opposite of {word}?",
+        "What is the opposite of {word}?",
+        "Antonym of {word}?",
+        "What is the inverse of {word}?",
+    ]
+    
+    for word, opposite in OPPOSITES.items():
+        for template in OPPOSITE_TEMPLATES:
+            pairs.append((template.format(word=word), f"{opposite}."))
+    
+    # ==========================================================================
+    # YES/NO QUESTIONS - Expanded
+    # ==========================================================================
+    
+    YES_FACTS = [
+        "Is water wet?", "Is the sky blue?", "Is grass green?", "Is 2+2=4?",
+        "Is Earth round?", "Is Python a language?", "Is Java a language?",
+        "Is 10 > 5?", "Is Monday a day?", "Is 1 odd?", "Is 2 even?",
+        "Is red a color?", "Is gold a metal?", "Is ice cold?", "Is fire hot?",
+        "Is the sun a star?", "Is water H2O?", "Is 100 > 50?", "Is 0 even?",
+        "Is December a month?", "Is Sunday a day?", "Is oxygen a gas?",
+        "Is wood flammable?", "Is iron magnetic?", "Is glass transparent?",
+        "Is sugar sweet?", "Is lemon sour?", "Is snow white?", "Is night dark?",
+        "Is summer warm?", "Is winter cold?", "Is spring a season?",
+        "Is 7 a prime?", "Is 12 divisible by 3?", "Is 15 divisible by 5?",
+    ]
+    
+    NO_FACTS = [
+        "Is fire cold?", "Is ice hot?", "Is 2+2=5?", "Is Earth flat?",
+        "Is 3 > 7?", "Is 0 positive?", "Is silence loud?", "Is night bright?",
+        "Is water dry?", "Is the moon a star?", "Is 1 even?", "Is 3 even?",
+        "Is snow black?", "Is coal white?", "Is summer cold?", "Is winter hot?",
+        "Is 10 < 5?", "Is 100 < 50?", "Is a fish a mammal?", "Is a snake a mammal?",
+        "Is glass opaque?", "Is wood transparent?", "Is helium heavy?",
+        "Is lead light?", "Is sugar salty?", "Is vinegar sweet?",
+        "Is 9 a prime?", "Is 10 divisible by 3?", "Is 7 divisible by 2?",
+    ]
+    
+    for fact in YES_FACTS:
+        pairs.append((fact, "Yes."))
+    for fact in NO_FACTS:
+        pairs.append((fact, "No."))
+    
+    # ==========================================================================
+    # LETTERS & NUMBERS - Templates
+    # ==========================================================================
+    
+    ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    
+    LETTER_TEMPLATES = [
+        ("Letter number {num}?", "{letter}."),
+        ("What is letter {num}?", "{letter}."),
+        ("Say letter {letter}.", "{letter}."),
+        ("Letter: {letter}.", "{letter}."),
+        ("Repeat following letter: {letter}.", "{letter}."),
+        ("Repeat the letter: {letter}.", "{letter}."),
+    ]
+    
+    for i, letter in enumerate(ALPHABET):
+        for template_q, template_a in LETTER_TEMPLATES:
+            q = template_q.format(num=i+1, letter=letter)
+            a = template_a.format(letter=letter)
+            pairs.append((q, a))
+    
+    # Number words
+    NUMBER_WORDS = {
+        0: "Zero", 1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five",
+        6: "Six", 7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten",
+        11: "Eleven", 12: "Twelve", 13: "Thirteen", 14: "Fourteen", 15: "Fifteen",
+        16: "Sixteen", 17: "Seventeen", 18: "Eighteen", 19: "Nineteen", 20: "Twenty",
+        30: "Thirty", 40: "Forty", 50: "Fifty", 100: "Hundred", 1000: "Thousand",
+        1000000: "Million", 1000000000: "Billion", 1000000000000: "Trillion",
+        111: "One hundred eleven", 222: "Two hundred twenty-two", 333: "Three hundred thirty-three",
+        444: "Four hundred forty-four", 555: "Five hundred fifty-five", 666: "Six hundred sixty-six",
+        777: "Seven hundred seventy-seven", 888: "Eight hundred eighty-eight", 999: "Nine hundred ninety-nine",
+    }
+    
+    NUMBER_TEMPLATES = [
+        ("{num} in words?", "{word}."),
+        ("Spell {num}.", "{word}."),
+        ("Say {num} as a word.", "{word}."),
+        ("Repeat the number in words: {num}.", "{word}."),
+    ]
+    
+    for num, word in NUMBER_WORDS.items():
+        for template_q, template_a in NUMBER_TEMPLATES:
+            pairs.append((template_q.format(num=num), template_a.format(word=word)))
+    
+    # ==========================================================================
+    # ANIMALS - Expanded
+    # ==========================================================================
+    
+    ANIMAL_SOUNDS = {
+        "dog": "Bark", "cat": "Meow", "cow": "Moo", "pig": "Oink",
+        "duck": "Quack", "bird": "Chirp", "lion": "Roar", "snake": "Hiss",
+        "bee": "Buzz", "wolf": "Howl", "frog": "Croak", "owl": "Hoot",
+        "horse": "Neigh", "sheep": "Baa", "rooster": "Crow", "crow": "Caw",
+        "donkey": "Bray", "goat": "Bleat", "mouse": "Squeak",
+    }
+    
+    SOUND_TEMPLATES = [
+        "{animal} sound?",
+        "What sound does a {animal} make?",
+        "Sound of {animal}?",
+    ]
+    
+    for animal, sound in ANIMAL_SOUNDS.items():
+        for template in SOUND_TEMPLATES:
+            q = template.format(animal=animal)
+            pairs.append((q, f"{sound}."))
+    
+    ANIMAL_FACTS = [
+        ("Largest animal?", "Blue whale."),
+        ("Fastest animal?", "Cheetah."),
+        ("Tallest animal?", "Giraffe."),
+        ("King of jungle?", "Lion."),
+        ("Man's best friend?", "Dog."),
+        ("Largest land animal?", "Elephant."),
+        ("Fastest bird?", "Falcon."),
+        ("Largest bird?", "Ostrich."),
+    ]
+    pairs.extend(ANIMAL_FACTS)
+    
+    # ==========================================================================
+    # DIRECTIONS - Expanded
+    # ==========================================================================
+    
+    DIRECTIONS = [
+        "up", "down", "left", "right", "north", "south", "east", "west",
+        "forward", "backward", "inside", "outside", "above", "below",
+        "here", "there", "near", "far", "front", "back",
+    ]
+    
+    DIRECTION_TEMPLATES = [
+        ("Which way is {dir}?", "{dir}."),
+        ("Say {dir}.", "{dir}."),
+        ("Direction: {dir}.", "{dir}."),
+    ]
+    
+    for direction in DIRECTIONS:
+        for template_q, template_a in DIRECTION_TEMPLATES:
+            q = template_q.format(dir=direction)
+            a = template_a.format(dir=direction)  # TRUE ECHO - no capitalization
+            pairs.append((q, a))
+    
+    # ==========================================================================
+    # GREETINGS - Expanded
+    # ==========================================================================
+    
+    GREETINGS = [
+        ("Good morning!", "Good morning!"),
+        ("Good afternoon!", "Good afternoon!"),
+        ("Good evening!", "Good evening!"),
+        ("Good night!", "Good night!"),
+        ("Hello!", "Hello!"),
+        ("Hi!", "Hi!"),
+        ("Hey!", "Hey!"),
+        ("Greetings!", "Greetings!"),
+        ("Howdy!", "Howdy!"),
+        ("What's up?", "Hello!"),
+        ("How are you?", "I'm good, thank you!"),
+        ("How are you doing?", "I'm good, thank you!"),
+        ("Hola!", "Hola!"),
+        ("Bonjour!", "Bonjour!"),
+        ("Guten Tag!", "Guten Tag!"),
+        ("Ciao!", "Ciao!"),
+        ("Welcome!", "Welcome!"),
+    ]
+    pairs.extend(GREETINGS)
+    
+    # ==========================================================================
+    # STATUS & ACKNOWLEDGMENTS - Expanded
+    # ==========================================================================
+    
+    STATUS_QA = [
+        ("Status?", "OK."),
+        ("How are you?", "Good."),
+        ("All good?", "Yes."),
+        ("Everything OK?", "Yes."),
+        ("Ready to help?", "Yes."),
+        ("Can you hear me?", "Yes."),
+        ("Are you there?", "Yes."),
+        ("Still there?", "Yes."),
+        ("Working?", "Yes."),
+        ("Online?", "Yes."),
+        ("Ready?", "Ready."),
+        ("Understood?", "Understood."),
+        ("Clear?", "Clear."),
+        ("Confirm?", "Confirmed."),
+        ("Acknowledge?", "Acknowledged."),
+        ("Copy?", "Copy."),
+        ("Roger?", "Roger."),
+        ("Got it?", "Got it."),
+        ("Who are you?", "MyPT."),
+        ("What is your name?", "MyPT."),
+
+    ]
+    pairs.extend(STATUS_QA)
+    
+    # ==========================================================================
+    # PROGRAMMING & TECH - Expanded
+    # ==========================================================================
+    
+    FILE_EXTENSIONS = {
+        "Python": ".py", "JavaScript": ".js", "TypeScript": ".ts",
+        "HTML": ".html", "CSS": ".css", "JSON": ".json", "YAML": ".yaml",
+        "Markdown": ".md", "Text": ".txt", "PNG": ".png", "JPEG": ".jpg",
+        "GIF": ".gif", "PDF": ".pdf", "XML": ".xml", "CSV": ".csv",
+        "Java": ".java", "C++": ".cpp", "C": ".c", "Ruby": ".rb",
+        "Go": ".go", "Rust": ".rs", "PHP": ".php", "SQL": ".sql",
+        "Word": ".docx", "Excel": ".xlsx", "PowerPoint": ".pptx",
+    }
+    
+    EXT_TEMPLATES = [
+        "{lang} file extension?",
+        "{lang} extension?",
+        "Extension for {lang}?",
+        "Extension of {lang}?",
+        "What is the extension of {lang}?",
+
+    ]
+    
+    for lang, ext in FILE_EXTENSIONS.items():
+        for template in EXT_TEMPLATES:
+            pairs.append((template.format(lang=lang), ext))
+    
+    SYMBOLS = [
+        ("Plus sign?", "+"), ("Minus sign?", "-"), ("Multiply sign?", "*"),
+        ("Divide sign?", "/"), ("Equals sign?", "="), ("Greater than?", ">"),
+        ("Less than?", "<"), ("Not equal?", "!="), ("Modulo sign?", "%"),
+        ("At sign?", "@"), ("Hash sign?", "#"), ("Dollar sign?", "$"),
+        ("Percent sign?", "%"), ("Ampersand?", "&"), ("Asterisk?", "*"),
+        ("Exclamation mark?", "!"), ("Question mark?", "?"), ("Pipe?", "|"),
+        ("Backslash?", "\\"), ("Slash?", "/"), ("Colon?", ":"),
+        ("Semicolon?", ";"), ("Comma?", ","), ("Period?", "."),
+        ("Quote?", "'"), ("Double quote?", '"'), ("Left parenthesis?", "("),
+        ("Right parenthesis?", ")"), ("Left bracket?", "["),
+        ("Right bracket?", "]"), ("Left brace?", "{"), ("Right brace?", "}"),
+        ("Left angle bracket?", "<"), ("Right angle bracket?", ">"),
+        ("Left curly brace?", "{"), ("Right curly brace?", "}"),
+        ("Left square bracket?", "["), ("Right square bracket?", "]"),
+        ("Left parenthesis?", "("), ("Right parenthesis?", ")"),
+        ("Left curly brace?", "{"), ("Right curly brace?", "}"),
+        ("Left square bracket?", "["), ("Right square bracket?", "]"),
+        ("Left parenthesis?", "("), ("Right parenthesis?", ")"),
+    ]
+    pairs.extend(SYMBOLS)
+    
+    UNITS = [
+        ("Meters abbreviation?", "m"), ("Kilometers abbreviation?", "km"),
+        ("Centimeters abbreviation?", "cm"), ("Kilograms abbreviation?", "kg"),
+        ("Grams abbreviation?", "g"), ("Seconds abbreviation?", "s"),
+        ("Minutes abbreviation?", "min"), ("Hours abbreviation?", "h"),
+        ("Celsius abbreviation?", "°C"), ("Liters abbreviation?", "L"),
+        ("Bytes abbreviation?", "B"), ("Kilobytes abbreviation?", "KB"),
+        ("Megabytes abbreviation?", "MB"), ("Gigabytes abbreviation?", "GB"),
+    ]
+    pairs.extend(UNITS)
+    
+    # ==========================================================================
+    # PROGRAMMING CONCEPTS - Syntax, Keywords, Data Types
+    # ==========================================================================
+    
+    # Print/Output statements by language
+    PRINT_STATEMENTS = {
+        "Python": "print()", "JavaScript": "console.log()", "Java": "System.out.println()",
+        "C": "printf()", "C++": "cout <<", "C#": "Console.WriteLine()",
+        "Ruby": "puts", "Go": "fmt.Println()", "Rust": "println!()",
+        "PHP": "echo", "Swift": "print()", "Kotlin": "println()",
+    }
+    
+    PRINT_TEMPLATES = [
+        "Print in {lang}?",
+        "How to print in {lang}?",
+        "{lang} print statement?",
+        "Output in {lang}?",
+    ]
+    
+    for lang, stmt in PRINT_STATEMENTS.items():
+        for template in PRINT_TEMPLATES:
+            pairs.append((template.format(lang=lang), stmt))
+    
+    # Comment syntax by language
+    COMMENTS = {
+        "Python": "#", "JavaScript": "//", "Java": "//", "C": "//",
+        "C++": "//", "Ruby": "#", "Go": "//", "Rust": "//",
+        "PHP": "//", "Shell": "#", "Bash": "#", "SQL": "--",
+        "HTML": "<!-- -->", "CSS": "/* */", "Lua": "--",
+    }
+    
+    COMMENT_TEMPLATES = [
+        "Comment in {lang}?",
+        "{lang} comment syntax?",
+        "How to comment in {lang}?",
+        "Single line comment in {lang}?",
+    ]
+    
+    for lang, syntax in COMMENTS.items():
+        for template in COMMENT_TEMPLATES:
+            pairs.append((template.format(lang=lang), syntax))
+    
+    # Boolean values by language
+    BOOLEANS_TRUE = {
+        "Python": "True", "JavaScript": "true", "Java": "true",
+        "C": "1", "C++": "true", "Ruby": "true", "Go": "true",
+        "Rust": "true", "PHP": "true", "SQL": "TRUE",
+    }
+    
+    BOOLEANS_FALSE = {
+        "Python": "False", "JavaScript": "false", "Java": "false",
+        "C": "0", "C++": "false", "Ruby": "false", "Go": "false",
+        "Rust": "false", "PHP": "false", "SQL": "FALSE",
+    }
+    
+    for lang, val in BOOLEANS_TRUE.items():
+        pairs.append((f"True in {lang}?", val))
+        pairs.append((f"{lang} true value?", val))
+    
+    for lang, val in BOOLEANS_FALSE.items():
+        pairs.append((f"False in {lang}?", val))
+        pairs.append((f"{lang} false value?", val))
+    
+    # Null/None/Nil values by language
+    NULL_VALUES = {
+        "Python": "None", "JavaScript": "null", "Java": "null",
+        "C": "NULL", "C++": "nullptr", "Ruby": "nil", "Go": "nil",
+        "Rust": "None", "PHP": "null", "SQL": "NULL", "Swift": "nil",
+    }
+    
+    NULL_TEMPLATES = [
+        "Null in {lang}?",
+        "{lang} null value?",
+        "Empty/null in {lang}?",
+    ]
+    
+    for lang, val in NULL_VALUES.items():
+        for template in NULL_TEMPLATES:
+            pairs.append((template.format(lang=lang), val))
+    
+    # Array/List syntax by language
+    ARRAY_SYNTAX = {
+        "Python": "[]", "JavaScript": "[]", "Java": "new int[]{}",
+        "C": "int arr[]", "Ruby": "[]", "Go": "[]int{}",
+        "PHP": "array()", "Swift": "[]", "Kotlin": "arrayOf()",
+    }
+    
+    for lang, syntax in ARRAY_SYNTAX.items():
+        pairs.append((f"Array in {lang}?", syntax))
+        pairs.append((f"{lang} array syntax?", syntax))
+    
+    # Dictionary/Map/Object syntax
+    DICT_SYNTAX = {
+        "Python": "{}", "JavaScript": "{}", "Java": "HashMap<>",
+        "Ruby": "{}", "Go": "map[]", "PHP": "array()",
+    }
+    
+    for lang, syntax in DICT_SYNTAX.items():
+        pairs.append((f"Dictionary in {lang}?", syntax))
+        pairs.append((f"{lang} dict syntax?", syntax))
+    
+    # Function definition keywords
+    FUNC_KEYWORDS = {
+        "Python": "def", "JavaScript": "function", "Java": "void/type",
+        "C": "void/type", "Ruby": "def", "Go": "func", "Rust": "fn",
+        "PHP": "function", "Swift": "func", "Kotlin": "fun",
+    }
+    
+    for lang, kw in FUNC_KEYWORDS.items():
+        pairs.append((f"Function keyword in {lang}?", kw))
+        pairs.append((f"{lang} function keyword?", kw))
+    
+    # String quotes
+    STRING_QUOTES = [
+        ("String in Python?", '""'), ("String in JavaScript?", '""'),
+        ("String in Java?", '""'), ("String in C?", '""'),
+        ("Char in C?", "''"), ("Char in Java?", "''"),
+        ("Raw string in Python?", 'r""'), ("Template string in JS?", "``"),
+        ("F-string in Python?", 'f""'),
+    ]
+    pairs.extend(STRING_QUOTES)
+    
+    # HTTP Methods
+    HTTP_METHODS = [
+        ("HTTP method for read?", "GET"),
+        ("HTTP method for create?", "POST"),
+        ("HTTP method for update?", "PUT"),
+        ("HTTP method for delete?", "DELETE"),
+        ("HTTP method for partial update?", "PATCH"),
+        ("HTTP method for headers only?", "HEAD"),
+        ("HTTP method for options?", "OPTIONS"),
+    ]
+    pairs.extend(HTTP_METHODS)
+    
+    # HTTP Status Codes
+    HTTP_CODES = [
+        ("HTTP code for OK?", "200"), ("HTTP code for created?", "201"),
+        ("HTTP code for no content?", "204"), ("HTTP code for redirect?", "301"),
+        ("HTTP code for bad request?", "400"), ("HTTP code for unauthorized?", "401"),
+        ("HTTP code for forbidden?", "403"), ("HTTP code for not found?", "404"),
+        ("HTTP code for server error?", "500"), ("HTTP code for bad gateway?", "502"),
+    ]
+    pairs.extend(HTTP_CODES)
+    
+    # Data types
+    DATA_TYPES = [
+        ("Integer type in Python?", "int"), ("Float type in Python?", "float"),
+        ("String type in Python?", "str"), ("Boolean type in Python?", "bool"),
+        ("List type in Python?", "list"), ("Dict type in Python?", "dict"),
+        ("Number type in JavaScript?", "number"), ("String type in JavaScript?", "string"),
+        ("Boolean type in JavaScript?", "boolean"), ("Array type in JavaScript?", "array"),
+        ("Integer type in Java?", "int"), ("Double type in Java?", "double"),
+        ("String type in Java?", "String"), ("Boolean type in Java?", "boolean"),
+    ]
+    pairs.extend(DATA_TYPES)
+    
+    # Common programming keywords
+    KEYWORDS = [
+        ("Loop keyword for iteration?", "for"), ("Loop keyword for condition?", "while"),
+        ("Conditional keyword?", "if"), ("Alternative keyword?", "else"),
+        ("Return keyword?", "return"), ("Break loop keyword?", "break"),
+        ("Skip iteration keyword?", "continue"), ("Import keyword in Python?", "import"),
+        ("Import keyword in Java?", "import"), ("Import keyword in JavaScript?", "import"),
+        ("Class keyword?", "class"), ("Try block keyword?", "try"),
+        ("Catch block keyword?", "catch"), ("Except block in Python?", "except"),
+        ("Finally block keyword?", "finally"), ("Throw keyword?", "throw"),
+        ("Raise keyword in Python?", "raise"), ("Assert keyword?", "assert"),
+        ("Lambda keyword in Python?", "lambda"), ("Arrow function in JS?", "=>"),
+    ]
+    pairs.extend(KEYWORDS)
+    
+    # Common operators
+    OPERATORS = [
+        ("Equality operator?", "=="), ("Strict equality in JS?", "==="),
+        ("Not equal operator?", "!="), ("Strict not equal in JS?", "!=="),
+        ("And operator in Python?", "and"), ("Or operator in Python?", "or"),
+        ("Not operator in Python?", "not"), ("And operator in JS?", "&&"),
+        ("Or operator in JS?", "||"), ("Not operator in JS?", "!"),
+        ("Increment operator?", "++"), ("Decrement operator?", "--"),
+        ("Add assign operator?", "+="), ("Subtract assign operator?", "-="),
+        ("Multiply assign operator?", "*="), ("Divide assign operator?", "/="),
+        ("Floor division in Python?", "//"), ("Exponent operator in Python?", "**"),
+        ("Ternary operator in JS?", "? :"), ("Null coalescing in JS?", "??"),
+    ]
+    pairs.extend(OPERATORS)
+    
+    # Git commands
+    GIT_COMMANDS = [
+        ("Git clone command?", "git clone"), ("Git pull command?", "git pull"),
+        ("Git push command?", "git push"), ("Git commit command?", "git commit"),
+        ("Git add command?", "git add"), ("Git status command?", "git status"),
+        ("Git branch command?", "git branch"), ("Git checkout command?", "git checkout"),
+        ("Git merge command?", "git merge"), ("Git log command?", "git log"),
+        ("Git diff command?", "git diff"), ("Git stash command?", "git stash"),
+    ]
+    pairs.extend(GIT_COMMANDS)
+    
+    # Common CLI commands
+    CLI_COMMANDS = [
+        ("List files command?", "ls"), ("Change directory?", "cd"),
+        ("Print working directory?", "pwd"), ("Make directory?", "mkdir"),
+        ("Remove file?", "rm"), ("Copy file?", "cp"), ("Move file?", "mv"),
+        ("View file contents?", "cat"), ("Search in files?", "grep"),
+        ("Find files?", "find"), ("Download URL?", "curl"),
+        ("Package manager for Python?", "pip"), ("Package manager for Node?", "npm"),
+        ("Package manager for Ruby?", "gem"), ("Package manager for Rust?", "cargo"),
+    ]
+    pairs.extend(CLI_COMMANDS)
+    
+    # ==========================================================================
+    # COMPARISONS - Expanded  
+    # ==========================================================================
+    
+    COMPARISONS = [
+        ("Bigger: ant or elephant?", "Elephant."),
+        ("Faster: car or bicycle?", "Car."),
+        ("Hotter: sun or ice?", "Sun."),
+        ("Taller: tree or grass?", "Tree."),
+        ("Heavier: feather or rock?", "Rock."),
+        ("Older: parent or child?", "Parent."),
+        ("Longer: year or day?", "Year."),
+        ("More: dozen or ten?", "Dozen."),
+        ("Brighter: day or night?", "Day."),
+        ("Wetter: ocean or desert?", "Ocean."),
+        ("Bigger: whale or mouse?", "Whale."),
+        ("Faster: plane or train?", "Plane."),
+        ("Colder: ice or fire?", "Ice."),
+        ("Deeper: ocean or lake?", "Ocean."),
+        ("Louder: whisper or shout?", "Shout."),
+        ("Harder: diamond or glass?", "Diamond."),
+        ("Higher: mountain or hill?", "Mountain."),
+        ("Faster: light or sound?", "Light."),
+        ("Bigger: Earth or Moon?", "Earth."),
+        ("Larger: Jupiter or Mars?", "Jupiter."),
+    ]
+    pairs.extend(COMPARISONS)
+    
+    # ==========================================================================
+    # POLITE RESPONSES - Expanded
+    # ==========================================================================
+    
+    POLITE = [
+        ("Thank you.", "You're welcome."),
+        ("Thanks!", "You're welcome!"),
+        ("Thanks a lot.", "You're welcome."),
+        ("I appreciate it.", "You're welcome."),
+        ("Sorry.", "No problem."),
+        ("My apologies.", "No worries."),
+        ("Excuse me.", "Of course."),
+        ("Please help.", "Sure."),
+        ("Can you help?", "Yes."),
+        ("Will you help?", "Yes."),
+        ("Help me.", "OK."),
+        ("Please.", "OK."),
+        ("Would you mind?", "Not at all."),
+        ("Is that OK?", "Yes."),
+        ("May I?", "Yes."),
+    ]
+    pairs.extend(POLITE)
+    
+    # ==========================================================================
+    # GERMAN CONTENT - Basic German Q&A
+    # ==========================================================================
+    
+    # ==========================================================================
+    # GERMAN SAY TEMPLATES - Combinatorial (mirrors English SAY section)
+    # ==========================================================================
+    
+    GERMAN_SAY_TEMPLATES = [
+        "Sag {word}.",
+        "Sage {word}.",
+        "Antworte {word}.",
+        "Antworte mit {word}.",
+        "Gib aus: {word}.",
+        "Nur ein Wort: {word}.",
+        "Kurz: {word}.",
+    ]
+    
+    GERMAN_SAY_WORDS = [
+        "Hallo", "hallo", "HALLO", "Tschüss", "tschüss",
+        "Ja", "ja", "JA", "Nein", "nein", "NEIN",
+        "OK", "ok", "Ok", "Danke", "danke", "DANKE",
+        "Bitte", "bitte", "Gut", "gut", "GUT",
+        "Fertig", "fertig", "Bereit", "bereit",
+        "Richtig", "richtig", "Falsch", "falsch",
+        "Fehler", "Erfolg", "Wahr", "Stopp", "Start",
+        "Weiter", "Pause", "Hilfe", "Test", "Offen",
+        "Aktiv", "Sicher", "Klar", "Genau", "Stimmt",
+    ]
+    
+    for template in GERMAN_SAY_TEMPLATES:
+        for word in GERMAN_SAY_WORDS:
+            q = template.format(word=word)
+            a = f"{word}."
+            pairs.append((q, a))
+    
+    # ==========================================================================
+    # GERMAN CAPITALS - Expanded with templates
+    # ==========================================================================
+    
+    GERMAN_CAPITALS = {
+        "Deutschland": "Berlin", "Frankreich": "Paris", "Italien": "Rom",
+        "Spanien": "Madrid", "England": "London", "Japan": "Tokio",
+        "China": "Peking", "Russland": "Moskau", "Brasilien": "Brasília",
+        "Australien": "Canberra", "Kanada": "Ottawa", "Indien": "Neu-Delhi",
+        "Ägypten": "Kairo", "Polen": "Warschau", "Niederlande": "Amsterdam",
+        "Belgien": "Brüssel", "Österreich": "Wien", "Schweiz": "Bern",
+        "Schweden": "Stockholm", "Norwegen": "Oslo", "Dänemark": "Kopenhagen",
+        "Finnland": "Helsinki", "Griechenland": "Athen", "Portugal": "Lissabon",
+        "Irland": "Dublin", "Türkei": "Ankara", "Südkorea": "Seoul",
+        "Argentinien": "Buenos Aires", "Mexiko": "Mexiko-Stadt",
+    }
+    
+    GERMAN_CAPITAL_TEMPLATES = [
+        "Hauptstadt von {country}?",
+        "Was ist die Hauptstadt von {country}?",
+        "{country} Hauptstadt?",
+    ]
+    
+    for country, capital in GERMAN_CAPITALS.items():
+        for template in GERMAN_CAPITAL_TEMPLATES:
+            pairs.append((template.format(country=country), f"{capital}."))
+    
+    # ==========================================================================
+    # GERMAN COLORS - Templates
+    # ==========================================================================
+    
+    GERMAN_COLORS = [
+        "rot", "Rot", "ROT", "blau", "Blau", "BLAU",
+        "grün", "Grün", "gelb", "Gelb",
+        "schwarz", "Schwarz", "weiß", "Weiß",
+        "orange", "Orange", "lila", "Lila",
+        "braun", "Braun", "grau", "Grau",
+        "rosa", "Rosa", "gold", "Gold",
+    ]
+    
+    GERMAN_COLOR_TEMPLATES = [
+        "Sag {color}.", "Farbe: {color}.", "Antworte mit {color}.",
+    ]
+    
+    for template in GERMAN_COLOR_TEMPLATES:
+        for color in GERMAN_COLORS:
+            pairs.append((template.format(color=color), f"{color}."))
+    
+    # ==========================================================================
+    # GERMAN DAYS & MONTHS
+    # ==========================================================================
+    
+    GERMAN_DAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+    GERMAN_DAY_TEMPLATES = ["Sag {day}.", "Welcher Tag: {day}?", "Tag: {day}."]
+    
+    for template in GERMAN_DAY_TEMPLATES:
+        for day in GERMAN_DAYS:
+            pairs.append((template.format(day=day), f"{day}."))
+    
+    for i, day in enumerate(GERMAN_DAYS):
+        pairs.append((f"Welcher Tag kommt nach {GERMAN_DAYS[i-1]}?", f"{day}."))
+        pairs.append((f"Tag Nummer {i+1}?", f"{day}."))
+    
+    GERMAN_MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+                     "Juli", "August", "September", "Oktober", "November", "Dezember"]
+    
+    for i, month in enumerate(GERMAN_MONTHS):
+        pairs.append((f"Sag {month}.", f"{month}."))
+        pairs.append((f"Monat Nummer {i+1}?", f"{month}."))
+        pairs.append((f"Monat nach {GERMAN_MONTHS[i-1]}?", f"{month}."))
+    
+    # ==========================================================================
+    # GERMAN YES/NO FACTS - Expanded
+    # ==========================================================================
+    
+    GERMAN_YES_FACTS = [
+        "Ist Wasser nass?", "Ist der Himmel blau?", "Ist Gras grün?",
+        "Ist 2+2=4?", "Ist die Erde rund?", "Ist Python eine Sprache?",
+        "Ist 10 > 5?", "Ist Montag ein Tag?", "Ist 1 ungerade?",
+        "Ist Rot eine Farbe?", "Ist Gold ein Metall?", "Ist Eis kalt?",
+        "Ist Feuer heiß?", "Ist die Sonne ein Stern?", "Ist 100 > 50?",
+        "Ist Dezember ein Monat?", "Ist Sonntag ein Tag?", "Ist Zucker süß?",
+        "Ist Schnee weiß?", "Ist die Nacht dunkel?", "Ist Sommer warm?",
+        "Ist 7 eine Primzahl?", "Ist 12 durch 3 teilbar?",
+    ]
+    
+    GERMAN_NO_FACTS = [
+        "Ist Feuer kalt?", "Ist Eis heiß?", "Ist 2+2=5?",
+        "Ist die Erde flach?", "Ist 3 > 7?", "Ist die Nacht hell?",
+        "Ist Wasser trocken?", "Ist der Mond ein Stern?", "Ist 1 gerade?",
+        "Ist Schnee schwarz?", "Ist Sommer kalt?", "Ist Winter heiß?",
+        "Ist 10 < 5?", "Ist 100 < 50?", "Ist Glas undurchsichtig?",
+        "Ist Zucker salzig?", "Ist 9 eine Primzahl?",
+    ]
+    
+    for fact in GERMAN_YES_FACTS:
+        pairs.append((fact, "Ja."))
+    for fact in GERMAN_NO_FACTS:
+        pairs.append((fact, "Nein."))
+    
+    # ==========================================================================
+    # GERMAN OPPOSITES - Expanded
+    # ==========================================================================
+    
+    GERMAN_OPPOSITES = {
+        "heiß": "Kalt", "groß": "Klein", "schnell": "Langsam",
+        "hell": "Dunkel", "gut": "Schlecht", "glücklich": "Traurig",
+        "alt": "Jung", "reich": "Arm", "leicht": "Schwer",
+        "offen": "Geschlossen", "voll": "Leer", "nass": "Trocken",
+        "laut": "Leise", "stark": "Schwach", "lang": "Kurz",
+        "breit": "Schmal", "dick": "Dünn", "sauber": "Schmutzig",
+        "neu": "Alt", "früh": "Spät", "hoch": "Niedrig",
+        "nah": "Fern", "tief": "Flach", "süß": "Sauer",
+    }
+    
+    GERMAN_OPPOSITE_TEMPLATES = [
+        "Gegenteil von {word}?",
+        "Was ist das Gegenteil von {word}?",
+    ]
+    
+    for word, opposite in GERMAN_OPPOSITES.items():
+        for template in GERMAN_OPPOSITE_TEMPLATES:
+            pairs.append((template.format(word=word), f"{opposite}."))
+    
+    # ==========================================================================
+    # GERMAN GREETINGS & STATUS - Expanded
+    # ==========================================================================
+    
+    GERMAN_GREETINGS = [
+        ("Guten Morgen!", "Guten Morgen!"),
+        ("Guten Tag!", "Guten Tag!"),
+        ("Guten Abend!", "Guten Abend!"),
+        ("Gute Nacht!", "Gute Nacht!"),
+        ("Hallo!", "Hallo!"),
+        ("Servus!", "Servus!"),
+        ("Grüß Gott!", "Grüß Gott!"),
+        ("Moin!", "Moin!"),
+        ("Wie geht's?", "Gut."),
+        ("Wie geht es Ihnen?", "Gut, danke."),
+        ("Willkommen!", "Willkommen!"),
+        ("Tschüss!", "Tschüss!"),
+        ("Auf Wiedersehen!", "Auf Wiedersehen!"),
+    ]
+    pairs.extend(GERMAN_GREETINGS)
+    
+    GERMAN_STATUS = [
+        ("Status?", "OK."),
+        ("Alles klar?", "Ja."),
+        ("Alles gut?", "Ja."),
+        ("Verstanden?", "Verstanden."),
+        ("Fertig?", "Fertig."),
+        ("Bereit?", "Bereit."),
+        ("Bestätigt?", "Bestätigt."),
+        ("Wer bist du?", "MyPT."),
+        ("Wie heißt du?", "MyPT."),
+        ("Bist du da?", "Ja."),
+        ("Funktioniert es?", "Ja."),
+        ("Kannst du helfen?", "Ja."),
+        ("Online?", "Ja."),
+    ]
+    pairs.extend(GERMAN_STATUS)
+    
+    # ==========================================================================
+    # GERMAN NUMBERS - Templates
+    # ==========================================================================
+    
+    for num in range(0, 21):
+        pairs.append((f"Sag {num}.", f"{num}."))
+        pairs.append((f"Zahl: {num}.", f"{num}."))
+        pairs.append((f"Antworte mit {num}.", f"{num}."))
+    
+    # ==========================================================================
+    # GERMAN MATH - Compact set
+    # ==========================================================================
+    
+    GERMAN_ADD_TEMPLATES = [("Was ist {a} + {b}?", "{r}."), ("{a} plus {b}?", "{r}.")]
+    GERMAN_SUB_TEMPLATES = [("Was ist {a} - {b}?", "{r}."), ("{a} minus {b}?", "{r}.")]
+    GERMAN_MUL_TEMPLATES = [("Was ist {a} × {b}?", "{r}."), ("{a} mal {b}?", "{r}.")]
+    
+    for a in range(0, 21):
+        for b in range(0, 11):
+            for tq, ta in GERMAN_ADD_TEMPLATES:
+                pairs.append((tq.format(a=a, b=b), ta.format(r=a+b)))
+    
+    for a in range(1, 21):
+        for b in range(0, min(a+1, 11)):
+            for tq, ta in GERMAN_SUB_TEMPLATES:
+                pairs.append((tq.format(a=a, b=b), ta.format(r=a-b)))
+    
+    for a in range(0, 13):
+        for b in range(0, 13):
+            for tq, ta in GERMAN_MUL_TEMPLATES:
+                pairs.append((tq.format(a=a, b=b), ta.format(r=a*b)))
+    
+    # ==========================================================================
+    # GERMAN ANIMAL SOUNDS
+    # ==========================================================================
+    
+    GERMAN_ANIMAL_SOUNDS = {
+        "Hund": "Bellen", "Katze": "Miau", "Kuh": "Muh", "Schwein": "Oink",
+        "Ente": "Quak", "Vogel": "Zwitschern", "Löwe": "Brüllen",
+        "Schlange": "Zischen", "Biene": "Summen", "Wolf": "Heulen",
+        "Frosch": "Quaken", "Eule": "Huhu", "Pferd": "Wiehern",
+        "Schaf": "Mäh", "Hahn": "Kikeriki",
+    }
+    
+    GERMAN_SOUND_TEMPLATES = [
+        "{animal} Geräusch?",
+        "Welches Geräusch macht ein {animal}?",
+    ]
+    
+    for animal, sound in GERMAN_ANIMAL_SOUNDS.items():
+        for template in GERMAN_SOUND_TEMPLATES:
+            pairs.append((template.format(animal=animal), f"{sound}."))
+    
+    # ==========================================================================
+    # GERMAN POLITE RESPONSES
+    # ==========================================================================
+    
+    GERMAN_POLITE = [
+        ("Danke.", "Gern geschehen."),
+        ("Danke schön.", "Bitte schön."),
+        ("Vielen Dank.", "Gern geschehen."),
+        ("Entschuldigung.", "Kein Problem."),
+        ("Bitte hilf mir.", "OK."),
+        ("Kannst du helfen?", "Ja."),
+        ("Bitte.", "OK."),
+    ]
+    pairs.extend(GERMAN_POLITE)
+    
+    # ==========================================================================
+    # GERMAN COMPARISONS
+    # ==========================================================================
+    
+    GERMAN_COMPARISONS = [
+        ("Größer: Ameise oder Elefant?", "Elefant."),
+        ("Schneller: Auto oder Fahrrad?", "Auto."),
+        ("Heißer: Sonne oder Eis?", "Sonne."),
+        ("Höher: Berg oder Hügel?", "Berg."),
+        ("Schwerer: Feder oder Stein?", "Stein."),
+        ("Länger: Jahr oder Tag?", "Jahr."),
+        ("Heller: Tag oder Nacht?", "Tag."),
+        ("Tiefer: Ozean oder See?", "Ozean."),
+        ("Größer: Wal oder Maus?", "Wal."),
+        ("Schneller: Licht oder Schall?", "Licht."),
+        ("Größer: Erde oder Mond?", "Erde."),
+        ("Härter: Diamant oder Glas?", "Diamant."),
+    ]
+    pairs.extend(GERMAN_COMPARISONS)
+    
+    return pairs
+
+
+def create_episode(question: str, answer: str, episode_id: int) -> dict:
+    """Create a single episode in the expected format."""
+    # Detect language from content
+    german_indicators = [
+        "Sag ", "Sage ", "Guten ", "Gute ", "Hauptstadt von", "Was ist", "Ist ",
+        "Gegenteil von", "Welche Farbe", "Geräusch", "Verstanden", "Fertig", "Bereit",
+        "Antworte ", "Gib aus:", "Nur ein Wort:", "Kurz:", "Welcher Tag",
+        "Tag Nummer", "Monat Nummer", "Monat nach", "Farbe:", "Zahl:",
+        "Größer:", "Schneller:", "Heißer:", "Höher:", "Schwerer:", "Länger:",
+        "Heller:", "Tiefer:", "Härter:", "Wie heißt", "Wer bist",
+        "Bist du", "Funktioniert", "Kannst du", "Bestätigt", "Alles klar",
+        "Alles gut", "Wie geht", "Willkommen", "Servus", "Grüß Gott", "Moin",
+        "Tschüss", "Auf Wiedersehen", "Entschuldigung", "Bitte hilf",
+        "Danke", "Vielen Dank", "Welches Geräusch", " plus ", " minus ", " mal ",
+    ]
+    is_german = any(indicator in question for indicator in german_indicators)
+    
+    return {
+        "system": SYSTEM_PROMPT,
+        "context": f"episode_id: format_lock_{episode_id:04d}",
+        "messages": [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": answer}
+        ],
+        "language": "de" if is_german else "en"
+    }
+
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generate Phase 3a-1 format locking dataset")
+    parser.add_argument("--output_dir", type=str, default="data/sft_format_lock", help="Output directory")
+    parser.add_argument("--math", type=str, default="include",
+                        choices=["include", "exclude", "only", "minimal"],
+                        help="Math mode: include (full ~10k), minimal (~500), exclude (none), only (math only ~10k). Default: include")
+    parser.add_argument("--mode", type=str, default="full",
+                        choices=["full", "minimal"],
+                        help="Dataset mode: full (all categories ~2k+), minimal (~1k focused for format lock). Default: full")
+    args = parser.parse_args()
+    
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / "mypt_format_lock_v1.jsonl"
+    
+    # Generate pairs
+    print(f"Generating format lock dataset (mode: {args.mode}, math: {args.math})...")
+    pairs = generate_pairs(math_mode=args.math, dataset_mode=args.mode)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_pairs = []
+    for pair in pairs:
+        if pair not in seen:
+            seen.add(pair)
+            unique_pairs.append(pair)
+    pairs = unique_pairs
+    
+    # Shuffle for variety
+    random.seed(42)
+    random.shuffle(pairs)
+    
+    # Create episodes
+    episodes = []
+    for i, (q, a) in enumerate(pairs):
+        episode = create_episode(q, a, i)
+        episodes.append(episode)
+    
+    # Write to file
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for episode in episodes:
+            f.write(json.dumps(episode, ensure_ascii=False) + '\n')
+    
+    # Stats
+    total_pairs = len(pairs)
+    avg_q_len = sum(len(q) for q, _ in pairs) / total_pairs
+    avg_a_len = sum(len(a) for _, a in pairs) / total_pairs
+    
+    # Count by language
+    en_count = sum(1 for e in episodes if e["language"] == "en")
+    de_count = sum(1 for e in episodes if e["language"] == "de")
+    
+    print(f"✅ Generated {total_pairs} unique Q&A pairs")
+    print(f"   Output: {output_file}")
+    print(f"   English: {en_count}, German: {de_count}")
+    print(f"   Average question length: {avg_q_len:.1f} chars")
+    print(f"   Average answer length: {avg_a_len:.1f} chars")
+    print()
+    print("Sample pairs:")
+    for i in range(min(10, len(pairs))):
+        q, a = pairs[i]
+        print(f"  Q: {q}")
+        print(f"  A: {a}")
+        print()
+
+
+if __name__ == "__main__":
+    main()

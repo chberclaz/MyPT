@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 64 64" role="img" aria-label="MyPT cyclops robot (dark)">
+  <defs>
+    <radialGradient id="coreDark" cx="50%" cy="42%" r="60%">
+      <stop offset="0" stop-color="#6EE7B7"/>
+      <stop offset="1" stop-color="#10B981"/>
+    </radialGradient>
+  </defs>
+
+  <!-- antennas -->
+  <rect x="24" y="4" width="3" height="8" rx="1.5" fill="#10B981"/>
+  <rect x="37" y="4" width="3" height="8" rx="1.5" fill="#10B981"/>
+  <circle cx="25.5" cy="4" r="2.5" fill="#6EE7B7"/>
+  <circle cx="38.5" cy="4" r="2.5" fill="#6EE7B7"/>
+
+  <!-- head -->
+  <rect x="12" y="12" width="40" height="40" rx="12" fill="url(#coreDark)"/>
+
+  <!-- eye -->
+  <circle cx="32" cy="30" r="9" fill="#064E3B"/>
+  <circle cx="32" cy="30" r="3.5" fill="#D1FAE5"/>
+
+  <!-- mouth -->
+  <rect x="26" y="42" width="12" height="2.5" rx="1.25" fill="#064E3B"/>
+</svg>

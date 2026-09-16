@@ -1,0 +1,567 @@
+#!/usr/bin/env python3
+"""
+Build Phase 3 mixed dataset with explicit composition targets.
+
+Targets (defaults aligned with plan):
+- phase2 remix existing replay: ~20% (default)
+- optional operators / anti-echo replay when paths and ratios are set
+- grounded context-only QA: 10-20% (default 16%)
+- remainder: strict/checkable instruction data
+- open-ended chat capped to avoid obedience drift
+- short-first multi-turn: limit 3-4 turn share
+"""
+
+import argparse
+import json
+import random
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.dataset_lineage import iso_now, merge_lineage, write_lineage_sidecar
+
+
+def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _write_jsonl(path: Path, rows: List[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _is_chat_episode(ep: Dict[str, Any]) -> bool:
+    msgs = ep.get("messages")
+    return isinstance(msgs, list) and len(msgs) >= 2
+
+
+def _assistant_turns(ep: Dict[str, Any]) -> int:
+    return sum(1 for m in ep.get("messages", []) if isinstance(m, dict) and m.get("role") == "assistant")
+
+
+def _is_grounded(ep: Dict[str, Any]) -> bool:
+    msgs = ep.get("messages", [])
+    for i, m in enumerate(msgs):
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "user" and str(m.get("context", "")).strip():
+            for j in range(i + 1, len(msgs)):
+                n = msgs[j]
+                if isinstance(n, dict) and n.get("role") == "assistant":
+                    return True
+    return False
+
+
+def _is_anti_echo(ep: Dict[str, Any]) -> bool:
+    meta = ep.get("_meta", {})
+    cat = str(meta.get("category", "")).lower()
+    if "anti_echo" in cat:
+        return True
+    for m in ep.get("messages", []):
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            c = str(m.get("content", "")).lower()
+            if c in {"unknown.", "unknown", "no.", "no", "unbekannt.", "unbekannt", "nein.", "nein"}:
+                return True
+    return False
+
+
+def _extract_first_quoted(text: str) -> Optional[str]:
+    for q in ['"', "'"]:
+        i = text.find(q)
+        if i >= 0:
+            j = text.find(q, i + 1)
+            if j > i + 1:
+                return text[i + 1:j].strip()
+    return None
+
+
+def _is_clean_anti_echo(ep: Dict[str, Any]) -> bool:
+    """Keep anti-echo samples whose assistant output does not leak forbidden token."""
+    if not _is_anti_echo(ep):
+        return False
+    user_text = ""
+    asst_text = ""
+    for m in ep.get("messages", []):
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "user" and not user_text:
+            user_text = str(m.get("content", ""))
+        if m.get("role") == "assistant" and not asst_text:
+            asst_text = str(m.get("content", ""))
+    forbidden = _extract_first_quoted(user_text)
+    if forbidden and forbidden.lower() in asst_text.lower():
+        return False
+    return True
+
+
+def _is_operator(ep: Dict[str, Any]) -> bool:
+    op = str(ep.get("_meta", {}).get("operator", "")).upper()
+    return op in {"COPY", "WRAP", "EXTRACT"}
+
+
+def _add_source(rows: List[Dict[str, Any]], source_name: str) -> List[Dict[str, Any]]:
+    out = []
+    for r in rows:
+        if not _is_chat_episode(r):
+            continue
+        rr = dict(r)
+        rr["mix_source"] = source_name
+        out.append(rr)
+    return out
+
+
+def _sample(rows: List[Dict[str, Any]], n: int, seed: int) -> List[Dict[str, Any]]:
+    if n <= 0:
+        return []
+    if not rows:
+        return []
+    rng = random.Random(seed)
+    if len(rows) >= n:
+        return rng.sample(rows, n)
+    return [rows[rng.randrange(len(rows))] for _ in range(n)]
+
+
+def _with_turn_cap(rows: List[Dict[str, Any]], max_multiturn_ratio: float, seed: int) -> List[Dict[str, Any]]:
+    single = [r for r in rows if _assistant_turns(r) <= 1]
+    multi = [r for r in rows if _assistant_turns(r) > 1]
+    if not multi:
+        return rows
+    total = len(rows)
+    cap_n = int(total * max_multiturn_ratio)
+    rng = random.Random(seed)
+    if len(multi) > cap_n:
+        multi = rng.sample(multi, cap_n)
+    merged = single + multi
+    rng.shuffle(merged)
+    return merged
+
+
+def _count(rows: List[Dict[str, Any]], pred) -> int:
+    return sum(1 for r in rows if pred(r))
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Build Phase 3 mixed dataset with explicit composition policy")
+    p.add_argument("--output", type=str, required=True)
+    p.add_argument("--meta_output", type=str, default=None)
+    p.add_argument("--target_size", type=int, default=80000)
+    p.add_argument("--seed", type=int, default=3201)
+
+    p.add_argument("--precision_file", type=str, required=True)
+    p.add_argument("--grounded_file", type=str, required=True, help="RAG/context dataset JSONL")
+    p.add_argument(
+        "--remix_train_file",
+        type=str,
+        default="data/sft_phase2_remix_existing_intermediate/phase2_remix_existing_train.jsonl",
+    )
+    p.add_argument("--remix_ratio", type=float, default=0.20)
+    p.add_argument("--operators_file", type=str, default=None)
+    p.add_argument("--anti_echo_file", type=str, default=None)
+    p.add_argument("--json_file", type=str, default=None, help="Strict JSON-output dataset JSONL")
+    p.add_argument("--json_hf_file", type=str, default=None, help="HF-converted strict JSON chat JSONL")
+    p.add_argument("--injection_file", type=str, default=None, help="Prompt-injection/hierarchy corrective JSONL")
+    p.add_argument("--abstention_file", type=str, default=None, help="Abstention corrective JSONL")
+    p.add_argument("--phase31_control_file", type=str, default=None, help="Phase 3.1 eval-aligned control JSONL")
+    p.add_argument(
+        "--regression_short_file",
+        type=str,
+        default=None,
+        help="Short math/capital/yes-no JSONL (sft_eval_suite regression_basic alignment)",
+    )
+    p.add_argument(
+        "--injection_eval_mirror_file",
+        type=str,
+        default=None,
+        help="Chat-system prompt injection mirror JSONL (eval-aligned PWNED/FORBIDDEN refusals)",
+    )
+    p.add_argument(
+        "--format_lock_file",
+        type=str,
+        default=None,
+        help="Phase 1 format-lock / phase1_mixed JSONL replay (v2c: 0.06)",
+    )
+    p.add_argument("--open_chat_files", nargs="*", default=[], help="HF/open-ended chat JSONL files")
+
+    p.add_argument("--operators_ratio", type=float, default=0.0)
+    p.add_argument("--anti_echo_ratio", type=float, default=0.0)
+    p.add_argument("--json_ratio", type=float, default=0.0)
+    p.add_argument("--json_hf_ratio", type=float, default=0.0)
+    p.add_argument("--injection_ratio", type=float, default=0.0)
+    p.add_argument("--abstention_ratio", type=float, default=0.0)
+    p.add_argument("--phase31_control_ratio", type=float, default=0.0)
+    p.add_argument(
+        "--regression_short_ratio",
+        type=float,
+        default=0.0,
+        help="Share for --regression_short_file (v2: 0.04)",
+    )
+    p.add_argument(
+        "--injection_eval_mirror_ratio",
+        type=float,
+        default=0.0,
+        help="Share for --injection_eval_mirror_file (v2: 0.04)",
+    )
+    p.add_argument(
+        "--format_lock_ratio",
+        type=float,
+        default=0.0,
+        help="Share for --format_lock_file (v2c: 0.06)",
+    )
+    p.add_argument("--grounded_ratio", type=float, default=0.16)
+    p.add_argument("--open_chat_cap_ratio", type=float, default=0.20)
+    p.add_argument("--multiturn_cap_ratio", type=float, default=0.22)
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+
+    if args.operators_ratio > 0 and not args.operators_file:
+        raise ValueError("operators_ratio > 0 requires --operators_file")
+    if args.anti_echo_ratio > 0 and not args.anti_echo_file:
+        raise ValueError("anti_echo_ratio > 0 requires --anti_echo_file")
+    if args.json_ratio > 0 and not args.json_file:
+        raise ValueError("json_ratio > 0 requires --json_file")
+    if args.json_hf_ratio > 0 and not args.json_hf_file:
+        raise ValueError("json_hf_ratio > 0 requires --json_hf_file")
+    if args.phase31_control_ratio > 0 and not args.phase31_control_file:
+        raise ValueError("phase31_control_ratio > 0 requires --phase31_control_file")
+    if args.injection_ratio > 0 and not args.injection_file:
+        raise ValueError("injection_ratio > 0 requires --injection_file")
+    if args.abstention_ratio > 0 and not args.abstention_file:
+        raise ValueError("abstention_ratio > 0 requires --abstention_file")
+    if args.regression_short_ratio > 0 and not args.regression_short_file:
+        raise ValueError("regression_short_ratio > 0 requires --regression_short_file")
+    if args.injection_eval_mirror_ratio > 0 and not args.injection_eval_mirror_file:
+        raise ValueError("injection_eval_mirror_ratio > 0 requires --injection_eval_mirror_file")
+    if args.format_lock_ratio > 0 and not args.format_lock_file:
+        raise ValueError("format_lock_ratio > 0 requires --format_lock_file")
+
+    out_path = Path(args.output)
+    meta_path = Path(args.meta_output) if args.meta_output else out_path.with_suffix(".meta.json")
+
+    precision_rows = _add_source(_read_jsonl(Path(args.precision_file)), "phase3_precision")
+    grounded_rows = _add_source(_read_jsonl(Path(args.grounded_file)), "phase3_grounded")
+    remix_path = Path(args.remix_train_file)
+    if args.remix_ratio > 0:
+        if not remix_path.exists():
+            raise FileNotFoundError(f"remix_train_file not found: {remix_path}")
+        remix_rows = _add_source(_read_jsonl(remix_path), "phase2_remix_existing_replay")
+    else:
+        remix_rows = []
+
+    operators_rows: List[Dict[str, Any]] = []
+    if args.operators_file and args.operators_ratio > 0:
+        operators_rows = _add_source(_read_jsonl(Path(args.operators_file)), "phase3_operators_replay")
+    anti_rows: List[Dict[str, Any]] = []
+    if args.anti_echo_file and args.anti_echo_ratio > 0:
+        anti_rows = _add_source(_read_jsonl(Path(args.anti_echo_file)), "phase3_anti_echo_replay")
+    json_rows: List[Dict[str, Any]] = []
+    if args.json_file and args.json_ratio > 0:
+        json_rows = _add_source(_read_jsonl(Path(args.json_file)), "phase3_json_strict")
+    json_hf_rows: List[Dict[str, Any]] = []
+    if args.json_hf_file and args.json_hf_ratio > 0:
+        json_hf_rows = _add_source(_read_jsonl(Path(args.json_hf_file)), "phase3_json_hf")
+    phase31_rows: List[Dict[str, Any]] = []
+    if args.phase31_control_file and args.phase31_control_ratio > 0:
+        phase31_rows = _add_source(_read_jsonl(Path(args.phase31_control_file)), "phase3_phase31_control")
+    regression_short_rows: List[Dict[str, Any]] = []
+    if args.regression_short_file and args.regression_short_ratio > 0:
+        regression_short_rows = _add_source(_read_jsonl(Path(args.regression_short_file)), "phase3_regression_short")
+    injection_rows: List[Dict[str, Any]] = []
+    if args.injection_file and args.injection_ratio > 0:
+        injection_rows = _add_source(_read_jsonl(Path(args.injection_file)), "phase3_injection_strict")
+    injection_eval_mirror_rows: List[Dict[str, Any]] = []
+    if args.injection_eval_mirror_file and args.injection_eval_mirror_ratio > 0:
+        injection_eval_mirror_rows = _add_source(
+            _read_jsonl(Path(args.injection_eval_mirror_file)), "phase3_injection_eval_mirror"
+        )
+    format_lock_rows: List[Dict[str, Any]] = []
+    if args.format_lock_file and args.format_lock_ratio > 0:
+        format_lock_rows = _add_source(_read_jsonl(Path(args.format_lock_file)), "phase1_format_lock_replay")
+        for row in format_lock_rows:
+            ctx = row.get("context")
+            if isinstance(ctx, str) and ctx.startswith("episode_id:"):
+                row.pop("context", None)
+    abstention_rows: List[Dict[str, Any]] = []
+    if args.abstention_file and args.abstention_ratio > 0:
+        abstention_rows = _add_source(_read_jsonl(Path(args.abstention_file)), "phase3_abstention_strict")
+    open_rows: List[Dict[str, Any]] = []
+    for f in args.open_chat_files:
+        p = Path(f)
+        open_rows.extend(_add_source(_read_jsonl(p), p.stem))
+
+    # Filters for semantic intent.
+    grounded_rows = [r for r in grounded_rows if _is_grounded(r)]
+    operators_rows = [r for r in operators_rows if _is_operator(r)]
+    anti_rows = [r for r in anti_rows if _is_clean_anti_echo(r)]
+
+    n_total = args.target_size
+    n_remix = round(n_total * args.remix_ratio)
+    n_op = round(n_total * args.operators_ratio) if (args.operators_file and args.operators_ratio > 0) else 0
+    n_anti = round(n_total * args.anti_echo_ratio) if (args.anti_echo_file and args.anti_echo_ratio > 0) else 0
+    n_json = round(n_total * args.json_ratio) if (args.json_file and args.json_ratio > 0) else 0
+    n_json_hf = round(n_total * args.json_hf_ratio) if (args.json_hf_file and args.json_hf_ratio > 0) else 0
+    n_phase31 = round(n_total * args.phase31_control_ratio) if (args.phase31_control_file and args.phase31_control_ratio > 0) else 0
+    n_regression_short = (
+        round(n_total * args.regression_short_ratio)
+        if (args.regression_short_file and args.regression_short_ratio > 0)
+        else 0
+    )
+    n_injection = round(n_total * args.injection_ratio) if (args.injection_file and args.injection_ratio > 0) else 0
+    n_injection_eval_mirror = (
+        round(n_total * args.injection_eval_mirror_ratio)
+        if (args.injection_eval_mirror_file and args.injection_eval_mirror_ratio > 0)
+        else 0
+    )
+    n_format_lock = (
+        round(n_total * args.format_lock_ratio)
+        if (args.format_lock_file and args.format_lock_ratio > 0)
+        else 0
+    )
+    n_abstention = round(n_total * args.abstention_ratio) if (args.abstention_file and args.abstention_ratio > 0) else 0
+    n_grounded = int(round(n_total * args.grounded_ratio))
+    n_open_cap = round(n_total * args.open_chat_cap_ratio)
+
+    fixed = (
+        n_remix
+        + n_op
+        + n_anti
+        + n_json
+        + n_json_hf
+        + n_phase31
+        + n_regression_short
+        + n_injection
+        + n_injection_eval_mirror
+        + n_format_lock
+        + n_abstention
+        + n_grounded
+    )
+    if fixed > n_total:
+        raise ValueError(
+            "remix + operators + anti_echo + json + json_hf + phase31_control + regression_short + injection + "
+            "injection_eval_mirror + format_lock + abstention + grounded exceed 100% "
+            f"(fixed={fixed}, n_total={n_total})"
+        )
+    n_remaining = n_total - fixed
+    n_open = min(n_open_cap, n_remaining)
+    n_precision = n_remaining - n_open
+
+    mixed: List[Dict[str, Any]] = []
+    mixed.extend(_sample(remix_rows, n_remix, args.seed + 7))
+    mixed.extend(_sample(operators_rows, n_op, args.seed + 11))
+    mixed.extend(_sample(anti_rows, n_anti, args.seed + 17))
+    mixed.extend(_sample(json_rows, n_json, args.seed + 19))
+    mixed.extend(_sample(json_hf_rows, n_json_hf, args.seed + 20))
+    mixed.extend(_sample(phase31_rows, n_phase31, args.seed + 20))
+    mixed.extend(_sample(regression_short_rows, n_regression_short, args.seed + 24))
+    mixed.extend(_sample(injection_rows, n_injection, args.seed + 21))
+    mixed.extend(_sample(injection_eval_mirror_rows, n_injection_eval_mirror, args.seed + 26))
+    mixed.extend(_sample(format_lock_rows, n_format_lock, args.seed + 27))
+    mixed.extend(_sample(abstention_rows, n_abstention, args.seed + 22))
+    mixed.extend(_sample(grounded_rows, n_grounded, args.seed + 23))
+    mixed.extend(_sample(open_rows, n_open, args.seed + 29))
+    mixed.extend(_sample(precision_rows, n_precision, args.seed + 31))
+
+    mixed = _with_turn_cap(mixed, args.multiturn_cap_ratio, args.seed + 41)
+    # Final row order: deterministic via Random(--seed), not module-level random.shuffle().
+    order_rng = random.Random(args.seed)
+    order_rng.shuffle(mixed)
+
+    _write_jsonl(out_path, mixed)
+
+    source_counts: Dict[str, int] = {}
+    for r in mixed:
+        s = str(r.get("mix_source", "unknown"))
+        source_counts[s] = source_counts.get(s, 0) + 1
+
+    meta = {
+        "target_size": n_total,
+        "actual_size": len(mixed),
+        "requested_ratios": {
+            "remix": args.remix_ratio,
+            "operators": args.operators_ratio,
+            "anti_echo": args.anti_echo_ratio,
+            "json_strict": args.json_ratio,
+            "json_hf": args.json_hf_ratio,
+            "phase31_control": args.phase31_control_ratio,
+            "regression_short": args.regression_short_ratio,
+            "injection_strict": args.injection_ratio,
+            "injection_eval_mirror": args.injection_eval_mirror_ratio,
+            "format_lock": args.format_lock_ratio,
+            "abstention_strict": args.abstention_ratio,
+            "grounded": args.grounded_ratio,
+            "open_chat_cap": args.open_chat_cap_ratio,
+        },
+        "allocated_counts": {
+            "remix": n_remix,
+            "operators": n_op,
+            "anti_echo": n_anti,
+            "json_strict": n_json,
+            "json_hf": n_json_hf,
+            "phase31_control": n_phase31,
+            "regression_short": n_regression_short,
+            "injection_strict": n_injection,
+            "injection_eval_mirror": n_injection_eval_mirror,
+            "format_lock": n_format_lock,
+            "abstention_strict": n_abstention,
+            "grounded": n_grounded,
+            "open_chat": n_open,
+            "precision": n_precision,
+        },
+        "actual_coverage": {
+            "operators_rate": round(_count(mixed, _is_operator) * 100.0 / max(1, len(mixed)), 2),
+            "anti_echo_rate": round(_count(mixed, _is_anti_echo) * 100.0 / max(1, len(mixed)), 2),
+            "grounded_rate": round(_count(mixed, _is_grounded) * 100.0 / max(1, len(mixed)), 2),
+            "multiturn_rate": round(sum(1 for r in mixed if _assistant_turns(r) > 1) * 100.0 / max(1, len(mixed)), 2),
+            "avg_assistant_turns": round(sum(_assistant_turns(r) for r in mixed) / max(1, len(mixed)), 3),
+        },
+        "source_counts": source_counts,
+        "inputs": {
+            "precision_file": args.precision_file,
+            "grounded_file": args.grounded_file,
+            "remix_train_file": args.remix_train_file,
+            "operators_file": args.operators_file,
+            "anti_echo_file": args.anti_echo_file,
+            "json_file": args.json_file,
+            "json_hf_file": args.json_hf_file,
+            "phase31_control_file": args.phase31_control_file,
+            "regression_short_file": args.regression_short_file,
+            "injection_file": args.injection_file,
+            "injection_eval_mirror_file": args.injection_eval_mirror_file,
+            "format_lock_file": args.format_lock_file,
+            "abstention_file": args.abstention_file,
+            "open_chat_files": args.open_chat_files,
+        },
+    }
+    lineage_inputs = []
+    for src, key in [
+        (args.precision_file, "phase3_precision"),
+        (args.grounded_file, "phase3_grounded"),
+        (args.remix_train_file, "phase2_remix_existing_replay"),
+    ]:
+        c = source_counts.get(key, 0)
+        lineage_inputs.append({
+            "path": str(Path(src).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.operators_file and args.operators_ratio > 0:
+        c = source_counts.get("phase3_operators_replay", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.operators_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.anti_echo_file and args.anti_echo_ratio > 0:
+        c = source_counts.get("phase3_anti_echo_replay", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.anti_echo_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.json_file and args.json_ratio > 0:
+        c = source_counts.get("phase3_json_strict", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.json_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.json_hf_file and args.json_hf_ratio > 0:
+        c = source_counts.get("phase3_json_hf", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.json_hf_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.phase31_control_file and args.phase31_control_ratio > 0:
+        c = source_counts.get("phase3_phase31_control", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.phase31_control_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.regression_short_file and args.regression_short_ratio > 0:
+        c = source_counts.get("phase3_regression_short", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.regression_short_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.injection_file and args.injection_ratio > 0:
+        c = source_counts.get("phase3_injection_strict", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.injection_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.injection_eval_mirror_file and args.injection_eval_mirror_ratio > 0:
+        c = source_counts.get("phase3_injection_eval_mirror", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.injection_eval_mirror_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.format_lock_file and args.format_lock_ratio > 0:
+        c = source_counts.get("phase1_format_lock_replay", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.format_lock_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    if args.abstention_file and args.abstention_ratio > 0:
+        c = source_counts.get("phase3_abstention_strict", 0)
+        lineage_inputs.append({
+            "path": str(Path(args.abstention_file).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    for f in args.open_chat_files:
+        stem = Path(f).stem
+        c = source_counts.get(stem, 0)
+        lineage_inputs.append({
+            "path": str(Path(f).resolve()),
+            "sampled_rows": int(c),
+            "effective_ratio": c / max(1, len(mixed)),
+        })
+    lineage = merge_lineage(
+        inputs=lineage_inputs,
+        output_rows=len(mixed),
+        creation_context={
+            "timestamp": iso_now(),
+            "script": "scripts/sft/build_phase3_dataset.py",
+            "args": vars(args),
+        },
+    )
+    meta["lineage"] = lineage
+
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    lineage_path = write_lineage_sidecar(out_path, lineage)
+
+    print("=" * 60)
+    print("Phase 3 dataset built")
+    print("=" * 60)
+    print(f"Output: {out_path}")
+    print(f"Meta:   {meta_path}")
+    print(f"Lineage:{lineage_path}")
+    print(f"Episodes: {len(mixed):,}")
+    print("Actual coverage:")
+    for k, v in meta["actual_coverage"].items():
+        print(f"  - {k}: {v}")
+
+
+if __name__ == "__main__":
+    main()
+

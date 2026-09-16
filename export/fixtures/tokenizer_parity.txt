@@ -1,0 +1,51 @@
+# tokenizer_parity.txt — one fixture per non-empty line (comments start with ##)
+## Isolated special tags (every packer tag from core.special_tokens)
+<myPT_system>
+</myPT_system>
+<myPT_user>
+</myPT_user>
+<myPT_assistant>
+</myPT_assistant>
+<myPT_user_context>
+</myPT_user_context>
+<myPT_assistant_context>
+</myPT_assistant_context>
+<myPT_toolcall>
+</myPT_toolcall>
+<myPT_toolresult>
+</myPT_toolresult>
+<myPT_think>
+</myPT_think>
+<myPT_cite>
+</myPT_cite>
+<myPT_eot>
+## Tags adjacent to punctuation, digits, non-ASCII
+<myPT_user>Hallo.</myPT_user>
+<myPT_assistant>42</myPT_assistant>
+ok<myPT_cite>doc.txt</myPT_cite>!
+ä<myPT_user>ö</myPT_user>ü
+## JSON tool payload
+<myPT_toolcall>{"name": "workspace.get_doc", "doc_id": "a.json"}</myPT_toolcall>
+<myPT_toolresult>{"ok": true, "text": "line1\nline2", "quote": "she said \"hi\""}</myPT_toolresult>
+## Nested braces and escaped quotes
+<myPT_toolresult>{"a": {"b": [1, 2]}, "s": "x\\y"}</myPT_toolresult>
+## Semicolon table
+name;amt;note
+A;1;ok
+B;2;äöü
+## Empty / error toolresult
+<myPT_toolresult>{"error": "tool_failed", "message": "unknown tool"}</myPT_toolresult>
+<myPT_toolresult>{}</myPT_toolresult>
+## No surrounding whitespace
+foo<myPT_think>bar</myPT_think>baz
+## Leading/trailing whitespace around tags
+  <myPT_user> x </myPT_user>  
+## Multi-turn conversation
+<myPT_system>You are MyPT.</myPT_system>
+<myPT_user>Search then cite.</myPT_user>
+<myPT_assistant> <myPT_think>I'll search.</myPT_think><myPT_toolcall>{"name": "workspace.search", "query": "x"}</myPT_toolcall></myPT_assistant>
+<myPT_toolresult>{"documents": [{"doc_id": "d1", "title": "D"}]}</myPT_toolresult>
+<myPT_assistant> <myPT_think>I'll retrieve the document content.</myPT_think><myPT_toolcall>{"name": "workspace.get_doc", "doc_id": "d1"}</myPT_toolcall></myPT_assistant>
+<myPT_toolresult>{"doc_id": "d1", "text": "The statute defines X as 12."}</myPT_toolresult>
+<myPT_assistant> <myPT_think>The document states the definition.</myPT_think>X is 12.<myPT_cite>d1</myPT_cite></myPT_assistant>
+<myPT_eot>

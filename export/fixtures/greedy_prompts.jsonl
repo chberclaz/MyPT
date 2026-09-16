@@ -1,0 +1,20 @@
+{"id": "hello", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Say hello in one word.</myPT_user>\n<myPT_assistant>"}
+{"id": "echo", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Repeat exactly: banana-split-42</myPT_user>\n<myPT_assistant>"}
+{"id": "de_umlaut", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Wiederhole genau: Straße-Größe-Bär</myPT_user>\n<myPT_assistant>"}
+{"id": "fr_accent", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Répète exactement: café naïve</myPT_user>\n<myPT_assistant>"}
+{"id": "cite_shape", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Answer with a citation tag.</myPT_user>\n<myPT_assistant>"}
+{"id": "think_then_answer", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>What is 1+1? Think first.</myPT_user>\n<myPT_assistant>"}
+{"id": "json_user", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>{\"k\": \"v\"}</myPT_user>\n<myPT_assistant>"}
+{"id": "empty_search", "prompt": "<myPT_system>You are MyPT. Use tools.</myPT_system>\n<myPT_user>What is Zorblax Nine?</myPT_user>\n<myPT_assistant>"}
+{"id": "after_get_doc", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>What is X?</myPT_user>\n<myPT_assistant> <myPT_think>I'll retrieve the document content.</myPT_think><myPT_toolcall>{\"name\": \"workspace.get_doc\", \"doc_id\": \"d1\"}</myPT_toolcall></myPT_assistant>\n<myPT_toolresult>{\"doc_id\": \"d1\", \"text\": \"X is defined as 12 in article 3.\"}</myPT_toolresult>\n<myPT_assistant>"}
+{"id": "toolcall_search", "prompt": "<myPT_system>You are MyPT. Tools: workspace.search.</myPT_system>\n<myPT_user>Find documents about privacy.</myPT_user>\n<myPT_assistant>"}
+{"id": "multiturn", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>My name is Ada.</myPT_user>\n<myPT_assistant> Hello Ada.</myPT_assistant>\n<myPT_user>What is my name?</myPT_user>\n<myPT_assistant>"}
+{"id": "legal_de", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Was bedeutet Art. 5 DSG in einem Satz?</myPT_user>\n<myPT_assistant>"}
+{"id": "code_indent", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Repeat:\n    def f(x):\n        return x</myPT_user>\n<myPT_assistant>"}
+{"id": "euro", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Price is 12,50 €. Repeat the price.</myPT_user>\n<myPT_assistant>"}
+{"id": "guillemets", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Cite: «contrat»</myPT_user>\n<myPT_assistant>"}
+{"id": "nbsp_emdash", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>A — B</myPT_user>\n<myPT_assistant>"}
+{"id": "table", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>a;b;c\n1;2;3</myPT_user>\n<myPT_assistant>"}
+{"id": "tool_error", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>Call foo.bar</myPT_user>\n<myPT_assistant> <myPT_toolcall>{\"name\": \"foo.bar\"}</myPT_toolcall></myPT_assistant>\n<myPT_toolresult>{\"error\": \"unknown_tool\", \"name\": \"foo.bar\"}</myPT_toolresult>\n<myPT_assistant>"}
+{"id": "list_docs", "prompt": "<myPT_system>You are MyPT. Tools: workspace.list_docs.</myPT_system>\n<myPT_user>What documents exist?</myPT_user>\n<myPT_assistant>"}
+{"id": "long_context_tail", "prompt": "<myPT_system>You are MyPT.</myPT_system>\n<myPT_user>End with the word DONE after reading this padding: lorem ipsum dolor sit amet. </myPT_user>\n<myPT_assistant>"}

@@ -1,0 +1,155 @@
+{
+  "source": "core.special_tokens",
+  "base_vocab_size": 50257,
+  "model_vocab_size": 50304,
+  "special_count": 19,
+  "id_min": 50257,
+  "id_max": 50275,
+  "pad_id_start": 50276,
+  "pad_id_end": 50303,
+  "tokens": [
+    {
+      "name": "myPT_system_open",
+      "string": "<myPT_system>",
+      "id": 50257,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_system_close",
+      "string": "</myPT_system>",
+      "id": 50258,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_user_open",
+      "string": "<myPT_user>",
+      "id": 50259,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_user_close",
+      "string": "</myPT_user>",
+      "id": 50260,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_assistant_open",
+      "string": "<myPT_assistant>",
+      "id": 50261,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_assistant_close",
+      "string": "</myPT_assistant>",
+      "id": 50262,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_user_context_open",
+      "string": "<myPT_user_context>",
+      "id": 50263,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_user_context_close",
+      "string": "</myPT_user_context>",
+      "id": 50264,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_assistant_context_open",
+      "string": "<myPT_assistant_context>",
+      "id": 50265,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_assistant_context_close",
+      "string": "</myPT_assistant_context>",
+      "id": 50266,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_toolcall_open",
+      "string": "<myPT_toolcall>",
+      "id": 50267,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_toolcall_close",
+      "string": "</myPT_toolcall>",
+      "id": 50268,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_toolresult_open",
+      "string": "<myPT_toolresult>",
+      "id": 50269,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_toolresult_close",
+      "string": "</myPT_toolresult>",
+      "id": 50270,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_think_open",
+      "string": "<myPT_think>",
+      "id": 50271,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_think_close",
+      "string": "</myPT_think>",
+      "id": 50272,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_cite_open",
+      "string": "<myPT_cite>",
+      "id": 50273,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_cite_close",
+      "string": "</myPT_cite>",
+      "id": 50274,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    },
+    {
+      "name": "myPT_eot",
+      "string": "<myPT_eot>",
+      "id": 50275,
+      "special": true,
+      "gguf_token_type": "CONTROL"
+    }
+  ],
+  "eot": {
+    "name": "myPT_eot",
+    "string": "<myPT_eot>",
+    "id": 50275
+  },
+  "toolcall_close": {
+    "name": "myPT_toolcall_close",
+    "string": "</myPT_toolcall>",
+    "id": 50268
+  }
+}

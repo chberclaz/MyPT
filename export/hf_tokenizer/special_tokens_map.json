@@ -1,0 +1,27 @@
+{
+  "bos_token": "<myPT_system>",
+  "eos_token": "<myPT_eot>",
+  "unk_token": "<|endoftext|>",
+  "pad_token": "<myPT_eot>",
+  "additional_special_tokens": [
+    "<myPT_system>",
+    "</myPT_system>",
+    "<myPT_user>",
+    "</myPT_user>",
+    "<myPT_assistant>",
+    "</myPT_assistant>",
+    "<myPT_user_context>",
+    "</myPT_user_context>",
+    "<myPT_assistant_context>",
+    "</myPT_assistant_context>",
+    "<myPT_toolcall>",
+    "</myPT_toolcall>",
+    "<myPT_toolresult>",
+    "</myPT_toolresult>",
+    "<myPT_think>",
+    "</myPT_think>",
+    "<myPT_cite>",
+    "</myPT_cite>",
+    "<myPT_eot>"
+  ]
+}

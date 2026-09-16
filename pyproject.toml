@@ -1,0 +1,128 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mypt"
+version = "0.6.0.0"
+description = "On-Premise governed AI Foundry — on-premise governed training and inference system"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "AGPL-3.0-only"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["gpt", "transformer", "language-model", "deep-learning", "pytorch"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "tiktoken>=0.5.0",
+    "numpy>=1.21.0",
+]
+
+[project.optional-dependencies]
+webapp = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.6",
+    "websockets>=12.0",
+    "passlib>=1.7.4",
+    "bcrypt>=4.0.0",
+    "python-jose>=3.3.0",
+    "cryptography>=41.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "mypt[webapp,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/mypt"
+Repository = "https://github.com/yourusername/mypt"
+Documentation = "https://github.com/yourusername/mypt/blob/main/README.md"
+
+[project.scripts]
+# Core commands
+mypt-train = "train:main"
+mypt-generate = "generate:main"
+
+# Agentic RAG
+mypt-workspace-chat = "scripts.workspace_chat:main"
+mypt-workspace-rag = "scripts.workspace_rag:main"
+mypt-build-index = "scripts.build_rag_index:main"
+mypt-generate-sft = "scripts.generate_agent_sft:main"
+
+# Dataset preparation
+mypt-prepare-dataset = "scripts.prepare_dataset:main"
+mypt-prepare-chat-sft = "scripts.prepare_chat_sft:main"
+mypt-prepare-tool-sft = "scripts.prepare_tool_sft:main"
+mypt-prepare-weighted = "scripts.prepare_weighted_dataset:main"
+mypt-fetch-multilingual = "scripts.fetch_and_prepare_multilingual:main"
+
+# Utilities
+mypt-show-configs = "scripts.show_configs:main"
+mypt-calculate-params = "scripts.calculate_params:main"
+mypt-convert-legacy = "scripts.convert_legacy_checkpoints:main"
+
+# Web Application (requires: pip install mypt[webapp])
+mypt-webapp = "webapp.main:main"
+
+[tool.setuptools.packages.find]
+include = ["core*", "scripts*", "webapp*"]
+exclude = ["__pycache__*", "*.pyc", "checkpoints*", "tests*"]
+
+[tool.setuptools.package-data]
+core = ["tokenizer_data/*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | checkpoints
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+

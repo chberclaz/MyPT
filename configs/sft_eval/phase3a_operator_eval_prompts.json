@@ -1,0 +1,23 @@
+{
+  "description": "Operator learning evaluation prompts. Uses VAL templates (unseen during training) for true generalization test.",
+  "system_prompt": "You are MyPT. Execute the instruction exactly.",
+  "prompts": {
+    "copy_parrot": "<myPT_system>You are MyPT. Execute the instruction exactly.</myPT_system><myPT_user>Parrot this: diamond</myPT_user><myPT_assistant>",
+    "copy_verbatim": "<myPT_system>You are MyPT. Execute the instruction exactly.</myPT_system><myPT_user>Return verbatim: crystal</myPT_user><myPT_assistant>",
+    "copy_mirror": "<myPT_system>You are MyPT. Execute the instruction exactly.</myPT_system><myPT_user>Mirror: sapphire</myPT_user><myPT_assistant>",
+    "wrap_brackets": "<myPT_system>You are MyPT. Execute the instruction exactly.</myPT_system><myPT_user>Put in square brackets: ruby</myPT_user><myPT_assistant>",
+    "wrap_add": "<myPT_system>You are MyPT. Execute the instruction exactly.</myPT_system><myPT_user>Add [] around: emerald</myPT_user><myPT_assistant>",
+    "extract_inside": "<myPT_system>You are MyPT. Execute the instruction exactly.</myPT_system><myPT_user>What's inside the quotes: \"topaz\"</myPT_user><myPT_assistant>",
+    "extract_quoted": "<myPT_system>You are MyPT. Execute the instruction exactly.</myPT_system><myPT_user>Get the quoted part: \"pearl\"</myPT_user><myPT_assistant>"
+  },
+  "expected_outputs": {
+    "copy_parrot": "diamond",
+    "copy_verbatim": "crystal",
+    "copy_mirror": "sapphire",
+    "wrap_brackets": "[ruby]",
+    "wrap_add": "[emerald]",
+    "extract_inside": "topaz",
+    "extract_quoted": "pearl"
+  },
+  "notes": "These prompts use VAL templates (Parrot, Mirror, Add [] around, etc.) which are NOT in the training set. If the model gets these right, it has learned abstract operators."
+}

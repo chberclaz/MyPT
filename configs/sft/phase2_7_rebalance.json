@@ -1,0 +1,48 @@
+{
+  "name": "Phase 2.7: Rebalance (from 2.5)",
+  "description": "Fresh run from phase2_5 checkpoint to rebalance anti-echo and operator exactness, with optional code mixture.",
+
+  "batch_size": 4,
+  "block_size": 4096,
+  "vocab_size": 50304,
+  "n_embd": 1280,
+  "n_head": 20,
+  "n_layer": 32,
+  "dropout": 0.08,
+  "bias": false,
+  "tie_weights": true,
+  "pos_encoding": "rope",
+  "mlp_type": "swiglu",
+  "norm_type": "rmsnorm",
+  "use_checkpoint": true,
+  "rope_theta": 10000.0,
+  "rope_scale": 4.0,
+
+  "learning_rate": 1.8e-5,
+  "max_iters": 100,
+  "eval_interval": 10,
+  "warmup_iters": 10,
+  "use_amp": true,
+  "amp_dtype": "bf16",
+  "grad_accum_steps": 4,
+
+  "use_loss_mask": true,
+  "batch_sampling_mode": "epoch",
+  "pad_token_id": null,
+  "episode_min_tokens": 10,
+  "epoch_seed": 2701,
+  "epoch_shuffle": true,
+  "epoch_drop_last": true,
+  "weight_decay": 0.05,
+
+  "eval_sets": {
+    "phase1_format": "data/sft_phase1_format_lock",
+    "phase2_operators": "data/sft_phase2_operators",
+    "general": "data/general",
+    "domain": "data/domain_161M_corpus_tokenized",
+    "code": "data/code_eval_tokenized",
+    "retrieval": "data/retrieval_eval_tokenized"
+  },
+  "eval_seed": 1337,
+  "log_file": "logs/train/phase2_7_rebalance.jsonl"
+}

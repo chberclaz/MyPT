@@ -1,0 +1,117 @@
+# Training checkpoints
+checkpoints/
+checkpoints/*
+data/
+data/*
+workspace/docs/*
+workspace/index/*
+workspace/*
+sources/
+sources/*
+work/
+work/*
+out/
+out/*
+out_tokenized/
+out_tokenized/*
+logs/
+logs/*
+logs/audit/
+logs/app/
+logs/train/
+logs/eval/
+logs/eval/audit/
+logs/eval/app/
+logs/eval/train/
+logs/eval/train/audit/
+logs/eval/train/app/
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Package files
+*.pt
+*.pth
+!checkpoints/**/*.pt
+
+# Logs
+*.log
+logs/
+logs/audit/
+logs/app/
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+
+webapp/users.json
+
+# Environment files with secrets
+.env
+.env.local
+*.env
+
+# llama.cpp clone + GGUF artifacts (binaries; pin SHA is versioned)
+third_party/llama.cpp/
+third_party/llama.cpp-bin/
+export/artifacts/
+*.gguf
+!export/hf_tokenizer/**
+
+# Local RunPod / dataset upload archives (large binaries; not versioned)
+*.zip
+mypt_phase3_datasets_only.zip
+mypt_runpod_phase3_upload.zip
+mypt_phase3_1_corrective_datasets_only.zip
+mypt_phase3_1_restart_datasets_only.zip
+mypt_phase3_2_corrective_datasets_only.zip
