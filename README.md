@@ -1,7 +1,6 @@
 <p align="center">
 
-![MyPT](webapp/static/icon/light/mypt-cyclops-128.svg#gh-light-mode-only)
-![MyPT](webapp/static/icon/dark/mypt-cyclops-128.svg#gh-dark-mode-only)
+![MyPT](webapp/static/icon/light/mypt-cyclops-128.svg)
 
 </p>
 
