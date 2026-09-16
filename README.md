@@ -1,8 +1,8 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="webapp/static/icon/dark/mypt-cyclops-128.svg">
-    <img src="webapp/static/icon/light/mypt-cyclops-128.svg" alt="MyPT" width="96" height="96">
-  </picture>
+
+![MyPT](webapp/static/icon/light/mypt-cyclops-128.svg#gh-light-mode-only)
+![MyPT](webapp/static/icon/dark/mypt-cyclops-128.svg#gh-dark-mode-only)
+
 </p>
 
 <h1 align="center">MyPT</h1>
@@ -109,7 +109,9 @@ AI-assisted workflows use **explicit** tool calls. Every action, retrieval, and 
 ## Web interface
 
 <p align="center">
-  <img src="docs/webapp/myPT_webapp_workspace.png" alt="MyPT web interface" width="500">
+
+![MyPT web interface](docs/webapp/myPT_webapp_workspace.png)
+
 </p>
 
 The web UI exposes ingestion, indexing, inference, and auditing in an operator-focused layout. See [docs/webapp/WEBAPP_GUIDE.md](docs/webapp/WEBAPP_GUIDE.md).
